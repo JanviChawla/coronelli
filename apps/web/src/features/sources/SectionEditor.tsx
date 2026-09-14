@@ -12,7 +12,7 @@ export function SectionEditor({ sections, onSave }: Props) {
     () => Object.fromEntries(sections.map((s) => [s.id, s.title])),
   )
   const [saving, setSaving] = useState(false)
-  const [confirmed, setConfirmed] = useState(false)
+  const [confirmed, setConfirmed] = useState(true)
 
   // After save, the parent replaces sections with new DB rows (new UUIDs).
   // Resync titles so inputs don't go blank.
