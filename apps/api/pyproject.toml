@@ -10,6 +10,8 @@ dependencies = [
     "pymupdf",
     "python-multipart",
     "jsonschema",
+    "openai",
+    "python-dotenv",
 ]
 
 [project.optional-dependencies]

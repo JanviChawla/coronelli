@@ -6,6 +6,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
 
+# Import extraction models so Base.metadata includes them everywhere models.py is imported.
+# The actual class definitions live in app.extraction.models to keep domains separate.
+import app.extraction.models  # noqa: F401, E402
+
 
 class SourceDocument(Base):
     __tablename__ = "source_documents"

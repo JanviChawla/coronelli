@@ -56,6 +56,11 @@ export async function importDocument(
   return res.json()
 }
 
+export async function deleteDocument(documentId: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete document')
+}
+
 export async function updateSections(
   documentId: string,
   sections: SectionUpdate[],

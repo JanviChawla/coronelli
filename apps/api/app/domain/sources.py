@@ -90,3 +90,13 @@ def list_sections(session: Session, document_id: str) -> list[SourceSection]:
 
 def list_documents(session: Session) -> list[SourceDocument]:
     return list(session.execute(select(SourceDocument)).scalars().all())
+
+
+def delete_document(session: Session, document_id: str) -> None:
+    doc = session.get(SourceDocument, document_id)
+    if doc is None:
+        raise ValueError(f"Document '{document_id}' not found.")
+    for section in list_sections(session, document_id):
+        session.delete(section)
+    session.delete(doc)
+    session.commit()

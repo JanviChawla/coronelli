@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Section, SectionUpdate } from './sourceApi'
 
 interface Props {
@@ -12,6 +12,13 @@ export function SectionEditor({ sections, onSave }: Props) {
     () => Object.fromEntries(sections.map((s) => [s.id, s.title])),
   )
   const [saving, setSaving] = useState(false)
+  const [confirmed, setConfirmed] = useState(false)
+
+  // After save, the parent replaces sections with new DB rows (new UUIDs).
+  // Resync titles so inputs don't go blank.
+  useEffect(() => {
+    setTitles(Object.fromEntries(sections.map((s) => [s.id, s.title])))
+  }, [sections])
 
   function setTitle(id: string, value: string) {
     setTitles((prev) => ({ ...prev, [id]: value || null }))
@@ -28,6 +35,29 @@ export function SectionEditor({ sections, onSave }: Props) {
     }))
     await onSave(payload)
     setSaving(false)
+    setConfirmed(true)
+  }
+
+  if (confirmed) {
+    return (
+      <div>
+        <ol style={{ listStyle: 'none', padding: 0 }}>
+          {sections.map((s) => (
+            <li key={s.id} style={{ marginBottom: '1rem' }}>
+              <div style={{ fontWeight: 500 }}>
+                {s.ordinal + 1}. {s.title ?? <em style={{ color: '#888' }}>untitled</em>}
+              </div>
+              <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#666', marginTop: '0.2rem' }}>
+                {s.id}
+              </div>
+            </li>
+          ))}
+        </ol>
+        <button type="button" onClick={() => setConfirmed(false)}>
+          Edit sections
+        </button>
+      </div>
+    )
   }
 
   return (

@@ -1,8 +1,13 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
+
+load_dotenv(Path(__file__).parents[3] / ".env")
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.extraction import router as extraction_router
 from app.api.sources import router as sources_router
 from app.api.workspaces import router as workspaces_router
 from app.db.base import Base
@@ -26,6 +31,7 @@ app.add_middleware(
 
 app.include_router(workspaces_router)
 app.include_router(sources_router)
+app.include_router(extraction_router)
 
 
 @app.get("/api/health")

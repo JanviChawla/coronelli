@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { SectionEditor } from './SectionEditor'
 import {
+  deleteDocument,
   fetchDocuments,
   fetchSections,
   importDocument,
@@ -54,6 +55,19 @@ export function SourceLibrary() {
     }
   }
 
+  async function handleDelete(doc: Document) {
+    try {
+      await deleteDocument(doc.id)
+      setDocuments((prev) => prev.filter((d) => d.id !== doc.id))
+      if (selected?.id === doc.id) {
+        setSelected(null)
+        setSections([])
+      }
+    } catch {
+      setError('Could not delete document.')
+    }
+  }
+
   async function handleSave(updates: SectionUpdate[]) {
     if (!selected) return
     try {
@@ -90,7 +104,7 @@ export function SourceLibrary() {
         ) : (
           <ul>
             {documents.map((doc) => (
-              <li key={doc.id}>
+              <li key={doc.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <button
                   onClick={() => handleSelect(doc)}
                   aria-current={selected?.id === doc.id ? 'true' : undefined}
@@ -99,6 +113,13 @@ export function SourceLibrary() {
                   <span style={{ marginLeft: '0.5rem', fontSize: '0.75rem', color: '#888' }}>
                     ({doc.category})
                   </span>
+                </button>
+                <button
+                  onClick={() => handleDelete(doc)}
+                  aria-label={`Delete ${doc.title}`}
+                  style={{ fontSize: '0.75rem', color: '#c00' }}
+                >
+                  Delete
                 </button>
               </li>
             ))}

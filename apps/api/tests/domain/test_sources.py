@@ -3,7 +3,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
-from app.domain.sources import ProposedSection, create_document, list_sections, replace_sections
+from app.domain.sources import (
+    ProposedSection,
+    create_document,
+    delete_document,
+    list_documents,
+    list_sections,
+    replace_sections,
+)
 
 
 @pytest.fixture
@@ -97,3 +104,26 @@ def test_section_optional_fields_default(db_session):
     assert sections[0].page_start is None
     assert sections[0].page_end is None
     assert sections[0].user_corrected is False
+
+
+def test_delete_document_removes_document_and_sections(db_session):
+    doc = _doc(db_session)
+    replace_sections(db_session, doc.id, [ProposedSection(title="Ch", text="text", ordinal=0)])
+    delete_document(db_session, doc.id)
+    assert list_documents(db_session) == []
+    assert list_sections(db_session, doc.id) == []
+
+
+def test_delete_document_does_not_affect_other_documents(db_session):
+    doc_a = _doc(db_session, title="A")
+    doc_b = _doc(db_session, title="B")
+    replace_sections(db_session, doc_a.id, [ProposedSection(title="sec", text="x", ordinal=0)])
+    delete_document(db_session, doc_a.id)
+    remaining = list_documents(db_session)
+    assert len(remaining) == 1
+    assert remaining[0].id == doc_b.id
+
+
+def test_delete_nonexistent_document_raises(db_session):
+    with pytest.raises(ValueError, match="not found"):
+        delete_document(db_session, "no-such-id")

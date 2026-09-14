@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db.engine import get_db
 from app.db.models import SourceDocument
-from app.domain.sources import ProposedSection, list_documents, list_sections, replace_sections
+from app.domain.sources import ProposedSection, delete_document, list_documents, list_sections, replace_sections
 from app.ingestion.parsers import TextExtractionUnavailableError
 from app.ingestion.service import import_document
 
@@ -100,6 +100,14 @@ def update_sections(
 
     sections = replace_sections(db, document_id, proposed)
     return [SectionResponse.model_validate(s) for s in sections]
+
+
+@router.delete("/{document_id}", status_code=204)
+def delete_document_endpoint(document_id: str, db: Session = Depends(get_db)) -> None:
+    try:
+        delete_document(db, document_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/{document_id}/sections", response_model=list[SectionResponse])
