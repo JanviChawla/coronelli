@@ -33,6 +33,7 @@ venv/
 node_modules/
 dist/
 .pnpm-store/
+.vite/
 
 # Editor
 .vscode/
