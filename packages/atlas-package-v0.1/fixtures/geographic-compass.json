@@ -1,0 +1,30 @@
+{
+  "manifest": {"format": "atlas-package", "formatVersion": "0.1", "packageId": "fixture-geographic-compass", "entrypoints": {"world": "world.json", "defaultLayout": "layouts/regional.json"}},
+  "sources": [{"id": "demo-book", "title": "Synthetic Fixture", "sections": [{"id": "scene-01", "label": "Scene 1"}, {"id": "scene-02", "label": "Scene 2"}]}],
+  "world": {
+    "entities": [
+      {"id": "sunvale", "name": "Sunvale", "entityKind": "place", "placeKind": "region", "status": "explicit", "provenance": {"documentId": "demo-book", "sectionId": "scene-01", "locator": {"kind": "section"}}, "discovery": {"becomesVisibleAt": {"documentId": "demo-book", "sectionId": "scene-01", "locator": {"kind": "section"}}}},
+      {"id": "sunken-observatory", "name": "Sunken Observatory", "entityKind": "place", "placeKind": "building", "status": "explicit", "provenance": {"documentId": "demo-book", "sectionId": "scene-02", "locator": {"kind": "section"}}, "discovery": {"becomesVisibleAt": {"documentId": "demo-book", "sectionId": "scene-02", "locator": {"kind": "section"}}}}
+    ],
+    "claims": [
+      {"id": "sunvale-east", "claimType": "spatial", "subjectRef": "sunvale", "predicate": "EAST_OF", "objectRefs": ["sunken-observatory"], "status": "explicit", "provenance": {"documentId": "demo-book", "sectionId": "scene-01", "locator": {"kind": "section"}}}
+    ],
+    "travelRules": []
+  },
+  "layouts": [
+    {
+      "id": "regional-demo",
+      "kind": "regional-atlas",
+      "orientation": {"mode": "north-up", "sourceStatus": "explicit"},
+      "coordinateSystem": {"type": "normalized", "coordinateMeaning": "cartographic-interpretation"},
+      "elements": [
+        {"id": "sunvale-element", "entityRef": "sunvale", "kind": "region", "anchor": {"x": 0.72, "y": 0.50}, "discovery": {"becomesVisibleAt": {"documentId": "demo-book", "sectionId": "scene-01", "locator": {"kind": "section"}}}, "status": "explicit"},
+        {"id": "observatory-element", "entityRef": "sunken-observatory", "kind": "landmark", "anchor": {"x": 0.35, "y": 0.50}, "discovery": {"becomesVisibleAt": {"documentId": "demo-book", "sectionId": "scene-02", "locator": {"kind": "section"}}}, "status": "explicit"}
+      ]
+    }
+  ],
+  "artInventory": [],
+  "interpretations": [
+    {"id": "east-placement", "kind": "cartographic-placement", "appliesToRef": "sunvale-element", "rationale": "Places Sunvale east of the Observatory to satisfy the explicit cardinal claim.", "supportedByRefs": ["sunvale-east"], "status": "imagined"}
+  ]
+}

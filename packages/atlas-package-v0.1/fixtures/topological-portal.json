@@ -1,0 +1,28 @@
+{
+  "manifest": {"format": "atlas-package", "formatVersion": "0.1", "packageId": "fixture-topological-portal", "entrypoints": {"world": "world.json", "defaultLayout": "layouts/topology.json"}},
+  "sources": [{"id": "demo-book", "title": "Synthetic Fixture", "sections": [{"id": "scene-01", "label": "Scene 1"}, {"id": "scene-02", "label": "Scene 2"}]}],
+  "world": {
+    "entities": [
+      {"id": "mirror-hall", "name": "Mirror Hall", "entityKind": "place", "placeKind": "room", "status": "explicit", "provenance": {"documentId": "demo-book", "sectionId": "scene-01", "locator": {"kind": "section"}}, "discovery": {"becomesVisibleAt": {"documentId": "demo-book", "sectionId": "scene-01", "locator": {"kind": "section"}}}},
+      {"id": "orchard", "name": "Moon Orchard", "entityKind": "place", "placeKind": "landscape", "status": "explicit", "provenance": {"documentId": "demo-book", "sectionId": "scene-02", "locator": {"kind": "section"}}, "discovery": {"becomesVisibleAt": {"documentId": "demo-book", "sectionId": "scene-02", "locator": {"kind": "section"}}}}
+    ],
+    "claims": [],
+    "travelRules": [
+      {"id": "mirror-gate", "travelKind": "fixed-portal", "fromRef": "mirror-hall", "toRef": "orchard", "status": "explicit", "provenance": {"documentId": "demo-book", "sectionId": "scene-02", "locator": {"kind": "section"}}, "discovery": {"becomesVisibleAt": {"documentId": "demo-book", "sectionId": "scene-02", "locator": {"kind": "section"}}}}
+    ]
+  },
+  "layouts": [
+    {
+      "id": "topology-demo",
+      "kind": "topological-atlas",
+      "orientation": {"mode": "not-applicable", "reason": "Source does not establish surveyable geography."},
+      "coordinateSystem": {"type": "diagrammatic", "coordinateMeaning": "cartographic-interpretation"},
+      "elements": [
+        {"id": "hall-element", "entityRef": "mirror-hall", "kind": "node", "anchor": {"x": 0.35, "y": 0.50}, "discovery": {"becomesVisibleAt": {"documentId": "demo-book", "sectionId": "scene-01", "locator": {"kind": "section"}}}, "status": "explicit"},
+        {"id": "orchard-element", "entityRef": "orchard", "kind": "node", "anchor": {"x": 0.70, "y": 0.50}, "discovery": {"becomesVisibleAt": {"documentId": "demo-book", "sectionId": "scene-02", "locator": {"kind": "section"}}}, "status": "explicit"},
+        {"id": "gate-edge", "travelRuleRef": "mirror-gate", "kind": "fixed-portal", "discovery": {"becomesVisibleAt": {"documentId": "demo-book", "sectionId": "scene-02", "locator": {"kind": "section"}}}, "status": "explicit"}
+      ]
+    }
+  ],
+  "artInventory": []
+}

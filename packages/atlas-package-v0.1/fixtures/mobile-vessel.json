@@ -1,0 +1,25 @@
+{
+  "manifest": {"format": "atlas-package", "formatVersion": "0.1", "packageId": "fixture-mobile-vessel", "entrypoints": {"world": "world.json", "defaultLayout": "layouts/bay.json"}},
+  "sources": [{"id": "demo-book", "title": "Synthetic Fixture", "sections": [{"id": "scene-01", "label": "Scene 1"}, {"id": "scene-03", "label": "Scene 3"}]}],
+  "world": {
+    "entities": [
+      {"id": "glass-bay", "name": "Glass Bay", "entityKind": "place", "placeKind": "water-place", "status": "explicit", "provenance": {"documentId": "demo-book", "sectionId": "scene-01", "locator": {"kind": "section"}}, "discovery": {"becomesVisibleAt": {"documentId": "demo-book", "sectionId": "scene-01", "locator": {"kind": "section"}}}},
+      {"id": "lantern-barge", "name": "Lantern Barge", "entityKind": "place", "placeKind": "vessel", "mapBehavior": {"mobility": "mobile", "coordinatePolicy": "scene-context-only"}, "status": "explicit", "provenance": {"documentId": "demo-book", "sectionId": "scene-03", "locator": {"kind": "section"}}, "discovery": {"becomesVisibleAt": {"documentId": "demo-book", "sectionId": "scene-03", "locator": {"kind": "section"}}}}
+    ],
+    "claims": [],
+    "travelRules": []
+  },
+  "layouts": [
+    {
+      "id": "bay-demo",
+      "kind": "regional-atlas",
+      "orientation": {"mode": "not-applicable", "reason": "No cardinal relationship is asserted by the fixture."},
+      "coordinateSystem": {"type": "normalized", "coordinateMeaning": "cartographic-interpretation"},
+      "elements": [
+        {"id": "bay-element", "entityRef": "glass-bay", "kind": "water-place", "anchor": {"x": 0.50, "y": 0.50}, "discovery": {"becomesVisibleAt": {"documentId": "demo-book", "sectionId": "scene-01", "locator": {"kind": "section"}}}, "status": "explicit"},
+        {"id": "barge-element", "entityRef": "lantern-barge", "kind": "mobile-node", "discovery": {"becomesVisibleAt": {"documentId": "demo-book", "sectionId": "scene-03", "locator": {"kind": "section"}}}, "status": "explicit", "anchorBehavior": "scene-context-only"}
+      ]
+    }
+  ],
+  "artInventory": []
+}
