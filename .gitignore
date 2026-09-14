@@ -14,6 +14,11 @@ CLAUDE.local.md
 .env.local
 .env.*.local
 
+# SQLite databases (local dev workspace)
+*.db
+*.db-shm
+*.db-wal
+
 # Python
 __pycache__/
 *.py[cod]
