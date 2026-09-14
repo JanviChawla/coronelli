@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.candidates import router as candidates_router
 from app.api.extraction import router as extraction_router
+from app.api.series import router as series_router
 from app.api.sources import router as sources_router
 from app.api.workspaces import router as workspaces_router
 from app.db.base import Base
@@ -32,6 +33,7 @@ app.add_middleware(
 
 app.include_router(workspaces_router)
 app.include_router(sources_router)
+app.include_router(series_router)
 app.include_router(extraction_router)
 app.include_router(candidates_router)
 

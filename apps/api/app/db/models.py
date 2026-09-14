@@ -10,6 +10,7 @@ from .base import Base
 import app.extraction.models  # noqa: F401, E402
 import app.domain.world  # noqa: F401, E402
 import app.domain.review  # noqa: F401, E402
+import app.domain.series  # noqa: F401, E402
 
 
 class SourceDocument(Base):
@@ -25,6 +26,10 @@ class SourceDocument(Base):
     )
     parser_version: Mapped[str] = mapped_column(String, nullable=False)
     category: Mapped[str] = mapped_column(String, nullable=False)
+    series_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("series.id", ondelete="SET NULL"), nullable=True
+    )
+    series_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     sections: Mapped[list["SourceSection"]] = relationship(
         "SourceSection",

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { CandidateQueue } from '../candidates/CandidateQueue'
 import { SectionEditor } from './SectionEditor'
 import {
   deleteDocument,
@@ -18,6 +19,7 @@ export function SourceLibrary() {
   const [category, setCategory] = useState<'demo' | 'private'>('demo')
   const [error, setError] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
+  const [reviewSection, setReviewSection] = useState<Section | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -29,6 +31,7 @@ export function SourceLibrary() {
   async function handleSelect(doc: Document) {
     setSelected(doc)
     setError(null)
+    setReviewSection(null)
     try {
       setSections(await fetchSections(doc.id))
     } catch {
@@ -130,7 +133,25 @@ export function SourceLibrary() {
       {selected && sections.length > 0 && (
         <section aria-label={`Sections for ${selected.title}`}>
           <h2>{selected.title}</h2>
-          <SectionEditor documentId={selected.id} sections={sections} onSave={handleSave} />
+          <SectionEditor
+            documentId={selected.id}
+            sections={sections}
+            onSave={handleSave}
+            onSelectSection={setReviewSection}
+          />
+        </section>
+      )}
+
+      {reviewSection && (
+        <section aria-label="Candidate review" style={{ marginTop: '2rem' }}>
+          <button
+            type="button"
+            onClick={() => setReviewSection(null)}
+            style={{ fontSize: '0.8rem', marginBottom: '0.75rem' }}
+          >
+            ← Back to sections
+          </button>
+          <CandidateQueue sectionId={reviewSection.id} sectionTitle={reviewSection.title} />
         </section>
       )}
     </div>

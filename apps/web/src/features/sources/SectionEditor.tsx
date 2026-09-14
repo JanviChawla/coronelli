@@ -5,9 +5,10 @@ interface Props {
   documentId: string
   sections: Section[]
   onSave: (sections: SectionUpdate[]) => void | Promise<void>
+  onSelectSection?: (section: Section) => void
 }
 
-export function SectionEditor({ sections, onSave }: Props) {
+export function SectionEditor({ sections, onSave, onSelectSection }: Props) {
   const [titles, setTitles] = useState<Record<string, string | null>>(
     () => Object.fromEntries(sections.map((s) => [s.id, s.title])),
   )
@@ -44,8 +45,19 @@ export function SectionEditor({ sections, onSave }: Props) {
         <ol style={{ listStyle: 'none', padding: 0 }}>
           {sections.map((s) => (
             <li key={s.id} style={{ marginBottom: '1rem' }}>
-              <div style={{ fontWeight: 500 }}>
-                {s.ordinal + 1}. {s.title ?? <em style={{ color: '#888' }}>untitled</em>}
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
+                <span style={{ fontWeight: 500 }}>
+                  {s.ordinal + 1}. {s.title ?? <em style={{ color: '#888' }}>untitled</em>}
+                </span>
+                {onSelectSection && (
+                  <button
+                    type="button"
+                    onClick={() => onSelectSection(s)}
+                    style={{ fontSize: '0.75rem' }}
+                  >
+                    Review candidates
+                  </button>
+                )}
               </div>
               <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#666', marginTop: '0.2rem' }}>
                 {s.id}

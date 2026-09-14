@@ -36,6 +36,8 @@ class DocumentResponse(BaseModel):
     imported_at: datetime
     parser_version: str
     category: str
+    series_id: str | None
+    series_order: int | None
 
     model_config = {"from_attributes": True}
 

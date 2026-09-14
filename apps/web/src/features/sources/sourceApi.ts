@@ -20,6 +20,8 @@ export type Document = {
   imported_at: string
   parser_version: string
   category: string
+  series_id: string | null
+  series_order: number | null
 }
 
 export type SectionUpdate = {
