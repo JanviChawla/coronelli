@@ -1,70 +1,78 @@
 # Coronelli
 
-A local-first application that turns text-bearing fiction into a reviewed, provenance-aware spatial world model and a browsable schematic atlas.
+Local-first application for turning written fiction into a reviewed, provenance-aware spatial world model.
 
 ```
-Source text → sections → candidate spatial extraction → review → canonical Atlas Package → atlas
+source text → sections → candidate extraction → review → canonical world data
 ```
 
 ## What it does
 
-1. **Import** `.txt`, `.md`, and text-bearing `.pdf` documents locally.
-2. **Section** documents into inspectable source sections and correct boundaries.
-3. **Extract** candidate map-relevant entities and claims via a configured LLM provider.
-4. **Review** candidates as provisional working facts — approve, challenge, edit, merge, or defer.
-5. **Export** a canonical [Atlas Package](packages/atlas-package-v0.1/) and optional cartographer packet.
-6. **Browse** a provenance-aware SVG schematic atlas with reader-knowledge reveal controls.
-
-Every map fact carries an `explicit`, `inferred`, or `imagined` status and full source provenance. LLM output is never automatically canonical.
+- Import `.txt`, `.md`, and text-bearing `.pdf` source documents.
+- Detect and correct section boundaries; assign section titles.
+- Extract candidate map-relevant entities and claims via a cloud LLM (BYOK — see below).
+- Store candidates with temporal interpretation and inter-claim relation fields.
+- Review each candidate — approve, reject, or defer — before anything becomes canonical.
+- Every claim carries `explicit`, `inferred`, or `imagined` status and full source provenance.
 
 ## Requirements
 
-- Python 3.12+
-- Node.js 20+, pnpm 8+
+- Python 3.12+, [uv](https://docs.astral.sh/uv/)
+- Node 20+, pnpm 12+
 
-## Local setup
+## Setup
 
 ```sh
-# Install Python dependencies
+# Python dependencies (from apps/api)
 cd apps/api
-pip install -e ".[dev]"
+uv sync --extra dev
 
-# Install JS dependencies
-cd ../..
+# JS dependencies (from repo root)
 pnpm install
+```
 
-# Start the API server
-cd apps/api
-uvicorn app.main:app --reload
+Copy `.env.example` to `.env` and fill in your credentials before starting the API.
 
-# Start the web client (separate terminal)
-cd apps/web
+## Running
+
+```sh
+# API — port 8000 (from apps/api)
+uv run uvicorn app.main:app --reload
+
+# Web client — port 5173 (from repo root, separate terminal)
 pnpm dev
 ```
 
 ## Tests
 
 ```sh
-# API tests
-cd apps/api && python -m pytest -q
+# API
+cd apps/api && uv run pytest -q
 
-# Web tests
-cd apps/web && pnpm test --run
+# Web
+pnpm --filter web test --run
 ```
+
+## Cloud extraction — BYOK
+
+Candidate extraction uses the OpenAI API. Set `OPENAI_API_KEY` and `OPENAI_EXTRACTION_MODEL`
+in `.env`. No shared key is bundled or implied. The application never makes LLM output
+canonical automatically; all candidates are held for human review.
+
+A preflight endpoint (`GET /api/sections/{id}/extract/preflight`) shows estimated token
+count and cost before any request is sent. Repeated extraction on unchanged sections is
+served from cache without a new API call.
 
 ## Workspaces
 
-| Category | Path | Repository status |
+| Kind | Path | Status |
 |---|---|---|
-| `demo` | `data/demos/` | Tracked — original/public-domain material only |
-| `private` | `data/private/` | Ignored — copyrighted or personal corpus material |
+| demo | `data/demos/` | Tracked — public-domain or synthetic material only |
+| private | `data/private/` | Ignored — copyrighted or personal corpus material |
 
-Exports targeting `exports/private/` are gitignored. Files matching `*.atlas.private` are always ignored. Do not commit private source text, extracted databases, or derived art.
-
-## Atlas Package
-
-The portable interchange format is defined in [`packages/atlas-package-v0.1/`](packages/atlas-package-v0.1/). It stores canonical entities, claims, travel rules, layouts, discovery data, and art inventory — independently of any database or LLM provider.
+`exports/private/` and `*.atlas.private` files are always ignored. Do not commit private
+source text, extracted databases, or derived artefacts.
 
 ## License
 
-MIT
+Source-available, personal non-commercial use only. See [LICENSE](LICENSE).
