@@ -16,6 +16,7 @@ class ProposedSection:
     title: str | None = None
     page_start: int | None = None
     page_end: int | None = None
+    user_corrected: bool = False
 
 
 def create_document(
@@ -66,7 +67,7 @@ def replace_sections(
             text=prop.text,
             page_start=prop.page_start,
             page_end=prop.page_end,
-            user_corrected=False,
+            user_corrected=prop.user_corrected,
         )
         session.add(row)
         new_rows.append(row)

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db.engine import get_db
 from app.db.models import SourceDocument
-from app.domain.sources import list_documents, list_sections
+from app.domain.sources import ProposedSection, list_documents, list_sections, replace_sections
 from app.ingestion.parsers import TextExtractionUnavailableError
 from app.ingestion.service import import_document
 
@@ -67,6 +67,39 @@ async def import_document_endpoint(
 @router.get("", response_model=list[DocumentResponse])
 def get_documents(db: Session = Depends(get_db)) -> list[DocumentResponse]:
     return [DocumentResponse.model_validate(d) for d in list_documents(db)]
+
+
+class SectionUpdateRequest(BaseModel):
+    id: str
+    ordinal: int
+    title: str | None
+    text: str
+
+
+@router.put("/{document_id}/sections", response_model=list[SectionResponse])
+def update_sections(
+    document_id: str,
+    body: list[SectionUpdateRequest],
+    db: Session = Depends(get_db),
+) -> list[SectionResponse]:
+    doc = db.get(SourceDocument, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document '{document_id}' not found.")
+
+    current = {s.id: s for s in list_sections(db, document_id)}
+    proposed: list[ProposedSection] = []
+    for upd in body:
+        existing = current.get(upd.id)
+        changed = existing is None or existing.title != upd.title or existing.text != upd.text
+        proposed.append(ProposedSection(
+            title=upd.title,
+            text=upd.text,
+            ordinal=upd.ordinal,
+            user_corrected=changed,
+        ))
+
+    sections = replace_sections(db, document_id, proposed)
+    return [SectionResponse.model_validate(s) for s in sections]
 
 
 @router.get("/{document_id}/sections", response_model=list[SectionResponse])
