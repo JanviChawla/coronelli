@@ -39,16 +39,8 @@ const claimCandidate: Candidate = {
   relation_target_id: null,
 }
 
-const reviewOkResponse = {
-  event: {
-    id: 'ev1',
-    candidate_id: 'c1',
-    action: 'approve',
-    canonical_entity_id: 'ent1',
-    canonical_claim_id: null,
-    canonical_travel_rule_id: null,
-    created_at: '2026-01-01T00:00:00Z',
-  },
+const reviewOk = {
+  event: { id: 'ev1', candidate_id: 'c1', action: 'approve', canonical_entity_id: 'ent1', canonical_claim_id: null, canonical_travel_rule_id: null, created_at: '2026-01-01T00:00:00Z' },
   canonical_entity: { id: 'ent1', name: 'Casterbridge' },
   canonical_claim: null,
 }
@@ -56,86 +48,133 @@ const reviewOkResponse = {
 function mockFetch(...responses: object[]) {
   let call = 0
   vi.spyOn(global, 'fetch').mockImplementation(() => {
-    const body = responses[call] ?? responses[responses.length - 1]
+    const body = responses[Math.min(call, responses.length - 1)]
     call++
     return Promise.resolve({ ok: true, json: () => Promise.resolve(body) } as Response)
   })
 }
 
-afterEach(() => {
-  vi.restoreAllMocks()
-})
+afterEach(() => vi.restoreAllMocks())
 
-test('renders source excerpt for a candidate', async () => {
+// ── Default confirmed view ─────────────────────────────────────────────────
+
+test('renders candidate summary without review buttons by default', async () => {
   mockFetch([entityCandidate])
   render(<CandidateQueue sectionId="sec1" sectionTitle="Chapter I" />)
-  await waitFor(() =>
-    expect(screen.getByText(/Casterbridge lay amid the cornfields/i)).toBeInTheDocument(),
-  )
+  await waitFor(() => expect(screen.getByText(/Casterbridge/)).toBeInTheDocument())
+  expect(screen.queryByRole('button', { name: /reject/i })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /defer/i })).not.toBeInTheDocument()
 })
 
-test('renders explicit status badge', async () => {
+test('shows Approve all proposed as the primary action', async () => {
   mockFetch([entityCandidate])
   render(<CandidateQueue sectionId="sec1" sectionTitle="Chapter I" />)
-  await waitFor(() => expect(screen.getByText('explicit')).toBeInTheDocument())
+  await waitFor(() => screen.getByRole('button', { name: /approve all proposed/i }))
 })
 
-test('renders provisional badge for proposed candidates', async () => {
-  mockFetch([entityCandidate])
+test('shows candidate count in approve button', async () => {
+  mockFetch([entityCandidate, claimCandidate])
   render(<CandidateQueue sectionId="sec1" sectionTitle="Chapter I" />)
-  await waitFor(() => expect(screen.getByText('provisional')).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByRole('button', { name: /approve all proposed \(2\)/i })).toBeInTheDocument())
 })
 
-test('clicking Approve candidate calls review API with approve', async () => {
+// ── Approve all ────────────────────────────────────────────────────────────
+
+test('Approve all proposed calls review API for each proposed candidate', async () => {
   const user = userEvent.setup()
-  mockFetch([entityCandidate], reviewOkResponse)
+  mockFetch([entityCandidate, claimCandidate], reviewOk, reviewOk)
   render(<CandidateQueue sectionId="sec1" sectionTitle="Chapter I" />)
-  await waitFor(() => screen.getByRole('button', { name: /approve candidate/i }))
+  await waitFor(() => screen.getByRole('button', { name: /approve all proposed/i }))
 
-  await user.click(screen.getByRole('button', { name: /approve candidate/i }))
+  await user.click(screen.getByRole('button', { name: /approve all proposed/i }))
 
-  expect(global.fetch).toHaveBeenCalledTimes(2)
-  const [url, opts] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[1]
-  expect(url).toContain('/api/candidates/c1/review')
-  expect(JSON.parse((opts as RequestInit).body as string)).toMatchObject({ action: 'approve' })
+  await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3))
+  const calls = (global.fetch as ReturnType<typeof vi.fn>).mock.calls
+  expect(JSON.parse((calls[1][1] as RequestInit).body as string)).toMatchObject({ action: 'approve' })
+  expect(JSON.parse((calls[2][1] as RequestInit).body as string)).toMatchObject({ action: 'approve' })
 })
 
-test('clicking Challenge candidate calls review API with reject', async () => {
-  const user = userEvent.setup()
-  mockFetch([entityCandidate], { ...reviewOkResponse, event: { ...reviewOkResponse.event, action: 'reject' } })
-  render(<CandidateQueue sectionId="sec1" sectionTitle="Chapter I" />)
-  await waitFor(() => screen.getByRole('button', { name: /challenge candidate/i }))
+// ── Challenge exception workflow ───────────────────────────────────────────
 
-  await user.click(screen.getByRole('button', { name: /challenge candidate/i }))
+test('Challenge button reveals excerpt and exception actions', async () => {
+  const user = userEvent.setup()
+  mockFetch([entityCandidate])
+  render(<CandidateQueue sectionId="sec1" sectionTitle="Chapter I" />)
+  await waitFor(() => screen.getByRole('button', { name: /challenge/i }))
+
+  await user.click(screen.getByRole('button', { name: /challenge/i }))
+
+  expect(screen.getByText(/Casterbridge lay amid the cornfields/i)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /reject/i })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /defer/i })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /edit & approve/i })).toBeInTheDocument()
+})
+
+test('Reject in challenge view calls review API with reject', async () => {
+  const user = userEvent.setup()
+  mockFetch([entityCandidate], { ...reviewOk, event: { ...reviewOk.event, action: 'reject' } })
+  render(<CandidateQueue sectionId="sec1" sectionTitle="Chapter I" />)
+  await waitFor(() => screen.getByRole('button', { name: /challenge/i }))
+
+  await user.click(screen.getByRole('button', { name: /challenge/i }))
+  await user.click(screen.getByRole('button', { name: /reject/i }))
 
   const [, opts] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[1]
   expect(JSON.parse((opts as RequestInit).body as string)).toMatchObject({ action: 'reject' })
 })
 
-test('clicking Defer candidate calls review API with defer', async () => {
+test('Defer in challenge view calls review API with defer', async () => {
   const user = userEvent.setup()
-  mockFetch([entityCandidate], { ...reviewOkResponse, event: { ...reviewOkResponse.event, action: 'defer' } })
+  mockFetch([entityCandidate], { ...reviewOk, event: { ...reviewOk.event, action: 'defer' } })
   render(<CandidateQueue sectionId="sec1" sectionTitle="Chapter I" />)
-  await waitFor(() => screen.getByRole('button', { name: /defer candidate/i }))
+  await waitFor(() => screen.getByRole('button', { name: /challenge/i }))
 
-  await user.click(screen.getByRole('button', { name: /defer candidate/i }))
+  await user.click(screen.getByRole('button', { name: /challenge/i }))
+  await user.click(screen.getByRole('button', { name: /defer/i }))
 
   const [, opts] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[1]
   expect(JSON.parse((opts as RequestInit).body as string)).toMatchObject({ action: 'defer' })
 })
 
+test('Cancel in challenge view hides exception actions', async () => {
+  const user = userEvent.setup()
+  mockFetch([entityCandidate])
+  render(<CandidateQueue sectionId="sec1" sectionTitle="Chapter I" />)
+  await waitFor(() => screen.getByRole('button', { name: /challenge/i }))
+
+  await user.click(screen.getByRole('button', { name: /challenge/i }))
+  expect(screen.getByRole('button', { name: /reject/i })).toBeInTheDocument()
+
+  await user.click(screen.getByRole('button', { name: /cancel/i }))
+  expect(screen.queryByRole('button', { name: /reject/i })).not.toBeInTheDocument()
+})
+
+// ── Edit & approve exception workflow ──────────────────────────────────────
+
+test('Edit & approve opens edit form with existing name', async () => {
+  const user = userEvent.setup()
+  mockFetch([entityCandidate])
+  render(<CandidateQueue sectionId="sec1" sectionTitle="Chapter I" />)
+  await waitFor(() => screen.getByRole('button', { name: /challenge/i }))
+
+  await user.click(screen.getByRole('button', { name: /challenge/i }))
+  await user.click(screen.getByRole('button', { name: /edit & approve/i }))
+
+  expect(screen.getByRole('textbox', { name: /candidate name/i })).toHaveValue('Casterbridge')
+})
+
 test('editing name and approving sends edited_payload', async () => {
   const user = userEvent.setup()
-  mockFetch([entityCandidate], reviewOkResponse)
+  mockFetch([entityCandidate], reviewOk)
   render(<CandidateQueue sectionId="sec1" sectionTitle="Chapter I" />)
-  await waitFor(() => screen.getByRole('button', { name: /edit & approve/i }))
+  await waitFor(() => screen.getByRole('button', { name: /challenge/i }))
 
+  await user.click(screen.getByRole('button', { name: /challenge/i }))
   await user.click(screen.getByRole('button', { name: /edit & approve/i }))
 
   const nameInput = screen.getByRole('textbox', { name: /candidate name/i })
   await user.clear(nameInput)
   await user.type(nameInput, 'Casterton')
-
   await user.click(screen.getByRole('button', { name: /approve candidate/i }))
 
   const [, opts] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[1]
@@ -144,16 +183,19 @@ test('editing name and approving sends edited_payload', async () => {
   expect(body.edited_payload).toMatchObject({ name: 'Casterton' })
 })
 
+// ── Other states ───────────────────────────────────────────────────────────
+
 test('shows empty state when no candidates', async () => {
   mockFetch([])
   render(<CandidateQueue sectionId="sec1" sectionTitle="Chapter I" />)
-  await waitFor(() =>
-    expect(screen.getByText(/no candidates extracted/i)).toBeInTheDocument(),
-  )
+  await waitFor(() => expect(screen.getByText(/no candidates extracted/i)).toBeInTheDocument())
 })
 
-test('shows candidate count summary', async () => {
-  mockFetch([entityCandidate, claimCandidate])
+test('reviewed candidates show review state, not Challenge button', async () => {
+  const approved = { ...entityCandidate, review_state: 'approved' }
+  mockFetch([approved])
   render(<CandidateQueue sectionId="sec1" sectionTitle="Chapter I" />)
-  await waitFor(() => expect(screen.getByText(/2 candidates/i)).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByText('approved')).toBeInTheDocument())
+  expect(screen.queryByRole('button', { name: /challenge/i })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /approve all proposed/i })).not.toBeInTheDocument()
 })

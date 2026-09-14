@@ -30,95 +30,96 @@ function payloadSummary(candidate: Candidate): string {
   return ''
 }
 
-const _PROPOSED = 'proposed'
+const _REVIEWED_STATES = new Set(['approved', 'rejected', 'deferred', 'merged'])
 
 export function CandidateCard({ candidate, onReviewed }: Props) {
+  const [challenging, setChallenging] = useState(false)
   const [editing, setEditing] = useState(false)
-  const isProposed = candidate.review_state === _PROPOSED
+
+  const isReviewed = _REVIEWED_STATES.has(candidate.review_state)
 
   return (
-    <article
+    <li
       style={{
-        border: '1px solid #ddd',
-        borderRadius: '4px',
-        padding: '0.75rem',
-        marginBottom: '0.75rem',
-        opacity: isProposed ? 1 : 0.7,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '0.4rem',
+        padding: '0.5rem 0',
+        borderBottom: '1px solid #eee',
+        opacity: isReviewed ? 0.6 : 1,
       }}
     >
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'baseline', flexWrap: 'wrap', marginBottom: '0.4rem' }}>
-        <span style={{ fontSize: '0.7rem', background: '#eef', padding: '0.1rem 0.4rem', borderRadius: '3px' }}>
+      {/* Compact row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.7rem', background: '#eef', padding: '0.1rem 0.4rem', borderRadius: '3px', whiteSpace: 'nowrap' }}>
           {kindLabel(candidate.kind)}
         </span>
         <span
           style={{
             fontSize: '0.7rem',
-            background: candidate.status === 'explicit' ? '#efe' : '#ffeedd',
+            background: candidate.status === 'explicit' ? '#efe' : '#fff3cd',
             padding: '0.1rem 0.4rem',
             borderRadius: '3px',
+            whiteSpace: 'nowrap',
           }}
         >
           {candidate.status}
         </span>
-        {isProposed && (
-          <span style={{ fontSize: '0.7rem', background: '#fff3cd', padding: '0.1rem 0.4rem', borderRadius: '3px' }}>
-            provisional
-          </span>
-        )}
-        {!isProposed && (
-          <span style={{ fontSize: '0.7rem', color: '#555' }}>{candidate.review_state}</span>
-        )}
-        <span style={{ fontSize: '0.7rem', color: '#888', marginLeft: 'auto' }}>
-          {Math.round(candidate.confidence * 100)}% confidence
+        <span style={{ flex: 1, fontSize: '0.9rem' }}>{payloadSummary(candidate)}</span>
+        <span style={{ fontSize: '0.75rem', color: '#888', whiteSpace: 'nowrap' }}>
+          {Math.round(candidate.confidence * 100)}%
         </span>
+        {isReviewed ? (
+          <span style={{ fontSize: '0.75rem', color: '#666', whiteSpace: 'nowrap' }}>
+            {candidate.review_state}
+          </span>
+        ) : !challenging ? (
+          <button
+            type="button"
+            onClick={() => setChallenging(true)}
+            style={{ fontSize: '0.75rem', color: '#888', background: 'none', border: '1px solid #ccc', borderRadius: '3px', padding: '0.15rem 0.5rem', cursor: 'pointer' }}
+          >
+            Challenge
+          </button>
+        ) : null}
       </div>
 
-      <p style={{ margin: '0 0 0.4rem', fontWeight: 500 }}>{payloadSummary(candidate)}</p>
-
-      {candidate.temporal_interpretation !== 'static' && (
-        <p style={{ margin: '0 0 0.4rem', fontSize: '0.75rem', color: '#666' }}>
-          Temporal: {candidate.temporal_interpretation}
-        </p>
+      {/* Exception workflow — only shown when challenging */}
+      {challenging && !editing && (
+        <div style={{ marginLeft: '0.5rem', paddingLeft: '0.75rem', borderLeft: '3px solid #f0c040' }}>
+          <blockquote style={{ margin: '0 0 0.5rem', fontSize: '0.82rem', color: '#555', fontStyle: 'italic' }}>
+            {candidate.excerpt}
+          </blockquote>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button type="button" onClick={() => { onReviewed(candidate.id, 'reject'); setChallenging(false) }}>
+              Reject
+            </button>
+            <button type="button" onClick={() => setEditing(true)}>
+              Edit &amp; approve
+            </button>
+            <button type="button" onClick={() => { onReviewed(candidate.id, 'defer'); setChallenging(false) }}>
+              Defer
+            </button>
+            <button type="button" onClick={() => setChallenging(false)} style={{ color: '#888' }}>
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
 
-      <blockquote
-        style={{
-          margin: '0 0 0.5rem',
-          padding: '0.4rem 0.6rem',
-          borderLeft: '3px solid #ccc',
-          fontSize: '0.85rem',
-          color: '#444',
-          fontStyle: 'italic',
-        }}
-      >
-        {candidate.excerpt}
-      </blockquote>
-
-      {editing ? (
-        <ReviewForm
-          candidate={candidate}
-          onSubmit={(editedPayload) => {
-            setEditing(false)
-            onReviewed(candidate.id, 'approve', editedPayload)
-          }}
-          onCancel={() => setEditing(false)}
-        />
-      ) : isProposed ? (
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <button type="button" onClick={() => onReviewed(candidate.id, 'approve')}>
-            Approve candidate
-          </button>
-          <button type="button" onClick={() => setEditing(true)}>
-            Edit &amp; approve
-          </button>
-          <button type="button" onClick={() => onReviewed(candidate.id, 'reject')}>
-            Challenge candidate
-          </button>
-          <button type="button" onClick={() => onReviewed(candidate.id, 'defer')}>
-            Defer candidate
-          </button>
+      {editing && (
+        <div style={{ marginLeft: '0.5rem', paddingLeft: '0.75rem', borderLeft: '3px solid #f0c040' }}>
+          <ReviewForm
+            candidate={candidate}
+            onSubmit={(editedPayload) => {
+              setEditing(false)
+              setChallenging(false)
+              onReviewed(candidate.id, 'approve', editedPayload)
+            }}
+            onCancel={() => setEditing(false)}
+          />
         </div>
-      ) : null}
-    </article>
+      )}
+    </li>
   )
 }

@@ -7,9 +7,17 @@ interface Props {
   sectionTitle: string | null
 }
 
+function nextReviewState(action: string): string {
+  if (action === 'approve') return 'approved'
+  if (action === 'reject') return 'rejected'
+  if (action === 'defer') return 'deferred'
+  return action
+}
+
 export function CandidateQueue({ sectionId, sectionTitle }: Props) {
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const [loading, setLoading] = useState(true)
+  const [approving, setApproving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -32,14 +40,29 @@ export function CandidateQueue({ sectionId, sectionTitle }: Props) {
         edited_payload: editedPayload ?? null,
       })
       setCandidates((prev) =>
-        prev.map((c) =>
-          c.id === candidateId
-            ? { ...c, review_state: action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : action === 'defer' ? 'deferred' : action }
-            : c,
-        ),
+        prev.map((c) => c.id === candidateId ? { ...c, review_state: nextReviewState(action) } : c),
       )
     } catch {
       setError('Review action failed. Please try again.')
+    }
+  }
+
+  async function handleApproveAll() {
+    const proposed = candidates.filter((c) => c.review_state === 'proposed')
+    if (proposed.length === 0) return
+    setApproving(true)
+    setError(null)
+    try {
+      for (const c of proposed) {
+        await reviewCandidate(c.id, { action: 'approve' })
+      }
+      setCandidates((prev) =>
+        prev.map((c) => c.review_state === 'proposed' ? { ...c, review_state: 'approved' } : c),
+      )
+    } catch {
+      setError('Could not approve all candidates. Please try again.')
+    } finally {
+      setApproving(false)
     }
   }
 
@@ -61,25 +84,42 @@ export function CandidateQueue({ sectionId, sectionTitle }: Props) {
         </p>
       )}
 
-      {!loading && candidates.length > 0 && (
-        <p style={{ fontSize: '0.8rem', color: '#666', marginBottom: '0.75rem' }}>
-          {candidates.length} candidate{candidates.length !== 1 ? 's' : ''} —{' '}
-          {proposed.length} proposed, {reviewed.length} reviewed
-        </p>
+      {!loading && proposed.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+          <button
+            type="button"
+            onClick={handleApproveAll}
+            disabled={approving}
+            style={{ fontWeight: 500 }}
+          >
+            {approving ? 'Approving…' : `Approve all proposed (${proposed.length})`}
+          </button>
+          <span style={{ fontSize: '0.8rem', color: '#888' }}>
+            Challenge individual items to reject, edit, or defer them first.
+          </span>
+        </div>
       )}
 
-      {proposed.map((c) => (
-        <CandidateCard key={c.id} candidate={c} onReviewed={handleReviewed} />
-      ))}
-
-      {reviewed.length > 0 && (
+      {!loading && candidates.length > 0 && (
         <>
-          <h4 style={{ marginTop: '1rem', marginBottom: '0.5rem', fontSize: '0.85rem', color: '#666' }}>
-            Reviewed
-          </h4>
-          {reviewed.map((c) => (
-            <CandidateCard key={c.id} candidate={c} onReviewed={handleReviewed} />
-          ))}
+          <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 1rem' }}>
+            {proposed.map((c) => (
+              <CandidateCard key={c.id} candidate={c} onReviewed={handleReviewed} />
+            ))}
+          </ul>
+
+          {reviewed.length > 0 && (
+            <>
+              <h4 style={{ fontSize: '0.8rem', color: '#888', margin: '1rem 0 0.5rem' }}>
+                Reviewed ({reviewed.length})
+              </h4>
+              <ul style={{ listStyle: 'none', padding: 0 }}>
+                {reviewed.map((c) => (
+                  <CandidateCard key={c.id} candidate={c} onReviewed={handleReviewed} />
+                ))}
+              </ul>
+            </>
+          )}
         </>
       )}
     </section>
