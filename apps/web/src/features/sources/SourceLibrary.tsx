@@ -39,12 +39,6 @@ const S = {
     width: '288px', flexShrink: 0, background: 'var(--parchment-alt)',
     borderLeft: '1px solid var(--border-warm)', overflowY: 'auto' as const, padding: '1.75rem 1.5rem',
   },
-  footer: {
-    background: 'var(--sidebar-bg)', borderTop: '1px solid var(--sidebar-border)',
-    height: '40px', display: 'flex' as const, alignItems: 'center' as const,
-    justifyContent: 'space-between' as const, padding: '0 1.75rem', flexShrink: 0,
-  },
-  footerText: { fontSize: '0.68rem', color: 'var(--sidebar-muted)', letterSpacing: '0.1em', textTransform: 'uppercase' as const },
 }
 
 export function SourceLibrary() {
@@ -276,6 +270,20 @@ export function SourceLibrary() {
           <p style={{ padding: '0.2rem 1.25rem 1rem', fontSize: '0.75rem', color: 'var(--sidebar-muted)', fontStyle: 'italic' }}>
             Coming soon
           </p>
+
+          <div style={{ marginTop: 'auto', borderTop: '1px solid var(--sidebar-border)', padding: '0.75rem 1.25rem' }}>
+            <button
+              type="button"
+              onClick={() => { setShowReset(true); setResetInput('') }}
+              style={{
+                fontSize: '0.65rem', color: 'var(--sidebar-muted)', background: 'none',
+                border: 'none', cursor: 'pointer', padding: 0, opacity: 0.45,
+                letterSpacing: '0.08em', textTransform: 'uppercase' as const,
+              }}
+            >
+              Reset library
+            </button>
+          </div>
         </nav>
 
         {/* Main content */}
@@ -327,41 +335,6 @@ export function SourceLibrary() {
           />
         </aside>
       </div>
-
-      {/* ── Footer ──────────────────────────────────────────────────── */}
-      <footer style={S.footer}>
-        {view === 'atlas-explorer' ? (
-          <button
-            type="button"
-            onClick={() => { setView('workflow'); setInspectorTarget(null) }}
-            style={{ ...S.footerText, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--gold)' }}
-          >
-            ← Workflow
-          </button>
-        ) : hasApprovedAtlas && selected ? (
-          <button
-            type="button"
-            onClick={() => { setView('atlas-explorer'); setInspectorTarget(null) }}
-            style={{ ...S.footerText, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--gold)' }}
-          >
-            ◻ Atlas Explorer →
-          </button>
-        ) : (
-          <span style={S.footerText}>◻ Atlas Explorer</span>
-        )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
-          <span style={S.footerText}>
-            {hasApprovedAtlas && selected ? '● Atlas ready' : '⊘ Available after atlas is approved'}
-          </span>
-          <button
-            type="button"
-            onClick={() => { setShowReset(true); setResetInput('') }}
-            style={{ ...S.footerText, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--sidebar-muted)', opacity: 0.5 }}
-          >
-            Reset library
-          </button>
-        </div>
-      </footer>
 
       {/* ── Reset confirmation overlay ───────────────────────────────── */}
       {showReset && (
