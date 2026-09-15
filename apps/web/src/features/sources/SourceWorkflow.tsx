@@ -102,7 +102,7 @@ function Ornament() {
   )
 }
 
-// Shared cost card used by re-harvest and re-synthesize
+// Shared rerun bar used by re-harvest and re-synthesize — full-width horizontal
 function RerunCard({ label, costLo, costHi, meta, action, onAction }: {
   label: string
   costLo: number
@@ -116,28 +116,37 @@ function RerunCard({ label, costLo, costHi, meta, action, onAction }: {
       border: '1px solid var(--border-warm)',
       borderRadius: '6px',
       background: 'var(--parchment-card)',
-      padding: '1.1rem 1.25rem',
-      minWidth: '180px',
+      padding: '0.85rem 1.1rem',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: '1rem',
     }}>
-      <p style={{
-        fontSize: '0.58rem', color: 'var(--ink-muted)',
-        letterSpacing: '0.16em', textTransform: 'uppercase',
-        textAlign: 'center', marginBottom: '0.4rem',
-      }}>
-        {label}
-      </p>
-      <p style={{ textAlign: 'center', marginBottom: '0.35rem' }}>
-        <span style={{ fontSize: '1.4rem', color: 'var(--ink)', fontWeight: 400 }}>
-          ${costLo.toFixed(2)} – ${costHi.toFixed(2)}
-        </span>
-      </p>
-      <p style={{
-        fontSize: '0.68rem', color: 'var(--ink-faint)',
-        textAlign: 'center', fontFamily: 'monospace', marginBottom: '0.9rem',
-      }}>
-        {meta}
-      </p>
-      <button className="btn-cta" type="button" onClick={onAction}>
+      <div>
+        <p style={{
+          fontSize: '0.56rem', color: 'var(--ink-muted)',
+          letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: '0.2rem',
+        }}>
+          {label}
+        </p>
+        <p>
+          <span style={{ fontSize: '1.05rem', color: 'var(--ink)', fontWeight: 400 }}>
+            ${costLo.toFixed(2)} – ${costHi.toFixed(2)}
+          </span>
+          <span style={{
+            fontSize: '0.66rem', color: 'var(--ink-faint)',
+            fontFamily: 'monospace', marginLeft: '0.55rem',
+          }}>
+            {meta}
+          </span>
+        </p>
+      </div>
+      <button
+        className="btn-cta"
+        type="button"
+        onClick={onAction}
+        style={{ width: 'auto', flexShrink: 0, padding: '0.45rem 1rem', fontSize: '0.82rem' }}
+      >
         {action}
       </button>
     </div>
@@ -299,7 +308,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
   const synthCostHi = synthCostBase * 1.15
 
   return (
-    <div>
+    <div style={{ maxWidth: '680px', margin: '0 auto' }}>
       {/* Document header */}
       <p style={{
         fontSize: '0.62rem', color: 'var(--ink-muted)',
@@ -371,20 +380,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
           label="Harvest evidence"
           detail={`${totalCandidates} candidate${totalCandidates !== 1 ? 's' : ''} across ${sections.length} sections${totalElapsedMs > 0 ? ` · ${(totalElapsedMs / 1000).toFixed(1)}s` : ''}`}
           action={
-            <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-              <div style={{ flex: 1, minWidth: '180px' }}>
-                <details>
-                  <summary style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
-                    ▸ Inspect raw candidates ({totalCandidates})
-                  </summary>
-                  <div style={{ marginTop: '0.75rem' }}>
-                    <CandidatesTable
-                      sections={sections.map(s => ({ id: s.id, title: s.title }))}
-                      candidates={allCandidates}
-                    />
-                  </div>
-                </details>
-              </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <RerunCard
                 label="Re-harvest cost"
                 costLo={harvestCostLo}
@@ -393,6 +389,17 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
                 action="Re-harvest evidence"
                 onAction={handleHarvest}
               />
+              <details>
+                <summary style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+                  ▸ Inspect raw candidates ({totalCandidates})
+                </summary>
+                <div style={{ marginTop: '0.75rem' }}>
+                  <CandidatesTable
+                    sections={sections.map(s => ({ id: s.id, title: s.title }))}
+                    candidates={allCandidates}
+                  />
+                </div>
+              </details>
             </div>
           }
         />
@@ -475,35 +482,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
           label="Synthesize atlas"
           detail={`${canonicalEntityCount} place${canonicalEntityCount !== 1 ? 's' : ''} · ${canonicalClaimCount} relationship${canonicalClaimCount !== 1 ? 's' : ''} canonicalized`}
           action={
-            <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-              {atlasEntities.length > 0 && (
-                <div style={{ flex: 1, minWidth: '180px' }}>
-                  <details>
-                    <summary style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
-                      ▸ Inspect canonical places ({canonicalEntityCount})
-                    </summary>
-                    <div style={{
-                      marginTop: '0.65rem',
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-                      gap: '0.35rem 0.75rem',
-                    }}>
-                      {atlasEntities
-                        .slice()
-                        .sort((a, b) => a.name.localeCompare(b.name))
-                        .map(e => (
-                          <div key={e.id} style={{ fontSize: '0.78rem', color: 'var(--ink)', display: 'flex', gap: '0.3rem', alignItems: 'baseline' }}>
-                            <span style={{ flexShrink: 0, color: 'var(--gold)', fontSize: '0.6rem' }}>◉</span>
-                            <span>{e.name}</span>
-                            {e.place_kind && (
-                              <span style={{ color: 'var(--ink-faint)', fontSize: '0.62rem' }}>· {e.place_kind}</span>
-                            )}
-                          </div>
-                        ))}
-                    </div>
-                  </details>
-                </div>
-              )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <RerunCard
                 label="Re-synthesize cost"
                 costLo={synthCostLo}
@@ -512,6 +491,27 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
                 action="Re-synthesize"
                 onAction={() => handleSynthesize(true)}
               />
+              {atlasEntities.length > 0 && (
+                <details>
+                  <summary style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+                    ▸ Inspect canonical places ({canonicalEntityCount})
+                  </summary>
+                  <div style={{ marginTop: '0.65rem', display: 'flex', flexDirection: 'column', gap: '0.22rem' }}>
+                    {atlasEntities
+                      .slice()
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map(e => (
+                        <div key={e.id} style={{ fontSize: '0.78rem', color: 'var(--ink)', display: 'flex', gap: '0.35rem', alignItems: 'baseline' }}>
+                          <span style={{ flexShrink: 0, color: 'var(--gold)', fontSize: '0.58rem' }}>◉</span>
+                          <span>{e.name}</span>
+                          {e.place_kind && (
+                            <span style={{ color: 'var(--ink-faint)', fontSize: '0.62rem' }}>· {e.place_kind}</span>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+                </details>
+              )}
             </div>
           }
         />
