@@ -1,35 +1,49 @@
+/* ── Reset ────────────────────────────────────────────────────────────────── */
+
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
+/* ── Design tokens ───────────────────────────────────────────────────────── */
+
 :root {
-  --sidebar-bg: #1e3a2f;
-  --sidebar-text: #e8dcc8;
-  --sidebar-muted: #8a7c6e;
+  /* Palette */
+  --sidebar-bg:       #1e3a2f;
+  --sidebar-text:     #e8dcc8;
+  --sidebar-muted:    #8a7c6e;
   --sidebar-selected: #3d1535;
-  --sidebar-hover: rgba(255, 255, 255, 0.06);
-  --sidebar-border: rgba(201, 168, 76, 0.25);
-  --parchment: #f5ede0;
-  --parchment-alt: #ede0cc;
-  --parchment-card: #e9dfc9;
-  --gold: #c9a84c;
-  --ink: #2c1810;
-  --ink-muted: #6b5744;
-  --ink-faint: #9b8574;
-  --step-done: #1a6b42;
+  --sidebar-hover:    rgba(255, 255, 255, 0.06);
+  --sidebar-border:   rgba(201, 168, 76, 0.25);
+  --parchment:        #f5ede0;
+  --parchment-alt:    #ede0cc;
+  --parchment-card:   #e9dfc9;
+  --gold:             #c9a84c;
+  --gold-faint:       rgba(201, 168, 76, 0.18);
+  --ink:              #2c1810;
+  --ink-muted:        #6b5744;
+  --ink-faint:        #9b8574;
+  --step-done:        #1a6b42;
   --step-active-circle: #2d1b3d;
-  --step-active-label: #7c2d42;
-  --step-locked: #b8a898;
-  --border-warm: #d4bc8a;
-  --error-text: #8b1a1a;
+  --step-active-label:  #7c2d42;
+  --step-locked:      #b8a898;
+  --border-warm:      #d4bc8a;
+  --error-text:       #8b1a1a;
+
+  /* Chrome geometry */
+  --chrome-radius:    5px;
+  --chrome-pad-x:     1rem;
+  --chrome-pad-y:     0.65rem;
+
+  /* Overlay transparency */
+  --overlay-bg:       rgba(245, 237, 224, 0.96);
+  --overlay-shadow:   0 2px 12px rgba(44, 24, 16, 0.14);
 }
 
-html,
-body {
-  height: 100%;
-}
+/* ── Base ────────────────────────────────────────────────────────────────── */
+
+html, body { height: 100%; }
 
 body {
   font-family: 'NSimSun', 'New Sung', serif;
@@ -43,14 +57,26 @@ body {
   flex-direction: column;
 }
 
-button,
-input,
-select,
-textarea {
-  font-family: inherit;
+button, input, select, textarea { font-family: inherit; }
+
+/* ── Focus rings — visible on keyboard nav only ──────────────────────────── */
+
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
-/* ── Sidebar interactive items ─────────────────────────── */
+/* ── Reduced-motion ──────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Sidebar items ───────────────────────────────────────────────────────── */
 
 .sidebar-item {
   display: flex;
@@ -68,13 +94,8 @@ textarea {
   transition: background 0.12s;
 }
 
-.sidebar-item:hover {
-  background: var(--sidebar-hover);
-}
-
-.sidebar-item.active {
-  background: var(--sidebar-selected);
-}
+.sidebar-item:hover { background: var(--sidebar-hover); }
+.sidebar-item.active { background: var(--sidebar-selected); }
 
 .sidebar-delete-btn {
   background: none;
@@ -89,27 +110,22 @@ textarea {
   transition: opacity 0.12s, color 0.12s;
 }
 
-.sidebar-delete-btn:hover {
-  opacity: 0.85;
-  color: #e87070;
-}
+.sidebar-delete-btn:hover { opacity: 0.85; color: #e87070; }
 
-/* ── Parchment buttons ─────────────────────────────────── */
+/* ── Parchment buttons ───────────────────────────────────────────────────── */
 
 .btn-outline-warm {
   background: transparent;
   border: 1px solid var(--border-warm);
   color: var(--ink-muted);
-  border-radius: 3px;
+  border-radius: var(--chrome-radius);
   padding: 0.25rem 0.7rem;
   font-size: 0.78rem;
   cursor: pointer;
   transition: background 0.12s;
 }
 
-.btn-outline-warm:hover {
-  background: rgba(212, 188, 138, 0.15);
-}
+.btn-outline-warm:hover { background: rgba(212, 188, 138, 0.15); }
 
 .btn-cta {
   display: block;
@@ -118,18 +134,471 @@ textarea {
   background: var(--sidebar-bg);
   color: var(--sidebar-text);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--chrome-radius);
   font-size: 1rem;
   cursor: pointer;
   letter-spacing: 0.02em;
   transition: opacity 0.12s;
 }
 
-.btn-cta:hover {
-  opacity: 0.88;
+.btn-cta:hover  { opacity: 0.88; }
+.btn-cta:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Cartouche — decorative text frame used for legend / inspector headers ── */
+/* Hand-authored CSS box with double-rule effect; no generated art.            */
+
+.cartouche {
+  position: relative;
+  border: 1px solid var(--border-warm);
+  border-radius: var(--chrome-radius);
+  padding: var(--chrome-pad-y) var(--chrome-pad-x);
+  background: var(--parchment-alt);
 }
 
-.btn-cta:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.cartouche::before {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border: 1px solid rgba(212, 188, 138, 0.35);
+  border-radius: 3px;
+  pointer-events: none;
 }
+
+/* ── Divider rule with centre ornament — CSS only ───────────────────────── */
+
+.divider-rule {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 1rem 0 1.75rem;
+}
+
+.divider-rule::before,
+.divider-rule::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--gold);
+  opacity: 0.28;
+}
+
+.divider-rule-ornament {
+  font-size: 0.55rem;
+  color: var(--gold);
+  opacity: 0.55;
+}
+
+/* ── Atlas canvas root ───────────────────────────────────────────────────── */
+
+.atlas-canvas-root {
+  position: relative;
+  height: 100%;
+  /* Cartographic frame: thin double border on the outside of the canvas */
+  border: 1px solid rgba(212, 188, 138, 0.45);
+  box-shadow: inset 0 0 0 4px rgba(212, 188, 138, 0.10);
+  overflow: hidden;
+}
+
+/* ── Atlas overlay base ──────────────────────────────────────────────────── */
+/* All overlay panels share positioning semantics; each subclass pins itself. */
+
+.atlas-overlay {
+  position: absolute;
+  z-index: 10;
+  background: var(--overlay-bg);
+  border: 1px solid var(--border-warm);
+  border-radius: var(--chrome-radius);
+  box-shadow: var(--overlay-shadow);
+  backdrop-filter: blur(1px);
+}
+
+/* ── Filter bar ──────────────────────────────────────────────────────────── */
+
+.atlas-filter-bar {
+  top: 0.65rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.28rem 0.7rem;
+  font-size: 0.68rem;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+.atlas-filter-item {
+  display: flex;
+  align-items: center;
+  gap: 0.22rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.atlas-filter-check { accent-color: var(--gold); }
+
+/* ── Narrative scrubber ──────────────────────────────────────────────────── */
+
+.atlas-scrubber {
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.28rem 0.7rem;
+  user-select: none;
+}
+
+.atlas-scrubber-btn {
+  background: none;
+  border: none;
+  font-size: 1.15rem;
+  line-height: 1;
+  padding: 0 0.1rem;
+  cursor: pointer;
+  color: var(--ink);
+  transition: opacity 0.1s;
+}
+
+.atlas-scrubber-btn:disabled { opacity: 0.28; cursor: default; }
+
+.atlas-scrubber-label {
+  min-width: 17rem;
+  text-align: center;
+  font-size: 0.68rem;
+  color: var(--ink-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+}
+
+.atlas-scrubber-ordinal {
+  color: var(--gold);
+  font-size: 0.62rem;
+  flex-shrink: 0;
+}
+
+.atlas-scrubber-title {
+  color: var(--ink);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 12rem;
+}
+
+/* ── Legend ──────────────────────────────────────────────────────────────── */
+
+.atlas-legend {
+  bottom: 2.2rem;
+  left: 0.65rem;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.61rem;
+  color: var(--ink-muted);
+  min-width: 170px;
+}
+
+.atlas-legend-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  color: var(--ink);
+  font-size: 0.63rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.atlas-legend-title { flex: 1; text-align: left; }
+
+.atlas-legend-list {
+  list-style: none;
+  margin-top: 0.4rem;
+  line-height: 1.9;
+}
+
+.atlas-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* ── Disclaimer ──────────────────────────────────────────────────────────── */
+
+.atlas-disclaimer {
+  position: absolute;
+  bottom: 0.25rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  font-size: 0.55rem;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0.65;
+}
+
+/* ── Inspector overlay ───────────────────────────────────────────────────── */
+
+.atlas-inspector {
+  top: 0.65rem;
+  right: 0.65rem;
+  width: 272px;
+  max-height: calc(100% - 1.3rem);
+  overflow-y: auto;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.atlas-inspector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.55rem 0.85rem 0.45rem;
+  border-bottom: 1px solid var(--border-warm);
+  flex-shrink: 0;
+}
+
+.atlas-inspector-title {
+  font-size: 0.56rem;
+  color: var(--ink-faint);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.atlas-inspector-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-faint);
+  font-size: 1.05rem;
+  line-height: 1;
+  padding: 0 0.1rem;
+  opacity: 0.6;
+  transition: opacity 0.1s;
+}
+
+.atlas-inspector-close:hover { opacity: 1; }
+
+.atlas-inspector-body {
+  padding: 0.8rem 0.95rem 0.95rem;
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* ── Atlas state screens ─────────────────────────────────────────────────── */
+
+.atlas-state-message {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  color: var(--ink-faint);
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 2rem;
+}
+
+.atlas-state-error { color: var(--error-text); }
+
+.atlas-empty-glyph {
+  font-size: 2.2rem;
+  opacity: 0.18;
+  margin-bottom: 0.25rem;
+}
+
+/* ── Inspector content ───────────────────────────────────────────────────── */
+
+.inspector-empty {
+  text-align: center;
+  padding-top: 1.25rem;
+  color: var(--ink-faint);
+}
+
+.inspector-empty-glyph {
+  font-size: 1.8rem;
+  opacity: 0.22;
+  margin-bottom: 0.55rem;
+}
+
+.inspector-empty p { font-size: 0.78rem; line-height: 1.55; }
+
+.inspector-role {
+  font-size: 0.52rem;
+  color: var(--ink-faint);
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  margin-bottom: 0.22rem;
+}
+
+.inspector-name {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 0.2rem;
+  line-height: 1.25;
+}
+
+.inspector-kind-badge {
+  display: inline-block;
+  font-size: 0.6rem;
+  color: var(--ink-muted);
+  background: var(--parchment-card);
+  border: 1px solid var(--border-warm);
+  border-radius: 3px;
+  padding: 0.07rem 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.inspector-aliases {
+  font-style: italic;
+  color: var(--ink-muted);
+  font-size: 0.77rem;
+  margin-bottom: 0.4rem;
+}
+
+.inspector-row {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.18rem;
+}
+
+.inspector-row-label {
+  color: var(--ink-faint);
+  font-size: 0.7rem;
+  min-width: 6rem;
+}
+
+.inspector-row-value {
+  color: var(--ink);
+  font-size: 0.76rem;
+}
+
+.inspector-section-label {
+  font-size: 0.57rem;
+  color: var(--ink-faint);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin: 0.7rem 0 0.3rem;
+}
+
+.inspector-visual-claims { margin-top: 0.6rem; }
+
+.inspector-claim-row {
+  font-size: 0.77rem;
+  color: var(--ink-muted);
+  margin-bottom: 0.2rem;
+}
+
+.inspector-claim-prop {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.inspector-thread {
+  margin-top: 0.85rem;
+}
+
+.inspector-thread-label {
+  font-size: 0.57rem;
+  color: var(--ink-faint);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 0.35rem;
+}
+
+.inspector-thread-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  margin-bottom: 0.18rem;
+  font-size: 0.74rem;
+}
+
+.inspector-thread-ordinal {
+  color: var(--gold);
+  min-width: 2rem;
+  font-size: 0.6rem;
+  flex-shrink: 0;
+}
+
+.inspector-thread-title {
+  color: var(--ink);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-thread-kind {
+  color: var(--ink-faint);
+  font-size: 0.6rem;
+  font-style: italic;
+  flex-shrink: 0;
+}
+
+.inspector-thread-kind.origin { color: var(--gold); }
+
+.inspector-predicate-code {
+  font-size: 0.6rem;
+  color: var(--ink-faint);
+  font-family: monospace;
+  margin-bottom: 0.4rem;
+}
+
+.inspector-desc {
+  color: var(--ink-muted);
+  font-size: 0.76rem;
+  margin-bottom: 0.55rem;
+  line-height: 1.5;
+}
+
+.inspector-excerpt {
+  margin-top: 0.7rem;
+  padding: 0.45rem 0.6rem;
+  border-left: 2px solid var(--gold);
+  background: var(--parchment-card);
+  color: var(--ink-muted);
+  font-size: 0.73rem;
+  font-style: italic;
+  border-radius: 0 3px 3px 0;
+  line-height: 1.5;
+}
+
+.inspector-node,
+.inspector-edge {
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+/* ── Passage edge animation ──────────────────────────────────────────────── */
+
+@keyframes atlas-dash-flow {
+  to { stroke-dashoffset: -24; }
+}
+
+.atlas-passage-edge {
+  animation: atlas-dash-flow 1.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .atlas-passage-edge { animation: none; }
+}
+
+/* ── React Flow overrides ────────────────────────────────────────────────── */
+
+/* Keep the React Flow pane background transparent; canvas bg is set in JS */
+.react-flow__pane { cursor: default; }
+.react-flow__node { cursor: pointer; }
+.react-flow__node[data-type="hull"] { cursor: default !important; pointer-events: none; }
