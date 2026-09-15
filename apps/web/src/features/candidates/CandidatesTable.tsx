@@ -92,7 +92,7 @@ export function CandidatesTable({ sections, candidates: initialCandidates }: Pro
   return (
     <div>
       <p style={{ fontSize: '0.8rem', color: '#888', marginBottom: '1rem' }}>
-        {totalCount} candidate{totalCount !== 1 ? 's' : ''} across {sections.length} section{sections.length !== 1 ? 's' : ''} · all approved · challenge any row to reject, edit, or defer
+        {totalCount} candidate{totalCount !== 1 ? 's' : ''} across {sections.length} section{sections.length !== 1 ? 's' : ''} · review each to approve, reject, or defer
       </p>
 
       {error && <p role="alert" style={{ color: 'red', fontSize: '0.85rem' }}>{error}</p>}

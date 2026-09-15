@@ -30,6 +30,7 @@ class MapEntity(Base):
     candidate_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True
     )
+    aliases: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False

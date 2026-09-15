@@ -7,10 +7,12 @@ from fastapi import FastAPI
 load_dotenv(Path(__file__).parents[3] / ".env")
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.atlas import router as atlas_router
 from app.api.candidates import router as candidates_router
 from app.api.extraction import router as extraction_router
 from app.api.series import router as series_router
 from app.api.sources import router as sources_router
+from app.api.synthesis import router as synthesis_router
 from app.api.workspaces import router as workspaces_router
 from app.db.base import Base
 from app.db.engine import engine
@@ -36,6 +38,8 @@ app.include_router(sources_router)
 app.include_router(series_router)
 app.include_router(extraction_router)
 app.include_router(candidates_router)
+app.include_router(synthesis_router)
+app.include_router(atlas_router)
 
 
 @app.get("/api/health")

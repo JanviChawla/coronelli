@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { CandidatesTable } from '../candidates/CandidatesTable'
-import { type Candidate, approveAllCandidates, fetchCandidates } from '../candidates/candidateApi'
+import { type Candidate, fetchCandidates } from '../candidates/candidateApi'
 import { fetchPreflight, triggerExtraction } from './extractionApi'
 import type { Document, Section } from './sourceApi'
+import { ApprovedAtlasView } from '../atlas/ApprovedAtlasView'
+import { ProvisionalAtlasView } from '../synthesis/ProvisionalAtlasView'
+import { type SynthesisItem, triggerSynthesis } from '../synthesis/synthesisApi'
 
 interface Props {
   document: Document
@@ -10,7 +13,7 @@ interface Props {
   onEditSections: () => void
 }
 
-type Phase = 'preflight' | 'ready' | 'extracting' | 'done' | 'error'
+type Phase = 'preflight' | 'ready' | 'extracting' | 'harvested' | 'synthesizing' | 'done' | 'error'
 
 interface SectionResult {
   sectionId: string
@@ -71,8 +74,9 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
   const [totalElapsedMs, setTotalElapsedMs] = useState(0)
   const [extractionError, setExtractionError] = useState<string | null>(null)
   const [allCandidates, setAllCandidates] = useState<Record<string, Candidate[]>>({})
+  const [synthesisItems, setSynthesisItems] = useState<SynthesisItem[]>([])
+  const [synthesisFromCache, setSynthesisFromCache] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
 
   useEffect(() => {
     loadPreflight()
@@ -116,18 +120,17 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
         setCurrentIdx(i + 1)
         setCurrentTitle(section.title)
         const result = await triggerExtraction(section.id)
-        await approveAllCandidates(section.id)
         const count = result.candidates.length
         total += count
         setCandidatesSoFar(total)
         results.push({ sectionId: section.id, title: section.title, candidateCount: count })
       }
+
       if (timerRef.current) clearInterval(timerRef.current)
       setTotalElapsedMs(Date.now() - startTime)
       setTotalCandidates(total)
       setSectionResults(results)
 
-      // Load full candidate details for the table
       const bySection: Record<string, Candidate[]> = {}
       await Promise.all(
         sections.map(async (s) => {
@@ -135,10 +138,23 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
         })
       )
       setAllCandidates(bySection)
-      setPhase('done')
+      setPhase('harvested')
     } catch (e) {
       if (timerRef.current) clearInterval(timerRef.current)
       setExtractionError(e instanceof Error ? e.message : 'Extraction failed. Check your API key.')
+      setPhase('error')
+    }
+  }
+
+  async function handleSynthesize(force = false) {
+    setPhase('synthesizing')
+    try {
+      const result = await triggerSynthesis(document.id, force)
+      setSynthesisItems(result.items)
+      setSynthesisFromCache(result.from_cache)
+      setPhase('done')
+    } catch (e) {
+      setExtractionError(e instanceof Error ? e.message : 'Synthesis failed.')
       setPhase('error')
     }
   }
@@ -166,14 +182,14 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
 
       {/* Step 3 — preflight loading */}
       {phase === 'preflight' && (
-        <StepPending n={3} label="Generate cartographer artifacts">
+        <StepPending n={3} label="Harvest evidence">
           <p style={{ fontSize: '0.85rem', color: '#888' }}>Loading estimate…</p>
         </StepPending>
       )}
 
       {/* Step 3 — ready */}
       {phase === 'ready' && (
-        <StepPending n={3} label="Generate cartographer artifacts">
+        <StepPending n={3} label="Harvest evidence">
           {totalCost !== null && (
             <p style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.75rem' }}>
               Estimated cost: <strong>${totalCost.toFixed(4)}</strong>
@@ -182,7 +198,7 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
             </p>
           )}
           <button type="button" onClick={handleGenerate} style={{ fontWeight: 500 }}>
-            Generate candidates
+            Extract candidates
           </button>
           <p style={{ fontSize: '0.78rem', color: '#999', marginTop: '0.4rem' }}>
             Candidates remain local until you choose to export.
@@ -192,7 +208,7 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
 
       {/* Step 3 — extracting */}
       {phase === 'extracting' && (
-        <StepPending n={3} label="Generate cartographer artifacts">
+        <StepPending n={3} label="Harvest evidence">
           <p style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>
             Section {currentIdx} of {sections.length}
             {currentTitle && <> · <em>{currentTitle}</em></>}
@@ -206,27 +222,77 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
 
       {/* Step 3 — error */}
       {phase === 'error' && (
-        <StepPending n={3} label="Generate cartographer artifacts">
+        <StepPending n={3} label="Harvest evidence">
           <p role="alert" style={{ color: 'red', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
             {extractionError}
           </p>
-          <button type="button" onClick={handleGenerate}>Retry</button>
+          <button type="button" onClick={handleGenerate}>Retry extraction</button>
         </StepPending>
       )}
 
-      {/* Step 3 — done */}
+      {/* Step 3 — harvested (done extracting, synthesis pending) */}
+      {(phase === 'harvested' || phase === 'synthesizing' || phase === 'done') && (
+        <StepDone
+          label="Harvest evidence"
+          detail={`${totalCandidates} candidate${totalCandidates !== 1 ? 's' : ''} extracted · ${(totalElapsedMs / 1000).toFixed(1)}s`}
+          action={
+            <details style={{ marginTop: '0.25rem' }}>
+              <summary style={{ fontSize: '0.78rem', color: '#888', cursor: 'pointer' }}>
+                Show raw candidates ({totalCandidates})
+              </summary>
+              <div style={{ marginTop: '0.75rem' }}>
+                <CandidatesTable
+                  sections={sections.map(s => ({ id: s.id, title: s.title }))}
+                  candidates={allCandidates}
+                />
+              </div>
+            </details>
+          }
+        />
+      )}
+
+      {/* Step 4 — synthesize atlas */}
+      {phase === 'harvested' && (
+        <StepPending n={4} label="Synthesize atlas">
+          <p style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.75rem' }}>
+            Stage 2 synthesis reads all {totalCandidates} evidence fragment{totalCandidates !== 1 ? 's' : ''} and
+            produces a consolidated provisional atlas — merging duplicates, resolving same-as entities,
+            and surfacing contradictions.
+          </p>
+          <button type="button" onClick={() => handleSynthesize(false)} style={{ fontWeight: 500 }}>
+            Synthesize atlas
+          </button>
+        </StepPending>
+      )}
+
+      {phase === 'synthesizing' && (
+        <StepPending n={4} label="Synthesize atlas">
+          <p style={{ fontSize: '0.85rem', color: '#888' }}>
+            Synthesizing… this may take a moment.
+          </p>
+        </StepPending>
+      )}
+
       {phase === 'done' && (
         <>
           <StepDone
-            label="Generate cartographer artifacts"
-            detail={`${totalCandidates} candidate${totalCandidates !== 1 ? 's' : ''} approved · ${(totalElapsedMs / 1000).toFixed(1)}s`}
+            label="Synthesize atlas"
+            detail={`${synthesisItems.length} synthesis item${synthesisItems.length !== 1 ? 's' : ''}${synthesisFromCache ? ' · from cache' : ''}`}
           />
 
           <div style={{ marginTop: '1.5rem' }}>
-            <CandidatesTable
-              sections={sections.map(s => ({ id: s.id, title: s.title }))}
-              candidates={allCandidates}
+            <ProvisionalAtlasView
+              items={synthesisItems}
+              documentId={document.id}
+              onResynthesize={() => handleSynthesize(true)}
             />
+          </div>
+
+          <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: '1px solid #e5e7eb' }}>
+            <h3 style={{ fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#555', marginBottom: '0.75rem' }}>
+              Approved atlas
+            </h3>
+            <ApprovedAtlasView documentId={document.id} />
           </div>
         </>
       )}

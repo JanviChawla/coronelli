@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
 
@@ -58,6 +58,7 @@ class Candidate(Base):
     relation_target_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True
     )
+    is_mention: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     @property
     def display_summary(self) -> str:

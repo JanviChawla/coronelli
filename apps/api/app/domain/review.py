@@ -43,6 +43,21 @@ class ReviewError(Exception):
     pass
 
 
+def _resolve_entity_id(session: Session, document_id: str | None, name: str | None) -> str | None:
+    if not document_id or not name:
+        return None
+    entity = (
+        session.query(MapEntity)
+        .filter(
+            MapEntity.name == name,
+            MapEntity.provenance_document_id == document_id,
+            MapEntity.state == "active",
+        )
+        .first()
+    )
+    return entity.id if entity else None
+
+
 _VALID_ACTIONS = {"approve", "reject", "defer", "merge"}
 
 _ACTION_TO_STATE = {
@@ -124,9 +139,13 @@ def review_candidate(
 
         elif candidate.kind in ("claim", "visual_claim"):
             claim_type = "spatial" if candidate.kind == "claim" else "visual"
+            subject_ref = _resolve_entity_id(session, document_id, effective_payload.get("subject"))
+            object_id = _resolve_entity_id(session, document_id, effective_payload.get("object"))
             claim = MapClaim(
                 claim_type=claim_type,
+                subject_ref=subject_ref,
                 predicate=effective_payload.get("predicate"),
+                object_refs=[object_id] if object_id else None,
                 status=candidate.status,
                 confidence=candidate.confidence,
                 state="active",

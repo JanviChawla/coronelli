@@ -11,6 +11,7 @@ import app.extraction.models  # noqa: F401, E402
 import app.domain.world  # noqa: F401, E402
 import app.domain.review  # noqa: F401, E402
 import app.domain.series  # noqa: F401, E402
+import app.synthesis.models  # noqa: F401, E402
 
 
 class SourceDocument(Base):
