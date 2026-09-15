@@ -83,13 +83,13 @@ function StepLocked({ n, label, detail }: { n: number; label: string; detail: st
   )
 }
 
-function StepConnector({ processing = false }: { processing?: boolean }) {
+function StepConnector() {
   return (
     <div style={{ display: 'flex', gap: '1.25rem', height: '2.5rem', margin: '0.15rem 0' }}>
       <div style={{ width: '2.25rem', flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-        <div style={{ width: '1px', flex: 1, background: 'var(--gold)', opacity: 0.3 }} className={processing ? 'connector-flow-line' : ''} />
-        <span style={{ color: 'var(--gold)', opacity: processing ? 0.7 : 0.38, fontSize: '0.4rem', lineHeight: 1 }}>◆</span>
-        <div style={{ width: '1px', flex: 1, background: 'var(--gold)', opacity: 0.3 }} className={processing ? 'connector-flow-line' : ''} />
+        <div style={{ width: '1px', flex: 1, background: 'var(--gold)', opacity: 0.3 }} />
+        <span style={{ color: 'var(--gold)', opacity: 0.38, fontSize: '0.4rem', lineHeight: 1 }}>◆</span>
+        <div style={{ width: '1px', flex: 1, background: 'var(--gold)', opacity: 0.3 }} />
       </div>
     </div>
   )
@@ -381,7 +381,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
           </details>
         }
       />
-      <StepConnector processing={phase === 'extracting'} />
+      <StepConnector />
 
       {/* ── Step 3: Harvest evidence ─────────────────────────────────── */}
       {step3Done ? (
@@ -476,7 +476,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
           </p>
         </StepActive>
       )}
-      <StepConnector processing={phase === 'synthesizing'} />
+      <StepConnector />
 
       {/* ── Step 4: Synthesize atlas ─────────────────────────────────── */}
       {step4Done ? (
