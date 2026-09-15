@@ -6,8 +6,14 @@ from typing import Any
 _log = logging.getLogger(__name__)
 
 from app.db.models import SourceSection
-from app.extraction.prompts import PROMPT_VERSION, SYSTEM_PROMPT, USER_TEMPLATE
+from app.extraction.prompts import (
+    PROMPT_VERSION, SYSTEM_PROMPT, USER_TEMPLATE,
+    COMBINED_PROMPT_VERSION,
+    CATALOG_SYSTEM_PROMPT, CATALOG_USER_TEMPLATE,
+    EVIDENCE_SYSTEM_PROMPT, EVIDENCE_USER_TEMPLATE,
+)
 from app.extraction.provider import ExtractionResult, RawCandidate
+from app.extraction.validation import _ALLOWED_ENTITY_TYPES
 
 _VALID_STATUSES = {"explicit", "inferred"}
 _VALID_KINDS = {"entity", "claim", "travel_rule", "visual_claim", "access", "movement", "scene_anchor"}
@@ -116,6 +122,146 @@ class OpenAIExtractionProvider:
             prompt_version=PROMPT_VERSION,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+        )
+
+
+    def extract_two_pass(
+        self,
+        section: SourceSection,
+        cumulative_catalog: list[dict],
+    ) -> ExtractionResult:
+        """Two-pass extraction: catalog first, then evidence anchored to catalog."""
+
+        # ── Pass 1: Place Catalog ─────────────────────────────────────────────
+        known_names = [{"name": e["name"], "type": e.get("type", "")} for e in cumulative_catalog]
+        catalog_user = CATALOG_USER_TEMPLATE.format(
+            section_order=section.ordinal,
+            title=section.title or "(untitled)",
+            text=section.text or "",
+            known_names_json=json.dumps(known_names, ensure_ascii=False),
+        )
+        catalog_resp = self._client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": CATALOG_SYSTEM_PROMPT},
+                {"role": "user", "content": catalog_user},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=4096,
+        )
+        catalog_text = catalog_resp.choices[0].message.content
+        catalog_parsed: dict = {}
+        new_places: list[dict] = []
+        try:
+            catalog_parsed = json.loads(catalog_text)
+            raw_places = catalog_parsed.get("places", [])
+            new_places = raw_places if isinstance(raw_places, list) else []
+        except json.JSONDecodeError:
+            _log.warning("Catalog pass failed to parse JSON: %s", catalog_text[:500])
+
+        try:
+            catalog_input_tokens = int(catalog_resp.usage.prompt_tokens)
+            catalog_output_tokens = int(catalog_resp.usage.completion_tokens)
+        except (AttributeError, TypeError, ValueError):
+            catalog_input_tokens = 0
+            catalog_output_tokens = 0
+
+        # Build entity RawCandidates from new catalog places
+        entity_candidates: list[RawCandidate] = []
+        for p in new_places:
+            name = (p.get("name") or "").strip()
+            ptype = (p.get("type") or "").strip().lower()
+            if not name or ptype not in _ALLOWED_ENTITY_TYPES:
+                continue
+            payload: dict[str, Any] = {"name": name, "type": ptype}
+            aliases = p.get("aliases") or []
+            if aliases:
+                payload["aliases"] = aliases
+            entity_candidates.append(RawCandidate(
+                kind="entity",
+                payload=payload,
+                status="explicit" if p.get("is_new", True) else "inferred",
+                confidence=float(p.get("confidence", 0.80)),
+                excerpt=str(p.get("excerpt", "")),
+                rationale="Place catalog pass 1",
+                temporal_interpretation="static",
+            ))
+
+        # ── Pass 2: Evidence Extraction ───────────────────────────────────────
+        cumulative_names = {e["name"] for e in cumulative_catalog}
+        full_catalog_list = list(cumulative_catalog) + [
+            {"name": p["name"], "type": p.get("type", ""), "aliases": p.get("aliases", [])}
+            for p in new_places
+            if p.get("name") and p["name"] not in cumulative_names
+        ]
+
+        evidence_user = EVIDENCE_USER_TEMPLATE.format(
+            section_order=section.ordinal,
+            title=section.title or "(untitled)",
+            text=section.text or "",
+            place_catalog_json=json.dumps(
+                [{"name": e["name"], "type": e.get("type", "")} for e in full_catalog_list],
+                ensure_ascii=False,
+            ),
+        )
+        evidence_resp = self._client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": EVIDENCE_SYSTEM_PROMPT},
+                {"role": "user", "content": evidence_user},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=8192,
+        )
+        evidence_text = evidence_resp.choices[0].message.content
+        evidence_parsed: dict = {}
+        raw_evidence: list = []
+        try:
+            evidence_parsed = json.loads(evidence_text)
+            raw_ev = evidence_parsed.get("candidates", [])
+            raw_evidence = raw_ev if isinstance(raw_ev, list) else []
+        except json.JSONDecodeError:
+            _log.warning("Evidence pass failed to parse JSON: %s", evidence_text[:500])
+
+        try:
+            evidence_input_tokens = int(evidence_resp.usage.prompt_tokens)
+            evidence_output_tokens = int(evidence_resp.usage.completion_tokens)
+        except (AttributeError, TypeError, ValueError):
+            evidence_input_tokens = 0
+            evidence_output_tokens = 0
+
+        _EVIDENCE_KINDS = {"claim", "travel_rule", "visual_claim", "access", "movement", "scene_anchor"}
+        evidence_candidates: list[RawCandidate] = []
+        for raw in raw_evidence:
+            if not isinstance(raw, dict):
+                continue
+            status = raw.get("status", "")
+            if status not in _VALID_STATUSES:
+                continue
+            kind = raw.get("kind", "")
+            if kind not in _EVIDENCE_KINDS:
+                continue
+            temporal = raw.get("temporal_interpretation", "static")
+            if temporal not in _VALID_TEMPORAL:
+                temporal = "static"
+            evidence_candidates.append(RawCandidate(
+                kind=kind,
+                payload=raw.get("payload", {}),
+                status=status,
+                confidence=float(raw.get("confidence", 0.5)),
+                excerpt=str(raw.get("excerpt", "")),
+                rationale=str(raw.get("rationale", "")),
+                temporal_interpretation=temporal,
+            ))
+
+        return ExtractionResult(
+            candidates=entity_candidates + evidence_candidates,
+            raw_response={"catalog": catalog_parsed, "evidence": evidence_parsed},
+            provider="openai",
+            model=self._model,
+            prompt_version=COMBINED_PROMPT_VERSION,
+            input_tokens=catalog_input_tokens + evidence_input_tokens,
+            output_tokens=catalog_output_tokens + evidence_output_tokens,
         )
 
 

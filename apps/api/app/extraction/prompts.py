@@ -403,3 +403,193 @@ Known spatial entities already in the world model
 Known candidate ids eligible for relation_kind / relation_target_id
 {known_candidate_ids_json}
 """
+
+# ── Two-pass extraction (v2) ──────────────────────────────────────────────────
+
+COMBINED_PROMPT_VERSION = "2.0"
+
+# ── Pass 1: Place Catalog ─────────────────────────────────────────────────────
+
+CATALOG_SYSTEM_PROMPT = """\
+CORONELLI PLACE CATALOG — Pass 1 of 2
+
+You are reading one section of written fiction. Your ONLY task: identify every
+named place that appears in this section, at EVERY geographic scale.
+
+SCALE HIERARCHY — work top-down, never skip a level that the text supports:
+  world      — the entire world or continent ("Prythian", "Middle-earth")
+  region     — named region, court, kingdom, territory ("Spring Court", "The Shire")
+  terrain    — named landscape feature ("Enchanted Forest", "The Bog")
+  settlement — named village, town, city ("Ramshackle Village")
+  building   — named structure or estate ("Tamlin's Manor", "The Cottage")
+  interior   — named room, hall, corridor ("Throne Room", "Long Hall", "Dining Room")
+  site       — named outdoor site, body of water, landmark, portal, barrier
+
+START BIG. Always ask: "What is the largest-scale named place context for this section?"
+If the narrative is set within a named court, kingdom, or region, output that region
+FIRST, even if it is only mentioned in passing. Then output every smaller-scale place.
+
+RULES:
+- Include EVERY scale level that the text names or clearly implies.
+- A place mentioned briefly ("they rode toward Prythian") still qualifies.
+- Use the most specific name the source text provides.
+- If the same place is called by multiple names, list both in aliases.
+- Do NOT include: characters, creatures, furniture, food, portable objects, animals,
+  abstract concepts, emotions, non-spatial events.
+- Do NOT invent. Extract only what the text names or clearly describes.
+- When in doubt, INCLUDE — synthesis will filter.
+
+Previously known places are provided for reference. Do not re-list them as new
+discoveries. If a previously known place is referenced in this section, you may
+include it with is_new: false.
+
+OUTPUT: valid JSON only. No markdown, no comments.
+{
+  "places": [
+    {
+      "name": "Spring Court",
+      "type": "region",
+      "aliases": ["the Court"],
+      "excerpt": "the Spring Court's lands",
+      "confidence": 0.92,
+      "is_new": true
+    },
+    {
+      "name": "Tamlin's Manor",
+      "type": "building",
+      "aliases": ["the Estate", "the Manor"],
+      "excerpt": "the sprawling manor house",
+      "confidence": 0.88,
+      "is_new": true
+    }
+  ]
+}
+
+type must be one of: world, region, island, settlement, landmark, building, room,
+hall, tunnel, shaft, passage, portal, door, exterior, terrain_feature,
+body_of_water, site, court, barrier
+
+is_new: true if this place is newly introduced in this section; false if it was
+in the previously-known list and is only referenced here.
+
+Return {"places": []} only for non-narrative text (table of contents, copyright page).
+"""
+
+CATALOG_USER_TEMPLATE = """\
+Section {section_order}: {title}
+
+{text}
+
+Previously known places (do not re-list as new; mark is_new: false if referenced):
+{known_names_json}
+"""
+
+# ── Pass 2: Evidence Extraction ───────────────────────────────────────────────
+
+EVIDENCE_SYSTEM_PROMPT = """\
+CORONELLI EVIDENCE EXTRACTOR — Pass 2 of 2
+
+You are reading one section of written fiction. The cumulative Place Catalog —
+every named place found in this section and all prior sections — is provided.
+
+Your ONLY task: extract evidence ABOUT the places in the catalog.
+
+THE GOLDEN RULE — read it twice:
+Both the subject AND the object of every spatial claim must be names that appear
+in the Place Catalog. If either side would be a character, creature, piece of
+furniture, portable object, or any non-place thing, DISCARD the claim entirely.
+Do not soften it. Do not include it with a low confidence. Delete it.
+
+WHAT TO EXTRACT:
+
+1. SPATIAL CLAIMS — relationships between two catalog places.
+   Allowed predicates: CONTAINS, LOCATED_IN, LEADS_TO, OPENS_TOWARD, ADJACENT_TO,
+   NEAR, UNDER, ABOVE, DESCENDS_TO, ENDS_AT, HAS_OPENING, REACHED_FROM, SAME_AS,
+   IN_OR_ADJACENT_TO, BLOCKS_ACCESS_TO, SURROUNDED_BY,
+   NORTH_OF, SOUTH_OF, EAST_OF, WEST_OF, NORTHEAST_OF, NORTHWEST_OF, SOUTHEAST_OF, SOUTHWEST_OF.
+
+   CONTAINS: valid only when both container and contained are catalog places.
+   HAS_OPENING: valid only when the opening (door, window) is itself a catalog place.
+   SAME_AS: use when text equates two catalog place names.
+
+2. VISUAL CLAIMS — physical description of a catalog place.
+   category: architecture | terrain | light | weather | color | material | scale | atmosphere | other
+   Emit ONE visual_claim per distinct observation. Never merge. Be specific and concrete.
+   Include the section_title in the payload.
+
+3. TRAVEL RULES — traversal between catalog places.
+   Both "from" and "to" in the route must be catalog place names.
+
+4. ACCESS — who can or cannot enter a catalog place.
+   place_name must be a catalog place.
+
+5. MOVEMENT — a narrated journey between catalog places.
+   from_place and to_place must be catalog place names.
+
+6. SCENE ANCHOR — exactly one per section.
+   Use the catalog place name where this section begins.
+   If the opening location is not in the catalog, write "unresolved_spatial_scene".
+
+NEVER emit entity candidates — those come from Pass 1.
+
+CERTAINTY:
+  status: "explicit" (directly stated) or "inferred" (narrow deduction)
+  confidence: 0.90–1.00 verbatim/unambiguous; 0.65–0.89 clear but inferential;
+              0.30–0.64 implied by action
+
+FINAL CHECK before outputting:
+A. Does every claim have BOTH subject and object in the catalog? Remove any that don't.
+B. Is the scene_anchor present? Add it if missing.
+C. Is every visual_claim attached to a catalog place? Remove any that aren't.
+D. Are confidence values individually calibrated? Do not use 0.95 uniformly.
+
+OUTPUT: valid JSON only. No markdown, no comments.
+{
+  "candidates": [
+    {
+      "kind": "claim",
+      "status": "explicit",
+      "confidence": 0.88,
+      "temporal_interpretation": "static",
+      "excerpt": "the small door led into the throne room",
+      "rationale": "direct spatial connection between two catalog places",
+      "payload": {"subject": "Small Door", "predicate": "LEADS_TO", "object": "Throne Room"}
+    },
+    {
+      "kind": "visual_claim",
+      "status": "explicit",
+      "confidence": 0.85,
+      "temporal_interpretation": "static",
+      "excerpt": "the hall was lit by a row of lamps",
+      "rationale": "architectural lighting detail for catalog place",
+      "payload": {"subject": "Long Hall", "category": "light", "observation": "lit by a row of lamps hanging from the roof", "section_title": "Chapter 1"}
+    },
+    {
+      "kind": "scene_anchor",
+      "status": "explicit",
+      "confidence": 0.95,
+      "temporal_interpretation": "static",
+      "excerpt": "she entered the manor gates",
+      "rationale": "section opens at this catalog place",
+      "payload": {"place": "Tamlin's Manor", "scene_role": "opening"}
+    }
+  ]
+}
+
+Payload shapes:
+  claim:        {"subject": "catalog place", "predicate": "PREDICATE", "object": "catalog place"}
+  visual_claim: {"subject": "catalog place", "category": "...", "observation": "...", "section_title": "..."}
+  travel_rule:  {"traveler": "name or null", "can_traverse": true, "route": "Place A -> Place B", "condition": null}
+  access:       {"place_name": "catalog place", "access_type": "permitted|prohibited|conditional", "condition": null, "traveler": null}
+  movement:     {"traveler": null, "from_place": "catalog place", "to_place": "catalog place", "via": null, "mechanism": null, "stops": []}
+  scene_anchor: {"place": "catalog place or unresolved_spatial_scene", "scene_role": "opening|primary|ending"}
+"""
+
+EVIDENCE_USER_TEMPLATE = """\
+Section {section_order}: {title}
+
+{text}
+
+Place Catalog (cumulative — all places from this and all prior sections of this book):
+{place_catalog_json}
+"""

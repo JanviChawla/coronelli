@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import SourceSection
 from app.extraction.models import Candidate, ExtractionRun
-from app.extraction.prompts import PROMPT_VERSION as _CURRENT_PROMPT_VERSION
+from app.extraction.prompts import COMBINED_PROMPT_VERSION as _CURRENT_PROMPT_VERSION
 from app.extraction.provider import ExtractionProvider
 from app.extraction.validation import validate_candidate_payload
 
@@ -44,6 +44,7 @@ def run_extraction(
     section_id: str,
     provider: ExtractionProvider,
     known_entities: list[dict] | None = None,
+    cumulative_catalog: list[dict] | None = None,
     force: bool = False,
 ) -> tuple[ExtractionRun, list[Candidate], bool]:
     section = session.get(SourceSection, section_id)
@@ -102,7 +103,10 @@ def run_extraction(
     session.flush()
 
     try:
-        result = provider.extract(section, known_entities or [])
+        if hasattr(provider, "extract_two_pass"):
+            result = provider.extract_two_pass(section, cumulative_catalog or known_entities or [])
+        else:
+            result = provider.extract(section, known_entities or [])
     except Exception as exc:
         run.status = "failed"
         run.error = str(exc)

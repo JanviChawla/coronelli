@@ -11,7 +11,11 @@ from app.db.models import SourceSection
 from app.domain.world import MapEntity
 from app.extraction.models import Candidate, ExtractionRun
 from app.extraction.openai_provider import ExtractionNotConfiguredError, get_provider
-from app.extraction.prompts import PROMPT_VERSION, SYSTEM_PROMPT, USER_TEMPLATE
+from app.extraction.prompts import (
+    COMBINED_PROMPT_VERSION,
+    CATALOG_SYSTEM_PROMPT, CATALOG_USER_TEMPLATE,
+    EVIDENCE_SYSTEM_PROMPT, EVIDENCE_USER_TEMPLATE,
+)
 from app.extraction.service import ExtractionError, _COST_PER_TOKEN, _section_content_hash, run_extraction
 
 router = APIRouter(tags=["extraction"])
@@ -89,21 +93,28 @@ def extract_preflight(section_id: str, db: Session = Depends(get_db)) -> Preflig
             ExtractionRun.section_id == section_id,
             ExtractionRun.status == "completed",
             ExtractionRun.section_content_hash == content_hash,
-            ExtractionRun.prompt_version == PROMPT_VERSION,
+            ExtractionRun.prompt_version == COMBINED_PROMPT_VERSION,
         )
         .order_by(ExtractionRun.completed_at.desc())
         .first()
     )
 
-    user_content = USER_TEMPLATE.format(
-        section_id=section.id,
+    catalog_user = CATALOG_USER_TEMPLATE.format(
         section_order=section.ordinal,
         title=section.title or "(untitled)",
         text=section.text or "",
-        known_spatial_entities_json="[]",
-        known_candidate_ids_json="[]",
+        known_names_json="[]",
     )
-    estimated_input_tokens = (len(SYSTEM_PROMPT) + len(user_content)) // 4
+    evidence_user = EVIDENCE_USER_TEMPLATE.format(
+        section_order=section.ordinal,
+        title=section.title or "(untitled)",
+        text=section.text or "",
+        place_catalog_json="[]",
+    )
+    estimated_input_tokens = (
+        (len(CATALOG_SYSTEM_PROMPT) + len(catalog_user)) // 4
+        + (len(EVIDENCE_SYSTEM_PROMPT) + len(evidence_user)) // 4
+    )
 
     model = os.environ.get("OPENAI_EXTRACTION_MODEL")
     rates = _COST_PER_TOKEN.get(model or "") if model else None
@@ -118,8 +129,8 @@ def extract_preflight(section_id: str, db: Session = Depends(get_db)) -> Preflig
     return PreflightResponse(
         section_id=section_id,
         title=section.title,
-        sections_to_send=1,
-        prompt_version=PROMPT_VERSION,
+        sections_to_send=2,
+        prompt_version=COMBINED_PROMPT_VERSION,
         estimated_input_tokens=estimated_input_tokens,
         estimated_cost_usd=estimated_cost_usd,
         cache_valid=cached_run is not None,
@@ -142,6 +153,25 @@ def extract_section(
     if section is None:
         raise HTTPException(status_code=404, detail=f"Section '{section_id}' not found.")
 
+    # Build cumulative catalog from entity candidates in all PRIOR sections of this document
+    prior_sections = (
+        db.query(SourceSection)
+        .filter(
+            SourceSection.document_id == section.document_id,
+            SourceSection.ordinal < section.ordinal,
+        )
+        .all()
+    )
+    prior_sec_ids = [s.id for s in prior_sections]
+    prior_entity_candidates = (
+        db.query(Candidate)
+        .filter(
+            Candidate.section_id.in_(prior_sec_ids),
+            Candidate.kind == "entity",
+        )
+        .all()
+    ) if prior_sec_ids else []
+
     existing_entities = (
         db.query(MapEntity)
         .filter(
@@ -150,13 +180,34 @@ def extract_section(
         )
         .all()
     )
-    known_entities = [
-        {"id": e.id, "name": e.name, "type": e.place_kind}
-        for e in existing_entities
-    ]
+
+    seen_names: set[str] = set()
+    cumulative_catalog: list[dict] = []
+    for c in prior_entity_candidates:
+        name = (c.payload.get("name") or "").strip()
+        if name and name not in seen_names:
+            seen_names.add(name)
+            cumulative_catalog.append({
+                "name": name,
+                "type": c.payload.get("type", ""),
+                "aliases": c.payload.get("aliases") or [],
+            })
+    for e in existing_entities:
+        if e.name and e.name not in seen_names:
+            seen_names.add(e.name)
+            cumulative_catalog.append({
+                "name": e.name,
+                "type": e.place_kind or "",
+                "aliases": list(e.aliases or []),
+            })
 
     try:
-        run, candidates, from_cache = run_extraction(db, section_id, provider, known_entities=known_entities, force=force)
+        run, candidates, from_cache = run_extraction(
+            db, section_id, provider,
+            known_entities=None,
+            cumulative_catalog=cumulative_catalog,
+            force=force,
+        )
     except ExtractionError as exc:
         msg = str(exc)
         if "not found" in msg:
