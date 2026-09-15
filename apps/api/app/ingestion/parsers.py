@@ -4,15 +4,40 @@ from dataclasses import dataclass, field
 
 import pymupdf as fitz
 
-PARSER_VERSION = "1.0"
+PARSER_VERSION = "1.1"
 
 _TITLE_RE = re.compile(r"^Title:\s*(.+)$", re.MULTILINE | re.IGNORECASE)
 _AUTHOR_RE = re.compile(r"^Author:\s*(.+)$", re.MULTILINE | re.IGNORECASE)
+# "by First Last" or "by First M. Last" near the top of a page
+_BY_AUTHOR_RE = re.compile(
+    r"(?:^|\n)\s*[Bb]y\s+([A-Z][a-z]+(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-z]+){1,3})\s*(?:\n|$)"
+)
 _YEAR_RE = re.compile(
     r"(?:copyright|©|\(c\)|first\s+published|published(?:\s+in)?|written(?:\s+in)?)"
     r"\D{0,20}(1[3-9]\d{2}|20[0-2]\d)",
     re.IGNORECASE,
 )
+
+# Noise patterns often found in downloaded PDF filenames
+_STEM_NOISE_RE = re.compile(
+    r"(?i)(^|\b)(tome|volume|vol|book|part|bd|bk)[-_\s]*\d+[-_\s]*",
+)
+
+
+def _clean_stem(stem: str) -> str:
+    """Convert a filename stem to a readable title best-guess."""
+    # Replace hyphens/underscores used as spaces
+    cleaned = re.sub(r"[-_]+", " ", stem)
+    # Strip leading/trailing noise tokens like "Tome 1", "Vol 2", etc.
+    cleaned = _STEM_NOISE_RE.sub(" ", cleaned).strip()
+    # Collapse multiple spaces
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    # Title-case words (leave ALL-CAPS acronyms alone)
+    cleaned = " ".join(
+        w if w.isupper() and len(w) > 1 else w.capitalize()
+        for w in cleaned.split()
+    )
+    return cleaned or stem
 
 
 class TextExtractionUnavailableError(ValueError):
@@ -35,7 +60,7 @@ def _sha256(content: bytes) -> str:
 
 
 def _stem(filename: str) -> str:
-    return filename.rsplit(".", 1)[0]
+    return _clean_stem(filename.rsplit(".", 1)[0])
 
 
 def _extract_year(text: str) -> int | None:
@@ -75,6 +100,11 @@ def _parse_pdf(filename: str, content: bytes) -> ParsedDocument:
     pdf_title = (meta.get("title") or "").strip() or None
     pdf_author = (meta.get("author") or "").strip() or None
     first_page = pages[0] if pages else ""
+    # Fall back to scanning first-page text for "by Author Name"
+    if not pdf_author:
+        by_m = _BY_AUTHOR_RE.search(first_page[:3000])
+        if by_m:
+            pdf_author = by_m.group(1).strip()
     year = _extract_year(first_page[:3000])
     return ParsedDocument(
         title=pdf_title or _stem(filename),
