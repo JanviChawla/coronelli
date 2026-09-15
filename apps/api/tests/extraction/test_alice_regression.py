@@ -401,6 +401,101 @@ def test_one_sided_relation_skipped_not_fatal(db):
     assert "Place Y" in names, "Valid candidate after bad one should survive"
 
 
+def test_no_duplicate_map_entity_on_same_name(db):
+    """Approving two entity candidates with identical names for the same document
+    must produce exactly one MapEntity — not two."""
+    from app.domain.review import review_candidate
+    from app.domain.world import MapEntity
+
+    section = _make_section(db, "IX — Who Stole the Tarts?", ordinal=9)
+    candidates_in = [
+        _rc("entity", {"name": "Trial Court", "type": "court"}, excerpt="court of justice"),
+        _rc("entity", {"name": "Trial Court", "type": "court"}, excerpt="court of justice again"),
+    ]
+    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    assert len(candidates) == 2
+
+    review_candidate(db, candidates[0].id, "approve")
+    review_candidate(db, candidates[1].id, "approve")
+
+    count = db.query(MapEntity).filter(MapEntity.name == "Trial Court").count()
+    assert count == 1, f"Expected 1 MapEntity named 'Trial Court', got {count}"
+
+
+# ── Atlas readiness ───────────────────────────────────────────────────────────
+
+_ATLAS_READY_CANDIDATES = [
+    _rc("scene_anchor", {"place": "Riverbank", "scene_role": "opening"}, excerpt="sitting on the bank"),
+    _rc("entity", {"name": "Riverbank", "type": "exterior"}, excerpt="sitting on the bank"),
+    _rc("entity", {"name": "Long Low Hall", "type": "hall"}, excerpt="long, low hall"),
+    _rc("entity", {"name": "Little Door", "type": "door"}, excerpt="little door about fifteen inches high"),
+    _rc("entity", {"name": "Garden", "type": "site"}, excerpt="most beautiful garden"),
+    _rc("claim", {"subject": "Long Low Hall", "predicate": "CONTAINS", "object": "Little Door"},
+        excerpt="little door about fifteen inches high"),
+    _rc("claim", {"subject": "Little Door", "predicate": "LEADS_TO", "object": "Garden"},
+        excerpt="leading to a small passage"),
+    _rc("travel_rule",
+        {"traveler": "Alice", "can_traverse": True,
+         "route": "Riverbank -> Long Low Hall -> Little Door -> Garden", "condition": None},
+        excerpt="down the rabbit-hole"),
+    _rc("visual_claim", {"subject": "Long Low Hall", "visual_property": "lighting",
+        "value": "row of lamps hanging from the roof"},
+        excerpt="row of lamps hanging from the roof"),
+]
+
+
+def test_atlas_readiness_entity_layer(db):
+    """At least one entity candidate must be present."""
+    section = _make_section(db, "I — Down the Rabbit-Hole", ordinal=1)
+    _, candidates, _ = run_extraction(db, section.id, _provider(_ATLAS_READY_CANDIDATES))
+    entities = [c for c in candidates if c.kind == "entity"]
+    assert entities, "Entity layer missing — no entity candidates"
+
+
+def test_atlas_readiness_claim_layer(db):
+    """At least one spatial claim must be present (topology/relationship layer)."""
+    section = _make_section(db, "I — Down the Rabbit-Hole", ordinal=1)
+    _, candidates, _ = run_extraction(db, section.id, _provider(_ATLAS_READY_CANDIDATES))
+    claims = [c for c in candidates if c.kind == "claim"]
+    assert claims, "Claim layer missing — no spatial claim candidates"
+
+
+def test_atlas_readiness_visual_claim_layer(db):
+    """At least one visual_claim must be present (illustration layer)."""
+    section = _make_section(db, "I — Down the Rabbit-Hole", ordinal=1)
+    _, candidates, _ = run_extraction(db, section.id, _provider(_ATLAS_READY_CANDIDATES))
+    visuals = [c for c in candidates if c.kind == "visual_claim"]
+    assert visuals, "Visual claim layer missing — no visual_claim candidates"
+
+
+def test_atlas_readiness_travel_rule_layer(db):
+    """At least one travel_rule must be present (route layer)."""
+    section = _make_section(db, "I — Down the Rabbit-Hole", ordinal=1)
+    _, candidates, _ = run_extraction(db, section.id, _provider(_ATLAS_READY_CANDIDATES))
+    routes = [c for c in candidates if c.kind == "travel_rule"]
+    assert routes, "Route layer missing — no travel_rule candidates"
+
+
+def test_atlas_readiness_scene_anchor_every_section(db):
+    """Each section must have at least one scene_anchor."""
+    sections = [
+        _make_section(db, "I — Down the Rabbit-Hole", ordinal=1),
+        _make_section(db, "II — The Pool of Tears", ordinal=2),
+    ]
+    ch1_candidates = [
+        _rc("scene_anchor", {"place": "Riverbank", "scene_role": "opening"}),
+        _rc("entity", {"name": "Riverbank", "type": "exterior"}),
+    ]
+    ch2_candidates = [
+        _rc("scene_anchor", {"place": "Long Low Hall", "scene_role": "primary"}),
+        _rc("entity", {"name": "Pool of Tears", "type": "body_of_water"}),
+    ]
+    for section, candidates_in in zip(sections, [ch1_candidates, ch2_candidates]):
+        _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+        anchors = [c for c in candidates if c.kind == "scene_anchor"]
+        assert anchors, f"Section '{section.title}' has no scene_anchor"
+
+
 def test_null_traveler_accepted(db):
     """travel_rule.traveler may be null per the v1 prompt spec."""
     section = _make_section(db, "Any Chapter", ordinal=1)

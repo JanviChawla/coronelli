@@ -95,18 +95,32 @@ def review_candidate(
         document_id = section.document_id if section else None
 
         if candidate.kind == "entity":
-            entity = MapEntity(
-                name=effective_payload.get("name", ""),
-                entity_kind="place",
-                place_kind=effective_payload.get("type"),
-                status=candidate.status,
-                state="active",
-                provenance_document_id=document_id,
-                provenance_section_id=candidate.section_id,
-                candidate_id=candidate.id,
-                payload=effective_payload,
-            )
-            session.add(entity)
+            entity_name = effective_payload.get("name", "")
+            existing_entity = (
+                session.query(MapEntity)
+                .filter(
+                    MapEntity.name == entity_name,
+                    MapEntity.provenance_document_id == document_id,
+                    MapEntity.state == "active",
+                )
+                .first()
+            ) if document_id else None
+
+            if existing_entity:
+                entity = existing_entity
+            else:
+                entity = MapEntity(
+                    name=entity_name,
+                    entity_kind="place",
+                    place_kind=effective_payload.get("type"),
+                    status=candidate.status,
+                    state="active",
+                    provenance_document_id=document_id,
+                    provenance_section_id=candidate.section_id,
+                    candidate_id=candidate.id,
+                    payload=effective_payload,
+                )
+                session.add(entity)
 
         elif candidate.kind in ("claim", "visual_claim"):
             claim_type = "spatial" if candidate.kind == "claim" else "visual"

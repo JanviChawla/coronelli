@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.engine import get_db
 from app.db.models import SourceSection
+from app.domain.world import MapEntity
 from app.extraction.models import Candidate, ExtractionRun
 from app.extraction.openai_provider import ExtractionNotConfiguredError, get_provider
 from app.extraction.prompts import PROMPT_VERSION, SYSTEM_PROMPT, USER_TEMPLATE
@@ -136,8 +137,25 @@ def extract_section(
     except ExtractionNotConfiguredError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    section = db.get(SourceSection, section_id)
+    if section is None:
+        raise HTTPException(status_code=404, detail=f"Section '{section_id}' not found.")
+
+    existing_entities = (
+        db.query(MapEntity)
+        .filter(
+            MapEntity.provenance_document_id == section.document_id,
+            MapEntity.state == "active",
+        )
+        .all()
+    )
+    known_entities = [
+        {"id": e.id, "name": e.name, "type": e.place_kind}
+        for e in existing_entities
+    ]
+
     try:
-        run, candidates, from_cache = run_extraction(db, section_id, provider, force=force)
+        run, candidates, from_cache = run_extraction(db, section_id, provider, known_entities=known_entities, force=force)
     except ExtractionError as exc:
         msg = str(exc)
         if "not found" in msg:
