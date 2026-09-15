@@ -4,6 +4,7 @@ import { type AtlasEntity, type AtlasResponse, downloadAtlasPackage, fetchAtlas 
 interface Props {
   documentId: string
   documentTitle?: string
+  refreshSignal?: number
 }
 
 const PLACE_KIND_COLORS: Record<string, string> = {
@@ -75,18 +76,20 @@ function EntityCard({ entity }: { entity: AtlasEntity }) {
   )
 }
 
-export function ApprovedAtlasView({ documentId, documentTitle = documentId }: Props) {
+export function ApprovedAtlasView({ documentId, documentTitle = documentId, refreshSignal }: Props) {
   const [atlas, setAtlas] = useState<AtlasResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
+    setLoading(true)
+    setError(null)
     fetchAtlas(documentId)
       .then(setAtlas)
       .catch(e => setError(e instanceof Error ? e.message : 'Failed to load atlas'))
       .finally(() => setLoading(false))
-  }, [documentId])
+  }, [documentId, refreshSignal])
 
   async function handleExport() {
     setExporting(true)

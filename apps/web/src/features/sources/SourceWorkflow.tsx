@@ -96,6 +96,7 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
   const [synthesisItems, setSynthesisItems] = useState<SynthesisItem[]>([])
   const [synthesisFromCache, setSynthesisFromCache] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [atlasRefreshKey, setAtlasRefreshKey] = useState(0)
 
   useEffect(() => {
     initWorkflow()
@@ -355,6 +356,7 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
             items={synthesisItems}
             documentId={document.id}
             onResynthesize={() => handleSynthesize(true)}
+            onReviewed={() => setAtlasRefreshKey(k => k + 1)}
           />
         </StepActive>
       ) : (
@@ -368,7 +370,7 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
             The canonical atlas built from approved items. Export as an Atlas Package (JSON) to use
             in downstream tools or share with collaborators.
           </p>
-          <ApprovedAtlasView documentId={document.id} documentTitle={document.title} />
+          <ApprovedAtlasView documentId={document.id} documentTitle={document.title} refreshSignal={atlasRefreshKey} />
         </StepActive>
       ) : (
         <StepLocked n={6} label="Approved atlas" detail="The canonical place graph built from your review decisions. Export as an Atlas Package when ready." />

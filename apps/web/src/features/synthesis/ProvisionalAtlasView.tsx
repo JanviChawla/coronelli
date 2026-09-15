@@ -6,6 +6,7 @@ interface Props {
   items: SynthesisItem[]
   documentId: string
   onResynthesize: () => void
+  onReviewed?: () => void
 }
 
 const KIND_LABELS: Record<string, string> = {
@@ -37,7 +38,7 @@ const STATE_BADGE: Record<string, { label: string; bg: string; color: string }> 
   challenged: { label: '⚑ challenged', bg: '#fef3c7', color: '#92400e' },
 }
 
-export function ProvisionalAtlasView({ items: initialItems, documentId, onResynthesize }: Props) {
+export function ProvisionalAtlasView({ items: initialItems, documentId, onResynthesize, onReviewed }: Props) {
   const [items, setItems] = useState<SynthesisItem[]>(initialItems)
   const [loadingId, setLoadingId] = useState<string | null>(null)
   const [bulkLoadingKind, setBulkLoadingKind] = useState<string | null>(null)
@@ -53,6 +54,7 @@ export function ProvisionalAtlasView({ items: initialItems, documentId, onResynt
       } else {
         setItems(prev => prev.map(it => it.id === itemId ? res.item : it))
       }
+      onReviewed?.()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Review failed.')
     } finally {
@@ -126,6 +128,7 @@ export function ProvisionalAtlasView({ items: initialItems, documentId, onResynt
                       ? { ...it, review_state: 'approved' }
                       : it
                   ))
+                  onReviewed?.()
                 } catch (e) {
                   setError(e instanceof Error ? e.message : 'Bulk accept failed.')
                 } finally {
