@@ -94,9 +94,12 @@ def extract_preflight(section_id: str, db: Session = Depends(get_db)) -> Preflig
     )
 
     user_content = USER_TEMPLATE.format(
+        section_id=section.id,
+        section_order=section.ordinal,
         title=section.title or "(untitled)",
         text=section.text or "",
-        known_entities_json="[]",
+        known_spatial_entities_json="[]",
+        known_candidate_ids_json="[]",
     )
     estimated_input_tokens = (len(SYSTEM_PROMPT) + len(user_content)) // 4
 

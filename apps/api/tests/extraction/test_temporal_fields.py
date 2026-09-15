@@ -288,7 +288,8 @@ def test_contradicts_relation_stored(db, doc_and_sections):
     assert candidates[0].relation_target_id == "some-prior-id"
 
 
-def test_relation_kind_without_target_raises(db, doc_and_sections):
+def test_relation_kind_without_target_skipped_not_fatal(db, doc_and_sections):
+    """One-sided relation is skipped with a warning; other candidates in the batch survive."""
     sec1, _ = doc_and_sections
 
     class BadRelationProvider:
@@ -303,8 +304,16 @@ def test_relation_kind_without_target_raises(db, doc_and_sections):
                         excerpt="near Y",
                         rationale="Proximity.",
                         relation_kind="supersedes",
-                        relation_target_id=None,  # missing — invalid
-                    )
+                        relation_target_id=None,  # missing — should be skipped
+                    ),
+                    RawCandidate(
+                        kind="entity",
+                        payload={"name": "Village", "type": "settlement"},
+                        status="explicit",
+                        confidence=0.9,
+                        excerpt="the village",
+                        rationale="Named place.",
+                    ),
                 ],
                 raw_response={},
                 provider="fake",
@@ -312,11 +321,14 @@ def test_relation_kind_without_target_raises(db, doc_and_sections):
                 prompt_version="0.2",
             )
 
-    with pytest.raises(ExtractionError, match="relation_target_id"):
-        run_extraction(db, sec1.id, BadRelationProvider())
+    _, candidates, _ = run_extraction(db, sec1.id, BadRelationProvider())
+    # Malformed candidate skipped; valid one persists
+    assert len(candidates) == 1
+    assert candidates[0].payload["name"] == "Village"
 
 
-def test_relation_target_without_kind_raises(db, doc_and_sections):
+def test_relation_target_without_kind_skipped_not_fatal(db, doc_and_sections):
+    """One-sided relation_target_id is skipped with a warning; other candidates survive."""
     sec1, _ = doc_and_sections
 
     class BadRelationProvider:
@@ -331,8 +343,16 @@ def test_relation_target_without_kind_raises(db, doc_and_sections):
                         excerpt="near Y",
                         rationale="Proximity.",
                         relation_kind=None,
-                        relation_target_id="some-id",  # set without kind — invalid
-                    )
+                        relation_target_id="some-id",  # set without kind — should be skipped
+                    ),
+                    RawCandidate(
+                        kind="entity",
+                        payload={"name": "Forest", "type": "region"},
+                        status="explicit",
+                        confidence=0.9,
+                        excerpt="the forest",
+                        rationale="Named place.",
+                    ),
                 ],
                 raw_response={},
                 provider="fake",
@@ -340,8 +360,9 @@ def test_relation_target_without_kind_raises(db, doc_and_sections):
                 prompt_version="0.2",
             )
 
-    with pytest.raises(ExtractionError, match="relation_kind"):
-        run_extraction(db, sec1.id, BadRelationProvider())
+    _, candidates, _ = run_extraction(db, sec1.id, BadRelationProvider())
+    assert len(candidates) == 1
+    assert candidates[0].payload["name"] == "Forest"
 
 
 # ── OpenAI provider parsing ───────────────────────────────────────────────────
@@ -435,5 +456,5 @@ def test_openai_provider_missing_temporal_defaults_to_static():
     assert result.candidates[0].temporal_interpretation == "static"
 
 
-def test_prompt_version_bumped_to_0_4():
-    assert PROMPT_VERSION == "0.4"
+def test_prompt_version_bumped_to_0_5():
+    assert PROMPT_VERSION == "0.5"

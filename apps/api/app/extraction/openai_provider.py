@@ -1,6 +1,9 @@
 import json
+import logging
 import os
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 from app.db.models import SourceSection
 from app.extraction.prompts import PROMPT_VERSION, SYSTEM_PROMPT, USER_TEMPLATE
@@ -27,9 +30,12 @@ class OpenAIExtractionProvider:
         known_entities: list[dict],
     ) -> ExtractionResult:
         user_content = USER_TEMPLATE.format(
+            section_id=section.id,
+            section_order=section.ordinal,
             title=section.title or "(untitled)",
             text=section.text,
-            known_entities_json=json.dumps(known_entities, ensure_ascii=False),
+            known_spatial_entities_json=json.dumps(known_entities, ensure_ascii=False),
+            known_candidate_ids_json=json.dumps([]),
         )
         response = self._client.chat.completions.create(
             model=self._model,
@@ -49,16 +55,23 @@ class OpenAIExtractionProvider:
         except (json.JSONDecodeError, ValueError) as exc:
             raise ValueError(f"Failed to parse provider response: {exc}") from exc
 
+        raw_list = parsed["candidates"]
+        if not raw_list:
+            _log.warning("Provider returned 0 candidates. Raw response: %s", raw_text[:2000])
+
         candidates: list[RawCandidate] = []
-        for raw in parsed["candidates"]:
+        skipped_status: list[str] = []
+        skipped_kind: list[str] = []
+        for raw in raw_list:
             if not isinstance(raw, dict):
                 continue
             status = raw.get("status", "")
             if status not in _VALID_STATUSES:
-                # Strip imagined or unknown statuses rather than failing the whole run.
+                skipped_status.append(status)
                 continue
             kind = raw.get("kind", "")
             if kind not in _VALID_KINDS:
+                skipped_kind.append(kind)
                 continue
             temporal = raw.get("temporal_interpretation", "static")
             if temporal not in _VALID_TEMPORAL:
@@ -80,6 +93,13 @@ class OpenAIExtractionProvider:
                 relation_kind=relation_kind,
                 relation_target_id=raw.get("relation_target_id") or None,
             ))
+
+        if skipped_status:
+            _log.warning("Filtered %d candidates with unknown status values: %s", len(skipped_status), skipped_status)
+        if skipped_kind:
+            _log.warning("Filtered %d candidates with unknown kind values: %s", len(skipped_kind), skipped_kind)
+        if not candidates and raw_list:
+            _log.warning("All %d model candidates were filtered out. First raw item: %s", len(raw_list), raw_list[0])
 
         try:
             input_tokens = int(response.usage.prompt_tokens)

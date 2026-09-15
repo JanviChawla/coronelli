@@ -1,5 +1,8 @@
 import hashlib
+import logging
 from datetime import datetime, timezone
+
+_log = logging.getLogger(__name__)
 
 from sqlalchemy.orm import Session
 
@@ -101,14 +104,13 @@ def run_extraction(
     for i, rc in enumerate(result.candidates):
         has_kind = bool(rc.relation_kind)
         has_target = bool(rc.relation_target_id)
-        if has_kind and not has_target:
-            raise ExtractionError(
-                f"Candidate {i}: relation_kind='{rc.relation_kind}' set but relation_target_id is absent."
+        if has_kind != has_target:
+            _log.warning(
+                "Candidate %d skipped: relation_kind and relation_target_id must both be set or both null "
+                "(kind=%r, target=%r)",
+                i, rc.relation_kind, rc.relation_target_id,
             )
-        if has_target and not has_kind:
-            raise ExtractionError(
-                f"Candidate {i}: relation_target_id='{rc.relation_target_id}' set but relation_kind is absent."
-            )
+            continue
 
         c = Candidate(
             extraction_run_id=run.id,
