@@ -256,7 +256,7 @@ export function SourceLibrary() {
               </li>
             )}
             {documents.map(doc => (
-              <li key={doc.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.3rem', margin: '0.6rem 0.5rem 0 0' }}>
+              <li key={doc.id} style={{ margin: '0.6rem 0.5rem 0 0' }}>
                 <button
                   onClick={() => handleSelect(doc)}
                   className={`sidebar-doc-btn${selected?.id === doc.id ? ' active' : ''}`}
@@ -271,14 +271,6 @@ export function SourceLibrary() {
                     <div style={{ fontSize: '0.65rem', color: 'var(--sidebar-muted)', opacity: 0.5, marginTop: '0.15rem' }}>{doc.year}</div>
                   )}
                 </button>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                  <button className="sidebar-delete-btn" onClick={() => openEdit(doc)} title="Edit metadata" style={{ fontSize: '0.65rem' }}>
-                    ✎
-                  </button>
-                  <button className="sidebar-delete-btn" onClick={() => handleDelete(doc)} title={`Remove ${doc.title}`}>
-                    ×
-                  </button>
-                </div>
               </li>
             ))}
           </ul>
@@ -314,7 +306,7 @@ export function SourceLibrary() {
                 letterSpacing: '0.08em', textTransform: 'uppercase' as const,
               }}
             >
-              Reset library
+              Burn library
             </button>
           </div>
 
@@ -343,13 +335,47 @@ export function SourceLibrary() {
               <SectionEditor documentId={selected.id} sections={sections} onSave={handleSave} />
             </>
           ) : (
-            <SourceWorkflow
-              document={selected}
-              sections={sections}
-              onEditSections={() => setView('edit-sections')}
-              onAtlasChanged={() => {}}
-              onViewAtlas={() => setView('atlas-explorer')}
-            />
+            <>
+              <SourceWorkflow
+                document={selected}
+                sections={sections}
+                onEditSections={() => setView('edit-sections')}
+                onAtlasChanged={() => {}}
+                onViewAtlas={() => setView('atlas-explorer')}
+              />
+              {/* Document actions — edit metadata or remove */}
+              <div style={{
+                maxWidth: '720px', margin: '3rem auto 0',
+                paddingTop: '1.5rem',
+                borderTop: '1px solid rgba(212,188,138,0.2)',
+                display: 'flex', gap: '1.5rem', alignItems: 'center',
+              }}>
+                <button
+                  type="button"
+                  onClick={() => openEdit(selected)}
+                  style={{
+                    background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                    fontSize: '0.8rem', color: 'var(--ink-muted)',
+                    letterSpacing: '0.06em', textDecoration: 'underline',
+                    textDecorationColor: 'rgba(140,120,80,0.3)',
+                    textUnderlineOffset: '3px',
+                  }}
+                >
+                  Edit metadata
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDelete(selected)}
+                  style={{
+                    background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                    fontSize: '0.8rem', color: 'var(--error-text)', opacity: 0.55,
+                    letterSpacing: '0.06em',
+                  }}
+                >
+                  Remove document
+                </button>
+              </div>
+            </>
           )}
         </main>
 
