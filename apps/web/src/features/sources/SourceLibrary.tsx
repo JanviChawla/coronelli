@@ -339,6 +339,7 @@ export function SourceLibrary() {
               document={selected}
               sections={sections}
               onEditSections={() => setView('edit-sections')}
+              onSectionsChanged={(s) => setSections(s)}
               onAtlasChanged={() => {}}
               onViewAtlas={() => setView('atlas-explorer')}
               onEdit={() => openEdit(selected)}

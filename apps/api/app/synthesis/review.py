@@ -89,16 +89,31 @@ def _approve_entity(session: Session, document_id: str, payload: dict) -> MapEnt
 def _resolve_entity_id(session: Session, document_id: str, name: str | None) -> str | None:
     if not name:
         return None
-    entity = (
+    name_lower = name.lower().strip()
+    entities = (
         session.query(MapEntity)
         .filter(
-            MapEntity.name == name,
             MapEntity.provenance_document_id == document_id,
             MapEntity.state == "active",
         )
-        .first()
+        .all()
     )
-    return entity.id if entity else None
+    # 1. Exact name match
+    for e in entities:
+        if e.name.lower() == name_lower:
+            return e.id
+    # 2. Alias match
+    for e in entities:
+        for alias in (e.aliases or []):
+            if alias and alias.lower() == name_lower:
+                return e.id
+    # 3. Substring match: handles "Hudson" → "Hudson River", "Tappan Zee" → "Tappan Zee"
+    #    Only match when one name is a clean prefix/suffix of the other to avoid false positives.
+    for e in entities:
+        ename = e.name.lower()
+        if name_lower in ename or ename in name_lower:
+            return e.id
+    return None
 
 
 def _approve_claim(session: Session, document_id: str, payload: dict, claim_type: str) -> MapClaim:

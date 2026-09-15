@@ -95,3 +95,12 @@ export async function updateSections(
   if (!res.ok) throw new Error('Failed to save sections')
   return res.json()
 }
+
+export async function resectionDocument(documentId: string): Promise<Section[]> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/resection`, { method: 'POST' })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(`Re-prepare failed: ${text}`)
+  }
+  return res.json()
+}

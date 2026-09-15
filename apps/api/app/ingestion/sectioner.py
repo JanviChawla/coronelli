@@ -344,3 +344,77 @@ def section_text(text: str) -> list[ProposedSection]:
             return sections
 
     return [ProposedSection(title="Section 1", text=text.strip(), ordinal=0)]
+
+
+# ── Semantic splitting for long sections ──────────────────────────────────────
+
+_SPLIT_WORD_THRESHOLD = 3_000   # split narrative sections longer than this
+_SPLIT_TARGET_WORDS   = 2_500   # aim for chunks of roughly this size
+_SPLIT_MIN_WORDS      =   400   # merge trailing chunk if shorter than this
+
+
+def _word_count(text: str) -> int:
+    return len(text.split())
+
+
+def _split_one_section(section: ProposedSection) -> list[ProposedSection]:
+    """Split a single section at paragraph (\\n\\n) boundaries into ~_SPLIT_TARGET_WORDS chunks."""
+    paragraphs = re.split(r"\n\n+", section.text)
+
+    chunks: list[str] = []
+    current: list[str] = []
+    current_words = 0
+
+    for para in paragraphs:
+        para_words = _word_count(para)
+        if current_words + para_words > _SPLIT_TARGET_WORDS and current:
+            chunks.append("\n\n".join(current))
+            current = [para]
+            current_words = para_words
+        else:
+            current.append(para)
+            current_words += para_words
+
+    if current:
+        chunks.append("\n\n".join(current))
+
+    # Merge a tiny trailing chunk into the previous one.
+    if len(chunks) > 1 and _word_count(chunks[-1]) < _SPLIT_MIN_WORDS:
+        chunks[-2] = chunks[-2] + "\n\n" + chunks[-1]
+        chunks.pop()
+
+    if len(chunks) <= 1:
+        return [section]  # nothing to split
+
+    base = section.title or f"Section {section.ordinal + 1}"
+    return [
+        ProposedSection(
+            text=chunk.strip(),
+            ordinal=section.ordinal,   # reassigned by caller
+            title=f"{base}, Part {i + 1}",
+            section_kind=section.section_kind,
+        )
+        for i, chunk in enumerate(chunks)
+    ]
+
+
+def split_long_sections(sections: list[ProposedSection]) -> list[ProposedSection]:
+    """Split narrative sections over _SPLIT_WORD_THRESHOLD words at paragraph boundaries.
+
+    Ordinals are reassigned sequentially so non-narrative sections (end_matter etc.)
+    placed after this call must have their own ordinals set by the caller.
+    """
+    result: list[ProposedSection] = []
+    for section in sections:
+        if (
+            section.section_kind == "narrative"
+            and _word_count(section.text) > _SPLIT_WORD_THRESHOLD
+        ):
+            result.extend(_split_one_section(section))
+        else:
+            result.append(section)
+
+    for i, s in enumerate(result):
+        s.ordinal = i
+
+    return result

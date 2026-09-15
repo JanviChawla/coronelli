@@ -4,14 +4,16 @@ import { CandidatesTable } from '../candidates/CandidatesTable'
 import { type Candidate, fetchCandidates } from '../candidates/candidateApi'
 import { fetchPreflight, triggerCatalogExtraction, triggerEvidenceExtraction } from './extractionApi'
 import type { Document, Section } from './sourceApi'
+import { resectionDocument } from './sourceApi'
 import { fetchAtlas } from '../atlas/atlasApi'
-import type { AtlasEntity } from '../atlas/atlasApi'
+import type { AtlasEntity, AtlasTravelRule } from '../atlas/atlasApi'
 import { triggerSynthesis } from '../synthesis/synthesisApi'
 
 interface Props {
   document: Document
   sections: Section[]
   onEditSections: () => void
+  onSectionsChanged?: (sections: Section[]) => void
   onAtlasChanged?: () => void
   onViewAtlas?: () => void
   onEdit?: () => void
@@ -135,9 +137,13 @@ function RerunCard({ label, costLo, costHi, meta, action, onAction }: {
           {label}
         </p>
         <p>
-          <span style={{ fontSize: '1.05rem', color: 'var(--ink)', fontWeight: 400 }}>
-            ${costLo.toFixed(2)} – ${costHi.toFixed(2)}
-          </span>
+          {costLo === 0 && costHi === 0 ? (
+            <span style={{ fontSize: '1.05rem', color: 'var(--ink-muted)', fontWeight: 400 }}>Free</span>
+          ) : (
+            <span style={{ fontSize: '1.05rem', color: 'var(--ink)', fontWeight: 400 }}>
+              ${costLo.toFixed(2)} – ${costHi.toFixed(2)}
+            </span>
+          )}
           <span style={{
             fontSize: '0.66rem', color: 'var(--ink-faint)',
             fontFamily: 'monospace', marginLeft: '0.55rem',
@@ -159,7 +165,7 @@ function RerunCard({ label, costLo, costHi, meta, action, onAction }: {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function SourceWorkflow({ document, sections, onEditSections, onAtlasChanged, onViewAtlas, onEdit, onDelete }: Props) {
+export function SourceWorkflow({ document, sections, onEditSections, onSectionsChanged, onAtlasChanged, onViewAtlas, onEdit, onDelete }: Props) {
   const [phase, setPhase] = useState<Phase>('preflight')
   const [errorInStep, setErrorInStep] = useState<3 | 4>(3)
   const [totalCost, setTotalCost] = useState<number | null>(null)
@@ -175,6 +181,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
   const [canonicalEntityCount, setCanonicalEntityCount] = useState(0)
   const [canonicalClaimCount, setCanonicalClaimCount] = useState(0)
   const [atlasEntities, setAtlasEntities] = useState<AtlasEntity[]>([])
+  const [atlasTravelRules, setAtlasTravelRules] = useState<AtlasTravelRule[]>([])
   const [synthElapsedMs, setSynthElapsedMs] = useState(0)
   const [synthPass, setSynthPass] = useState<1 | 2>(1)
   const [harvestPass, setHarvestPass] = useState<1 | 2>(1)
@@ -195,25 +202,30 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
     try {
       const atlas = await fetchAtlas(document.id)
       if (atlas.entity_count > 0) {
-        setCanonicalEntityCount(atlas.entity_count)
-        setCanonicalClaimCount(atlas.claim_count)
-        setAtlasEntities(atlas.entities)
         const bySection: Record<string, Candidate[]> = {}
         let total = 0
         await Promise.all(sections.map(async (s) => {
           bySection[s.id] = await fetchCandidates(s.id)
           total += bySection[s.id].length
         }))
-        setAllCandidates(bySection)
-        setTotalCandidates(total)
-        // Fetch preflight to get per-book cost estimate (sum all sections, ignore cache_valid)
-        try {
-          const preflightResults = await Promise.all(sections.map((s) => fetchPreflight(s.id)))
-          const cost = preflightResults.reduce((sum, r) => sum + (r.estimated_cost_usd ?? 0), 0)
-          setTotalCost(cost)
-        } catch { /* preflight optional in done state */ }
-        setPhase('done')
-        return
+        // Only treat as done if candidates exist on current sections.
+        // If sections were re-prepared, candidates will be 0 and atlas is stale.
+        if (total > 0) {
+          setCanonicalEntityCount(atlas.entity_count)
+          setCanonicalClaimCount(atlas.claim_count)
+          setAtlasEntities(atlas.entities)
+          setAtlasTravelRules(atlas.travel_rules)
+          setAllCandidates(bySection)
+          setTotalCandidates(total)
+          try {
+            const preflightResults = await Promise.all(sections.map((s) => fetchPreflight(s.id)))
+            const cost = preflightResults.reduce((sum, r) => sum + (r.estimated_cost_usd ?? 0), 0)
+            setTotalCost(cost)
+          } catch { /* preflight optional in done state */ }
+          setPhase('done')
+          return
+        }
+        // Atlas is stale (sections re-prepared) — fall through to check for candidates
       }
     } catch { /* no atlas yet */ }
 
@@ -324,6 +336,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
       setCanonicalEntityCount(atlas.entity_count)
       setCanonicalClaimCount(atlas.claim_count)
       setAtlasEntities(atlas.entities)
+      setAtlasTravelRules(atlas.travel_rules)
       setPhase('done')
       onAtlasChanged?.()
     } catch (e) {
@@ -332,6 +345,16 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
       setWorkflowError(e instanceof Error ? e.message : 'Synthesis failed.')
       setErrorInStep(4)
       setPhase('error')
+    }
+  }
+
+  async function handleResection() {
+    try {
+      const newSections = await resectionDocument(document.id)
+      onSectionsChanged?.(newSections)
+      // initWorkflow re-runs via useEffect when sections.length changes
+    } catch (e) {
+      setWorkflowError(e instanceof Error ? e.message : 'Re-prepare failed.')
     }
   }
 
@@ -437,19 +460,29 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
         label="Prepare sections"
         detail={`${sections.length} section${sections.length !== 1 ? 's' : ''} ready`}
         action={
-          <details>
-            <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
-              Inspect sections ({sections.length})
-            </summary>
-            <div style={{ marginTop: '0.65rem' }}>
-              {sections.map((s, i) => (
-                <div key={s.id} style={{ display: 'flex', gap: '0.5rem', fontSize: '0.88rem', marginBottom: '0.3rem' }}>
-                  <span style={{ color: 'var(--gold)', minWidth: '2rem', fontSize: '0.62rem', flexShrink: 0 }}>§{i + 1}</span>
-                  <span style={{ color: 'var(--ink)' }}>{s.title}</span>
-                </div>
-              ))}
-            </div>
-          </details>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <RerunCard
+              label="Re-prepare cost"
+              costLo={0}
+              costHi={0}
+              meta="Re-runs semantic splitting · free"
+              action="Re-prepare sections"
+              onAction={handleResection}
+            />
+            <details>
+              <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+                Inspect sections ({sections.length})
+              </summary>
+              <div style={{ marginTop: '0.65rem' }}>
+                {sections.map((s, i) => (
+                  <div key={s.id} style={{ display: 'flex', gap: '0.5rem', fontSize: '0.88rem', marginBottom: '0.3rem' }}>
+                    <span style={{ color: 'var(--gold)', minWidth: '2rem', fontSize: '0.62rem', flexShrink: 0 }}>§{i + 1}</span>
+                    <span style={{ color: 'var(--ink)' }}>{s.title}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          </div>
         }
       />
       <StepConnector />
@@ -605,27 +638,93 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
                 action="Re-synthesize"
                 onAction={() => handleSynthesize(true)}
               />
-              {atlasEntities.length > 0 && (
-                <details>
-                  <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
-                    Inspect canonical places ({canonicalEntityCount})
-                  </summary>
-                  <div style={{ marginTop: '0.65rem', display: 'flex', flexDirection: 'column', gap: '0.22rem' }}>
-                    {atlasEntities
-                      .slice()
-                      .sort((a, b) => a.name.localeCompare(b.name))
-                      .map(e => (
-                        <div key={e.id} style={{ fontSize: '0.88rem', color: 'var(--ink)', display: 'flex', gap: '0.35rem', alignItems: 'baseline' }}>
-                          <span style={{ flexShrink: 0, color: 'var(--gold)', fontSize: '0.58rem' }}>◉</span>
-                          <span>{e.name}</span>
-                          {e.place_kind && (
-                            <span style={{ color: 'var(--ink-faint)', fontSize: '0.62rem' }}>· {e.place_kind}</span>
-                          )}
+              {atlasEntities.length > 0 && (() => {
+                const spatialClaims = atlasEntities.flatMap(e => e.claims.filter(c => c.claim_type === 'spatial'))
+                const visualClaims = atlasEntities.flatMap(e => e.claims.filter(c => c.claim_type === 'visual'))
+                return (
+                  <>
+                    <details>
+                      <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+                        Inspect canonical places ({canonicalEntityCount})
+                      </summary>
+                      <div style={{ marginTop: '0.65rem', display: 'flex', flexDirection: 'column', gap: '0.22rem' }}>
+                        {atlasEntities
+                          .slice()
+                          .sort((a, b) => a.name.localeCompare(b.name))
+                          .map(e => (
+                            <div key={e.id} style={{ fontSize: '0.88rem', color: 'var(--ink)', display: 'flex', gap: '0.35rem', alignItems: 'baseline' }}>
+                              <span style={{ flexShrink: 0, color: 'var(--gold)', fontSize: '0.58rem' }}>◉</span>
+                              <span>{e.name}</span>
+                              {e.place_kind && (
+                                <span style={{ color: 'var(--ink-faint)', fontSize: '0.62rem' }}>· {e.place_kind}</span>
+                              )}
+                            </div>
+                          ))}
+                      </div>
+                    </details>
+                    {spatialClaims.length > 0 && (
+                      <details>
+                        <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+                          Inspect spatial relationships ({spatialClaims.length})
+                        </summary>
+                        <div style={{ marginTop: '0.65rem', display: 'flex', flexDirection: 'column', gap: '0.22rem' }}>
+                          {spatialClaims.map((c) => (
+                            <div key={c.id} style={{ fontSize: '0.82rem', color: 'var(--ink)', display: 'flex', gap: '0.35rem', alignItems: 'baseline', flexWrap: 'wrap' }}>
+                              <span style={{ flexShrink: 0, color: 'var(--gold)', fontSize: '0.58rem' }}>◈</span>
+                              <span style={{ fontStyle: 'italic' }}>{String(c.payload.subject ?? '')}</span>
+                              <span style={{ color: 'var(--ink-faint)', fontSize: '0.72rem', letterSpacing: '0.04em' }}>{c.predicate ?? String(c.payload.predicate ?? '')}</span>
+                              <span style={{ fontStyle: 'italic' }}>{String(c.payload.object ?? '')}</span>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                  </div>
-                </details>
-              )}
+                      </details>
+                    )}
+                    {visualClaims.length > 0 && (
+                      <details>
+                        <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+                          Inspect visual descriptions ({visualClaims.length})
+                        </summary>
+                        <div style={{ marginTop: '0.65rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                          {visualClaims.map((c) => (
+                            <div key={c.id} style={{ fontSize: '0.82rem', color: 'var(--ink)' }}>
+                              <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'baseline' }}>
+                                <span style={{ flexShrink: 0, color: 'var(--gold)', fontSize: '0.58rem' }}>◈</span>
+                                <span style={{ fontStyle: 'italic' }}>{String(c.payload.subject ?? '')}</span>
+                                {c.payload.category && (
+                                  <span style={{ color: 'var(--ink-faint)', fontSize: '0.72rem' }}>· {String(c.payload.category)}</span>
+                                )}
+                              </div>
+                              {c.payload.observation && (
+                                <div style={{ marginLeft: '1.1rem', color: 'var(--ink-muted)', fontSize: '0.78rem', marginTop: '0.1rem' }}>
+                                  {String(c.payload.observation)}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                    {atlasTravelRules.length > 0 && (
+                      <details>
+                        <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+                          Inspect movements & routes ({atlasTravelRules.length})
+                        </summary>
+                        <div style={{ marginTop: '0.65rem', display: 'flex', flexDirection: 'column', gap: '0.22rem' }}>
+                          {atlasTravelRules.map((r) => (
+                            <div key={r.id} style={{ fontSize: '0.82rem', color: 'var(--ink)', display: 'flex', gap: '0.35rem', alignItems: 'baseline', flexWrap: 'wrap' }}>
+                              <span style={{ flexShrink: 0, color: 'var(--gold)', fontSize: '0.58rem' }}>→</span>
+                              <span>{r.route ?? `${String(r.payload.from_place ?? r.payload.from ?? '')} → ${String(r.payload.to_place ?? r.payload.to ?? '')}`}</span>
+                              {r.traveler && (
+                                <span style={{ color: 'var(--ink-faint)', fontSize: '0.72rem' }}>({r.traveler})</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                  </>
+                )
+              })()}
             </div>
           }
         />

@@ -9,7 +9,7 @@ from app.db.engine import get_db
 from app.db.models import SourceDocument
 from app.domain.sources import ProposedSection, delete_document, list_documents, list_sections, replace_sections
 from app.ingestion.parsers import TextExtractionUnavailableError
-from app.ingestion.service import import_document
+from app.ingestion.service import import_document, resection_document
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -139,6 +139,17 @@ def delete_document_endpoint(document_id: str, db: Session = Depends(get_db)) ->
         delete_document(db, document_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{document_id}/resection", response_model=list[SectionResponse])
+def resection_document_endpoint(document_id: str, db: Session = Depends(get_db)) -> list[SectionResponse]:
+    """Re-run the sectioning pipeline (including semantic splitting) on the stored raw text."""
+    try:
+        sections = resection_document(db, document_id)
+        db.commit()
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return [SectionResponse.model_validate(s) for s in sections]
 
 
 @router.get("/{document_id}/sections", response_model=list[SectionResponse])

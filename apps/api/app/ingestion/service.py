@@ -6,7 +6,7 @@ from app.db.models import SourceDocument, SourceSection
 from app.domain.sources import ProposedSection, create_document, replace_sections
 from app.ingestion.normalizer import normalize_source
 from app.ingestion.parsers import parse_upload
-from app.ingestion.sectioner import section_text
+from app.ingestion.sectioner import section_text, split_long_sections
 
 
 def import_document(
@@ -20,8 +20,8 @@ def import_document(
     # Detect Gutenberg boundaries and authored end-matter (Postscript, etc.).
     normalized = normalize_source(parsed.text)
 
-    # Section the narrative body only — never the raw or the authored sections.
-    narrative_sections = section_text(normalized.narrative_body)
+    # Section the narrative body; split any section that is too long for a single extraction pass.
+    narrative_sections = split_long_sections(section_text(normalized.narrative_body))
 
     # Build authored sections (Postscript, Appendix…) as end_matter entries.
     # Append them after all narrative sections so ordinals stay contiguous.
@@ -54,3 +54,28 @@ def import_document(
 
     sections = replace_sections(session, doc.id, proposed)
     return doc, sections
+
+
+def resection_document(session: Session, document_id: str) -> list[SourceSection]:
+    """Re-run the full sectioning pipeline (including semantic splitting) on a stored document."""
+    doc = session.get(SourceDocument, document_id)
+    if doc is None:
+        raise ValueError(f"Document {document_id} not found")
+    if not doc.raw_text:
+        raise ValueError(f"Document {document_id} has no stored raw text; re-import to resection")
+
+    normalized = normalize_source(doc.raw_text)
+    narrative_sections = split_long_sections(section_text(normalized.narrative_body))
+
+    proposed: list[ProposedSection] = list(narrative_sections)
+    next_ordinal = len(narrative_sections)
+    for authored in normalized.authored_sections:
+        proposed.append(ProposedSection(
+            text=authored.text,
+            ordinal=next_ordinal,
+            title=authored.title,
+            section_kind=authored.kind,
+        ))
+        next_ordinal += 1
+
+    return replace_sections(session, document_id, proposed)
