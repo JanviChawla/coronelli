@@ -63,6 +63,11 @@ export async function deleteDocument(documentId: string): Promise<void> {
   if (!res.ok) throw new Error('Failed to delete document')
 }
 
+export async function resetLibrary(): Promise<void> {
+  const res = await fetch(`${BASE}/api/admin/reset`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Reset failed')
+}
+
 export async function updateSections(
   documentId: string,
   sections: SectionUpdate[],

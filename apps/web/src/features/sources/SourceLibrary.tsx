@@ -7,6 +7,7 @@ import {
   fetchDocuments,
   fetchSections,
   importDocument,
+  resetLibrary,
   updateSections,
   type Document,
   type Section,
@@ -57,6 +58,9 @@ export function SourceLibrary() {
   const [inspectorTarget, setInspectorTarget]   = useState<InspectorTarget>(null)
   const [entityMentions, setEntityMentions]     = useState<EntityMention[]>([])
   const [cursor, setCursor]                     = useState(0)
+  const [showReset, setShowReset]               = useState(false)
+  const [resetInput, setResetInput]             = useState('')
+  const [resetting, setResetting]               = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const sectionTitles = new Map(sections.map(s => [s.id, s.title]))
@@ -139,6 +143,28 @@ export function SourceLibrary() {
       setView('workflow')
     } catch {
       setError('Could not save sections.')
+    }
+  }
+
+  async function handleReset() {
+    setResetting(true)
+    try {
+      await resetLibrary()
+      setDocuments([])
+      setSelected(null)
+      setSections([])
+      setHasApprovedAtlas(false)
+      setInspectorTarget(null)
+      setEntityMentions([])
+      setCursor(0)
+      setView('workflow')
+      setError(null)
+    } catch {
+      setError('Reset failed.')
+    } finally {
+      setResetting(false)
+      setShowReset(false)
+      setResetInput('')
     }
   }
 
@@ -316,10 +342,88 @@ export function SourceLibrary() {
         ) : (
           <span style={S.footerText}>◻ Atlas Explorer</span>
         )}
-        <span style={S.footerText}>
-          {hasApprovedAtlas && selected ? '● Atlas ready' : '⊘ Available after atlas is approved'}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
+          <span style={S.footerText}>
+            {hasApprovedAtlas && selected ? '● Atlas ready' : '⊘ Available after atlas is approved'}
+          </span>
+          <button
+            type="button"
+            onClick={() => { setShowReset(true); setResetInput('') }}
+            style={{ ...S.footerText, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--sidebar-muted)', opacity: 0.5 }}
+          >
+            Reset library
+          </button>
+        </div>
       </footer>
+
+      {/* ── Reset confirmation overlay ───────────────────────────────── */}
+      {showReset && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
+        }}>
+          <div style={{
+            background: 'var(--parchment)', border: '1px solid var(--border-warm)',
+            borderRadius: '6px', padding: '2rem 2.25rem', width: '360px', maxWidth: '90vw',
+          }}>
+            <p style={{ fontSize: '1rem', fontWeight: 400, color: 'var(--ink)', marginBottom: '0.4rem' }}>
+              Reset the library?
+            </p>
+            <p style={{ fontSize: '0.8rem', color: 'var(--ink-muted)', marginBottom: '1.5rem', lineHeight: 1.55 }}>
+              This permanently deletes every document, section, candidate, synthesis run, and atlas entity.
+              There is no undo.
+            </p>
+            <p style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', marginBottom: '0.5rem' }}>
+              Type <strong>reset</strong> to confirm:
+            </p>
+            <input
+              type="text"
+              value={resetInput}
+              onChange={e => setResetInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && resetInput === 'reset') handleReset() }}
+              placeholder="reset"
+              autoFocus
+              style={{
+                width: '100%', boxSizing: 'border-box' as const,
+                padding: '0.5rem 0.75rem', fontSize: '0.85rem',
+                border: '1px solid var(--border-warm)', borderRadius: '4px',
+                background: 'var(--parchment-alt)', color: 'var(--ink)',
+                marginBottom: '1.25rem', outline: 'none',
+              }}
+            />
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => { setShowReset(false); setResetInput('') }}
+                disabled={resetting}
+                style={{
+                  fontSize: '0.8rem', padding: '0.45rem 1rem',
+                  background: 'none', border: '1px solid var(--border-warm)',
+                  borderRadius: '4px', cursor: 'pointer', color: 'var(--ink-muted)',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleReset}
+                disabled={resetInput !== 'reset' || resetting}
+                style={{
+                  fontSize: '0.8rem', padding: '0.45rem 1rem',
+                  background: resetInput === 'reset' ? '#7f1d1d' : 'var(--border-warm)',
+                  border: 'none', borderRadius: '4px',
+                  cursor: resetInput === 'reset' ? 'pointer' : 'not-allowed',
+                  color: resetInput === 'reset' ? '#fef2f2' : 'var(--ink-faint)',
+                  opacity: resetting ? 0.6 : 1,
+                  transition: 'background 0.15s',
+                }}
+              >
+                {resetting ? 'Resetting…' : 'Reset everything'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

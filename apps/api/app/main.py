@@ -7,6 +7,7 @@ from fastapi import FastAPI
 load_dotenv(Path(__file__).parents[3] / ".env")
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.admin import router as admin_router
 from app.api.atlas import router as atlas_router
 from app.api.candidates import router as candidates_router
 from app.api.extraction import router as extraction_router
@@ -33,6 +34,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(admin_router)
 app.include_router(workspaces_router)
 app.include_router(sources_router)
 app.include_router(series_router)
