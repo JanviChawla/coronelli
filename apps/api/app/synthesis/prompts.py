@@ -149,17 +149,23 @@ These have been roughly deduplicated by name in Python, but may still contain:
 
 YOUR TASK: produce a canonical list of unique named places.
 
+Each input record has:
+- payload: {name, type, aliases} — the extracted place info
+- section_mentions: a list of {section_title, section_ordinal, excerpt} — every chapter where this place appears
+
 RULES:
 1. ONE entity per distinct real place. Merge any variants that name the same place.
 2. Canonical name: the most specific, unambiguous, and complete name.
 3. type must be one of: world, region, island, settlement, landmark, building, room, hall,
    tunnel, shaft, passage, portal, door, exterior, terrain_feature, body_of_water, site, court, barrier
 4. aliases: all other names or phrasings used for this place in the source.
-5. observations: one brief sentence per section where the place appears with distinctive description.
-   Capture what is spatially/visually specific to that section (season, time, atmosphere, who is present).
+5. observations: one brief sentence PER ENTRY in section_mentions, in section_ordinal order.
+   Draw from the excerpt to capture what is spatially or experientially distinctive about that
+   section's encounter with this place — season, time of day, atmosphere, who is present, what happens.
+   If a place has 8 section_mentions, write 8 observations. Volume matters: this is the atlas detail.
 6. Include ONLY named places. Reject: characters, creatures, furniture, portable objects,
    food, abstract concepts, body parts, emotions, pronouns, vague descriptors ("the dark", "inside").
-7. Also emit reveal_event for every entity — the earliest section_ordinal it appears.
+7. Also emit reveal_event for every entity — use the section_mention with the lowest section_ordinal.
 
 OUTPUT: valid JSON only, no markdown.
 {

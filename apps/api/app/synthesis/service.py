@@ -65,11 +65,13 @@ def _build_evidence_ledger(session: Session, document_id: str) -> list[dict]:
                 "review_state": c.review_state,
             })
 
-    # Deduplicate entity candidates in Python — keep the highest-confidence
-    # record per normalized name. This cuts 200+ repetitions to ~60 unique places
-    # before the LLM sees them, dramatically reducing input size.
-    seen_names: dict[str, int] = {}  # normalized name → index in deduped list
-    deduped: list[dict] = []
+    # Deduplicate entity candidates in Python — merge all per-section occurrences
+    # of the same place into ONE record. The merged record carries the best payload
+    # (highest-confidence name/type/aliases) PLUS a section_mentions list so the
+    # entity consolidation LLM can still populate per-section observations.
+    # This collapses e.g. 20 "Prythian" rows into 1 record with 20 section mentions.
+    seen_names: dict[str, int] = {}  # normalized name → index in entity_deduped
+    entity_deduped: list[dict] = []
     non_entity: list[dict] = []
     for item in ledger:
         if item["kind"] != "entity":
@@ -79,17 +81,28 @@ def _build_evidence_ledger(session: Session, document_id: str) -> list[dict]:
         if not name:
             non_entity.append(item)
             continue
+        mention = {
+            "section_title": item.get("section_title"),
+            "section_ordinal": item.get("section_ordinal"),
+            "excerpt": item.get("excerpt", ""),
+        }
         if name not in seen_names:
-            seen_names[name] = len(deduped)
-            deduped.append(item)
-        elif item["confidence"] > deduped[seen_names[name]]["confidence"]:
-            deduped[seen_names[name]] = item
+            seen_names[name] = len(entity_deduped)
+            merged = dict(item)
+            merged["section_mentions"] = [mention]
+            entity_deduped.append(merged)
+        else:
+            existing = entity_deduped[seen_names[name]]
+            existing["section_mentions"].append(mention)
+            if item["confidence"] > existing["confidence"]:
+                existing["confidence"] = item["confidence"]
+                existing["payload"] = item["payload"]
 
     _log.info(
         "Evidence ledger for %s: %d raw entity candidates → %d unique; %d evidence items",
-        document_id, len(ledger) - len(non_entity), len(deduped), len(non_entity),
+        document_id, len(ledger) - len(non_entity), len(entity_deduped), len(non_entity),
     )
-    return deduped + non_entity
+    return entity_deduped + non_entity
 
 
 def _evidence_hash(ledger: list[dict]) -> str:
