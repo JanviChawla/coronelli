@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { CandidatesTable } from '../candidates/CandidatesTable'
 import { type Candidate, fetchCandidates } from '../candidates/candidateApi'
-import { fetchPreflight, triggerExtraction } from './extractionApi'
+import { fetchPreflight, triggerCatalogExtraction, triggerEvidenceExtraction } from './extractionApi'
 import type { Document, Section } from './sourceApi'
 import { fetchAtlas } from '../atlas/atlasApi'
 import type { AtlasEntity } from '../atlas/atlasApi'
@@ -147,10 +147,9 @@ function RerunCard({ label, costLo, costHi, meta, action, onAction }: {
         </p>
       </div>
       <button
-        className="btn-cta"
+        className="btn-rerun"
         type="button"
         onClick={onAction}
-        style={{ width: 'auto', flexShrink: 0, padding: '0.55rem 1.2rem', fontSize: '0.92rem' }}
       >
         {action}
       </button>
@@ -178,6 +177,8 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
   const [atlasEntities, setAtlasEntities] = useState<AtlasEntity[]>([])
   const [synthElapsedMs, setSynthElapsedMs] = useState(0)
   const [synthPass, setSynthPass] = useState<1 | 2>(1)
+  const [harvestPass, setHarvestPass] = useState<1 | 2>(1)
+  const [catalogEntityCount, setCatalogEntityCount] = useState(0)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const synthPassTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -223,7 +224,12 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
         bySection[s.id] = await fetchCandidates(s.id)
         total += bySection[s.id].length
       }))
-      if (total > 0) {
+      // Only treat as "harvested" if evidence candidates exist (non-entity kinds)
+      // Catalog-only pass produces entity candidates; evidence pass produces the rest.
+      const evidenceCount = Object.values(bySection).reduce(
+        (sum, cands) => sum + cands.filter(c => c.kind !== 'entity').length, 0
+      )
+      if (evidenceCount > 0) {
         setAllCandidates(bySection)
         setTotalCandidates(total)
         setPhase('harvested')
@@ -249,31 +255,51 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
 
   async function handleHarvest(force = false) {
     setPhase('extracting')
+    setHarvestPass(1)
     setCurrentIdx(0)
     setCandidatesSoFar(0)
+    setCatalogEntityCount(0)
     setWorkflowError(null)
     setAllCandidates({})
 
     const startTime = Date.now()
     timerRef.current = setInterval(() => setElapsedMs(Date.now() - startTime), 100)
 
-    let total = 0
     try {
+      // ── Pass 1: Global pre-pass — catalog all sections ─────────────────────
+      let entityTotal = 0
       for (let i = 0; i < sections.length; i++) {
         setCurrentIdx(i + 1)
         setCurrentTitle(sections[i].title)
-        const result = await triggerExtraction(sections[i].id, force)
+        const result = await triggerCatalogExtraction(sections[i].id, force)
+        entityTotal += result.candidates.length
+        setCatalogEntityCount(entityTotal)
+      }
+
+      // ── Pass 2: Global evidence pass — extract using full entity list ───────
+      setHarvestPass(2)
+      setCurrentIdx(0)
+      let total = 0
+      for (let i = 0; i < sections.length; i++) {
+        setCurrentIdx(i + 1)
+        setCurrentTitle(sections[i].title)
+        // Evidence pass never uses force — catalog already wiped old data if force=true
+        const result = await triggerEvidenceExtraction(sections[i].id, false)
         total += result.candidates.length
         setCandidatesSoFar(total)
       }
 
       if (timerRef.current) clearInterval(timerRef.current)
       setTotalElapsedMs(Date.now() - startTime)
-      setTotalCandidates(total)
 
       const bySection: Record<string, Candidate[]> = {}
-      await Promise.all(sections.map(async (s) => { bySection[s.id] = await fetchCandidates(s.id) }))
+      let grandTotal = 0
+      await Promise.all(sections.map(async (s) => {
+        bySection[s.id] = await fetchCandidates(s.id)
+        grandTotal += bySection[s.id].length
+      }))
       setAllCandidates(bySection)
+      setTotalCandidates(grandTotal)
       setPhase('harvested')
     } catch (e) {
       if (timerRef.current) clearInterval(timerRef.current)
@@ -468,20 +494,61 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
         </StepActive>
       ) : phase === 'extracting' ? (
         <StepActive n={3} label="Harvest evidence" processing>
-          <p style={{ fontSize: '0.85rem', color: 'var(--ink-muted)', marginBottom: '0.2rem' }}>
-            Section {currentIdx} of {sections.length}
-            {currentTitle && <> · <em>{currentTitle}</em></>}
-            {' · '}{(elapsedMs / 1000).toFixed(1)}s
-          </p>
-          <p style={{ fontSize: '0.92rem', color: 'var(--ink-faint)' }}>
-            {candidatesSoFar} candidate{candidatesSoFar !== 1 ? 's' : ''} so far
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', marginTop: '0.25rem' }}>
+            {/* Pass 1 */}
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', opacity: harvestPass > 1 ? 0.55 : 1, transition: 'opacity 0.4s' }}>
+              <div style={{
+                width: '1.35rem', height: '1.35rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.05rem',
+                ...(harvestPass > 1
+                  ? { background: 'radial-gradient(circle at 40% 35%, #7a3528, #3d1208)', boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(240,215,190,0.8)', fontSize: '0.45rem' }
+                  : { background: 'var(--step-active-circle)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '0.55rem' }
+                ),
+              }} className={harvestPass === 1 ? 'step-processing' : ''}>
+                {harvestPass > 1 ? '✦' : 'I'}
+              </div>
+              <div>
+                <div style={{ fontSize: '0.9rem', color: 'var(--ink)', fontWeight: 500 }}>Pass 1 — Finding places</div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '0.15rem' }}>
+                  {harvestPass === 1
+                    ? <>§{currentIdx} of {sections.length}{currentTitle ? <> · <em>{currentTitle}</em></> : ''}</>
+                    : <>{catalogEntityCount} place{catalogEntityCount !== 1 ? 's' : ''} identified across {sections.length} sections</>
+                  }
+                </div>
+              </div>
+            </div>
+            {/* Pass 2 */}
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', opacity: harvestPass < 2 ? 0.38 : 1, transition: 'opacity 0.4s' }}>
+              <div style={{
+                width: '1.35rem', height: '1.35rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.05rem',
+                border: harvestPass < 2 ? '1.5px solid var(--gold)' : undefined,
+                background: harvestPass >= 2 ? 'var(--step-active-circle)' : undefined,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: harvestPass >= 2 ? '#fff' : 'var(--gold)', fontSize: '0.55rem',
+              }} className={harvestPass === 2 ? 'step-processing' : ''}>
+                {harvestPass >= 2 ? 'II' : ''}
+              </div>
+              <div>
+                <div style={{ fontSize: '0.9rem', color: 'var(--ink)', fontWeight: 500 }}>Pass 2 — Gathering evidence</div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '0.15rem' }}>
+                  {harvestPass === 2
+                    ? <>§{currentIdx} of {sections.length}{currentTitle ? <> · <em>{currentTitle}</em></> : ''} · {candidatesSoFar} fragment{candidatesSoFar !== 1 ? 's' : ''}</>
+                    : <>Claims, routes, and visual observations</>
+                  }
+                </div>
+              </div>
+            </div>
+          </div>
+          <p style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '1rem', fontFamily: 'monospace' }}>
+            {(elapsedMs / 1000).toFixed(1)}s elapsed
           </p>
         </StepActive>
       ) : phase === 'ready' ? (
         <StepActive n={3} label="Harvest evidence">
           <p style={{ fontSize: '0.95rem', color: 'var(--ink-muted)', marginTop: '0.5rem', marginBottom: '1.25rem', lineHeight: 1.6 }}>
-            Run the extraction model on each section to collect cartographic evidence —
-            places, spatial claims, routes, and visual descriptions — before synthesis begins.
+            Two-pass extraction over all {sections.length} section{sections.length !== 1 ? 's' : ''}:
+            Pass 1 identifies every named place across the whole book,
+            then Pass 2 extracts spatial claims, routes, and visual descriptions
+            anchored to that complete place list.
           </p>
           <div style={{
             borderTop: '1px solid rgba(212, 188, 138, 0.5)',

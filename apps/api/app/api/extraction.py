@@ -15,8 +15,16 @@ from app.extraction.prompts import (
     COMBINED_PROMPT_VERSION,
     CATALOG_SYSTEM_PROMPT, CATALOG_USER_TEMPLATE,
     EVIDENCE_SYSTEM_PROMPT, EVIDENCE_USER_TEMPLATE,
+    GLOBAL_CATALOG_VERSION, GLOBAL_EVIDENCE_VERSION,
 )
-from app.extraction.service import ExtractionError, _COST_PER_TOKEN, _section_content_hash, run_extraction
+from app.extraction.service import (
+    ExtractionError,
+    _COST_PER_TOKEN,
+    _section_content_hash,
+    run_extraction,
+    run_catalog_extraction,
+    run_evidence_extraction,
+)
 
 router = APIRouter(tags=["extraction"])
 
@@ -93,7 +101,7 @@ def extract_preflight(section_id: str, db: Session = Depends(get_db)) -> Preflig
             ExtractionRun.section_id == section_id,
             ExtractionRun.status == "completed",
             ExtractionRun.section_content_hash == content_hash,
-            ExtractionRun.prompt_version == COMBINED_PROMPT_VERSION,
+            ExtractionRun.prompt_version.in_([COMBINED_PROMPT_VERSION, GLOBAL_EVIDENCE_VERSION]),
         )
         .order_by(ExtractionRun.completed_at.desc())
         .first()
@@ -207,6 +215,107 @@ def extract_section(
             known_entities=None,
             cumulative_catalog=cumulative_catalog,
             force=force,
+        )
+    except ExtractionError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=500, detail=msg) from exc
+
+    return ExtractResponse(
+        run=RunResponse.model_validate(run),
+        candidates=[CandidateResponse.model_validate(c) for c in candidates],
+        from_cache=from_cache,
+    )
+
+
+@router.post("/api/sections/{section_id}/extract/catalog", response_model=ExtractResponse, status_code=201)
+def extract_section_catalog(
+    section_id: str,
+    force: bool = Query(default=False, description="Re-run even if a cached result exists."),
+    db: Session = Depends(get_db),
+) -> ExtractResponse:
+    """Global pre-pass: catalog-only extraction for a single section."""
+    try:
+        provider = get_provider()
+    except ExtractionNotConfiguredError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    try:
+        run, candidates, from_cache = run_catalog_extraction(db, section_id, provider, force=force)
+    except ExtractionError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=500, detail=msg) from exc
+
+    return ExtractResponse(
+        run=RunResponse.model_validate(run),
+        candidates=[CandidateResponse.model_validate(c) for c in candidates],
+        from_cache=from_cache,
+    )
+
+
+@router.post("/api/sections/{section_id}/extract/evidence", response_model=ExtractResponse, status_code=201)
+def extract_section_evidence(
+    section_id: str,
+    force: bool = Query(default=False, description="Re-run even if a cached result exists."),
+    db: Session = Depends(get_db),
+) -> ExtractResponse:
+    """Global evidence pass: extract claims/visual/routes using the full document entity list."""
+    try:
+        provider = get_provider()
+    except ExtractionNotConfiguredError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    section = db.get(SourceSection, section_id)
+    if section is None:
+        raise HTTPException(status_code=404, detail=f"Section '{section_id}' not found.")
+
+    # Build global catalog from ALL entity candidates for this document
+    all_section_ids = [
+        s.id for s in db.query(SourceSection).filter(
+            SourceSection.document_id == section.document_id
+        ).all()
+    ]
+    entity_candidates = (
+        db.query(Candidate)
+        .filter(Candidate.section_id.in_(all_section_ids), Candidate.kind == "entity")
+        .all()
+    ) if all_section_ids else []
+
+    existing_entities = (
+        db.query(MapEntity)
+        .filter(
+            MapEntity.provenance_document_id == section.document_id,
+            MapEntity.state == "active",
+        )
+        .all()
+    )
+
+    seen_names: set[str] = set()
+    global_catalog: list[dict] = []
+    for ec in entity_candidates:
+        name = (ec.payload.get("name") or "").strip()
+        if name and name not in seen_names:
+            seen_names.add(name)
+            global_catalog.append({
+                "name": name,
+                "type": ec.payload.get("type", ""),
+                "aliases": ec.payload.get("aliases") or [],
+            })
+    for e in existing_entities:
+        if e.name and e.name not in seen_names:
+            seen_names.add(e.name)
+            global_catalog.append({
+                "name": e.name,
+                "type": e.place_kind or "",
+                "aliases": list(e.aliases or []),
+            })
+
+    try:
+        run, candidates, from_cache = run_evidence_extraction(
+            db, section_id, provider, global_catalog, force=force
         )
     except ExtractionError as exc:
         msg = str(exc)

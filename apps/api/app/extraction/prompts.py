@@ -408,6 +408,13 @@ Known candidate ids eligible for relation_kind / relation_target_id
 
 COMBINED_PROMPT_VERSION = "2.0"
 
+# ── Global two-pass extraction (v3) ──────────────────────────────────────────
+# Pre-pass: catalog all sections first → aggregate global entity list
+# Evidence pass: each section gets the full global entity list as context
+
+GLOBAL_CATALOG_VERSION = "3.0"
+GLOBAL_EVIDENCE_VERSION = "3.0"
+
 # ── Pass 1: Place Catalog ─────────────────────────────────────────────────────
 
 CATALOG_SYSTEM_PROMPT = """\
