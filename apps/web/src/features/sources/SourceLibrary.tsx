@@ -158,8 +158,8 @@ export function SourceLibrary() {
         {/* Sidebar */}
         <nav style={S.sidebar} className="texture-dark">
 
-          {/* Brand */}
-          <div style={{ padding: '1.4rem 1.25rem 1rem', borderBottom: '1px solid var(--sidebar-border)' }}>
+          {/* Brand — sidebar-brand class carries the botanical ::after ornament */}
+          <div className="sidebar-brand" style={{ padding: '1.4rem 1.25rem 1rem', borderBottom: '1px solid var(--sidebar-border)' }}>
             <div style={{ fontSize: '1.1rem', letterSpacing: '0.18em', color: 'var(--gold)', textTransform: 'uppercase', fontWeight: 400, lineHeight: 1 }}>
               Coronelli
             </div>
@@ -202,24 +202,19 @@ export function SourceLibrary() {
               </li>
             )}
             {documents.map(doc => (
-              <li key={doc.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4rem', margin: '0.35rem 1rem 0' }}>
+              <li key={doc.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.3rem', margin: '0.2rem 0.5rem 0 0' }}>
                 <button
                   onClick={() => handleSelect(doc)}
-                  style={{
-                    flex: 1, textAlign: 'left', cursor: 'pointer', padding: '0.7rem 1rem',
-                    background: 'var(--parchment-card, var(--sidebar-bg))',
-                    border: `1px solid ${selected?.id === doc.id ? 'var(--gold)' : 'var(--sidebar-border)'}`,
-                    borderRadius: '4px', wordBreak: 'break-word',
-                  }}
+                  className={`sidebar-doc-btn${selected?.id === doc.id ? ' active' : ''}`}
                 >
-                  <div style={{ fontWeight: 400, fontSize: '0.82rem', color: 'var(--ink)', lineHeight: 1.35, marginBottom: doc.author || doc.year ? '0.4rem' : 0 }}>
+                  <div style={{ fontWeight: 400, fontSize: '0.82rem', color: selected?.id === doc.id ? 'var(--sidebar-text)' : 'var(--sidebar-muted)', lineHeight: 1.35, marginBottom: doc.author || doc.year ? '0.4rem' : 0 }}>
                     {doc.title}
                   </div>
                   {doc.author && (
-                    <div style={{ fontSize: '0.7rem', color: 'var(--ink-muted)' }}>{doc.author}</div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--sidebar-muted)', opacity: selected?.id === doc.id ? 0.8 : 0.6 }}>{doc.author}</div>
                   )}
                   {doc.year && (
-                    <div style={{ fontSize: '0.65rem', color: 'var(--ink-faint)', marginTop: '0.15rem' }}>{doc.year}</div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--sidebar-muted)', opacity: 0.5, marginTop: '0.15rem' }}>{doc.year}</div>
                   )}
                 </button>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>

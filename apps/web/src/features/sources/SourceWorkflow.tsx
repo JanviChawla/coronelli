@@ -39,7 +39,7 @@ function StepDone({ label, detail, action }: {
 }) {
   return (
     <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
-      <div style={{ ...CIRCLE, background: 'var(--step-done)', color: '#fff', fontSize: '1rem' }}>✓</div>
+      <div className="wax-seal">✦</div>
       <div style={{ flex: 1, paddingTop: '0.3rem' }}>
         <div style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--ink)' }}>{label}</div>
         <div style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', marginTop: '0.1rem' }}>{detail}</div>
@@ -84,9 +84,11 @@ function StepLocked({ n, label, detail }: { n: number; label: string; detail: st
 
 function StepConnector() {
   return (
-    <div style={{ display: 'flex', gap: '1rem', height: '1.5rem', margin: '0.2rem 0' }}>
-      <div style={{ width: '2rem', flexShrink: 0, display: 'flex', justifyContent: 'center' }}>
-        <div style={{ width: '1px', height: '100%', background: 'var(--gold)', opacity: 0.35 }} />
+    <div style={{ display: 'flex', gap: '1rem', height: '2rem', margin: '0.1rem 0' }}>
+      <div style={{ width: '2rem', flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <div style={{ width: '1px', flex: 1, background: 'var(--gold)', opacity: 0.3 }} />
+        <span style={{ color: 'var(--gold)', opacity: 0.38, fontSize: '0.4rem', lineHeight: 1 }}>◆</span>
+        <div style={{ width: '1px', flex: 1, background: 'var(--gold)', opacity: 0.3 }} />
       </div>
     </div>
   )
@@ -430,42 +432,35 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
             places, spatial claims, routes, and visual descriptions — before synthesis begins.
           </p>
           <div style={{
-            border: '1px solid var(--border-warm)',
-            borderRadius: '6px',
-            background: 'var(--parchment-card)',
-            padding: '1.25rem 1.5rem',
-            marginBottom: '0.6rem',
+            borderTop: '1px solid rgba(212, 188, 138, 0.5)',
+            borderBottom: '1px solid rgba(212, 188, 138, 0.5)',
+            padding: '0.65rem 0',
+            marginBottom: '0.7rem',
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            gap: '1rem',
           }}>
-            <p style={{
-              fontSize: '0.58rem', color: 'var(--ink-muted)',
-              letterSpacing: '0.16em', textTransform: 'uppercase',
-              textAlign: 'center', marginBottom: '0.5rem',
-            }}>
-              Estimated extraction cost
-            </p>
-            <p style={{ textAlign: 'center', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.58rem', color: 'var(--ink-muted)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
+              Est. extraction cost
+            </span>
+            <span>
               {totalCost !== null ? (
-                <span style={{ fontSize: '1.75rem', color: 'var(--ink)', fontWeight: 400 }}>
+                <span style={{ fontSize: '0.92rem', color: 'var(--ink)', fontFamily: 'monospace' }}>
                   ${(totalCost * 0.85).toFixed(2)} – ${(totalCost * 1.15).toFixed(2)}
                 </span>
               ) : (
-                <span style={{ fontSize: '1.1rem', color: 'var(--ink-faint)' }}>Estimating…</span>
+                <span style={{ fontSize: '0.82rem', color: 'var(--ink-faint)', fontFamily: 'monospace' }}>Estimating…</span>
               )}
-            </p>
-            <p style={{
-              fontSize: '0.7rem', color: 'var(--ink-faint)',
-              textAlign: 'center', fontFamily: 'monospace', marginBottom: '1.1rem',
-            }}>
-              {document.original_filename} · {sections.length} section{sections.length !== 1 ? 's' : ''} · OpenAI provider
-              {cachedCount > 0 && ` · ${cachedCount} cached`}
-            </p>
-            <button className="btn-cta" type="button" onClick={handleHarvest}>
-              Harvest evidence
-            </button>
+            </span>
           </div>
-          <p style={{ fontSize: '0.7rem', color: 'var(--ink-faint)', textAlign: 'center' }}>
-            ● Results stay local until you export.
+          <p style={{ fontSize: '0.66rem', color: 'var(--ink-faint)', fontFamily: 'monospace', marginBottom: '1rem' }}>
+            {document.original_filename} · {sections.length} section{sections.length !== 1 ? 's' : ''} · OpenAI
+            {cachedCount > 0 && ` · ${cachedCount} cached`}
           </p>
+          <button className="btn-cta" type="button" onClick={handleHarvest}>
+            Harvest evidence
+          </button>
         </StepActive>
       ) : (
         <StepActive n={3} label="Harvest evidence">
@@ -541,34 +536,28 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
             surfacing contradictions, and anchoring each place to its first revealed section.
           </p>
           <div style={{
-            border: '1px solid var(--border-warm)',
-            borderRadius: '6px',
-            background: 'var(--parchment-card)',
-            padding: '1.25rem 1.5rem',
-            marginBottom: '0.6rem',
+            borderTop: '1px solid rgba(212, 188, 138, 0.5)',
+            borderBottom: '1px solid rgba(212, 188, 138, 0.5)',
+            padding: '0.65rem 0',
+            marginBottom: '0.7rem',
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            gap: '1rem',
           }}>
-            <p style={{
-              fontSize: '0.58rem', color: 'var(--ink-muted)',
-              letterSpacing: '0.16em', textTransform: 'uppercase',
-              textAlign: 'center', marginBottom: '0.5rem',
-            }}>
-              Estimated synthesis cost
-            </p>
-            <p style={{ textAlign: 'center', marginBottom: '0.5rem' }}>
-              <span style={{ fontSize: '1.75rem', color: 'var(--ink)', fontWeight: 400 }}>
-                ${synthCostLo.toFixed(2)} – ${synthCostHi.toFixed(2)}
-              </span>
-            </p>
-            <p style={{
-              fontSize: '0.7rem', color: 'var(--ink-faint)',
-              textAlign: 'center', fontFamily: 'monospace', marginBottom: '1.1rem',
-            }}>
-              {totalCandidates} candidate{totalCandidates !== 1 ? 's' : ''} · gpt-4o-mini · OpenAI provider
-            </p>
-            <button className="btn-cta" type="button" onClick={() => handleSynthesize(false)}>
-              Synthesize atlas
-            </button>
+            <span style={{ fontSize: '0.58rem', color: 'var(--ink-muted)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
+              Est. synthesis cost
+            </span>
+            <span style={{ fontSize: '0.92rem', color: 'var(--ink)', fontFamily: 'monospace' }}>
+              ${synthCostLo.toFixed(2)} – ${synthCostHi.toFixed(2)}
+            </span>
           </div>
+          <p style={{ fontSize: '0.66rem', color: 'var(--ink-faint)', fontFamily: 'monospace', marginBottom: '1rem' }}>
+            {totalCandidates} candidate{totalCandidates !== 1 ? 's' : ''} · gpt-4o-mini · OpenAI
+          </p>
+          <button className="btn-cta" type="button" onClick={() => handleSynthesize(false)}>
+            Synthesize atlas
+          </button>
         </StepActive>
       ) : (
         <StepLocked n={4} label="Synthesize atlas" detail="Reads all harvested evidence in one pass and writes the canonical atlas automatically." />

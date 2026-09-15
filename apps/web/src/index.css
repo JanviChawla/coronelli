@@ -10,10 +10,10 @@
 
 :root {
   /* Palette */
-  --sidebar-bg:       #131110;
+  --sidebar-bg:       #0d1b17;
   --sidebar-text:     #e0d0b8;
   --sidebar-muted:    #7a6e62;
-  --sidebar-selected: #2a1a2e;
+  --sidebar-selected: #3d1a2d;
   --sidebar-hover:    rgba(255, 255, 255, 0.055);
   --sidebar-border:   rgba(201, 168, 76, 0.22);
   --parchment:        #f5ede0;
@@ -121,15 +121,73 @@ button, input, select, textarea { font-family: inherit; }
     repeating-linear-gradient(90deg, rgba(255,255,255,0.014) 0, rgba(255,255,255,0.014) 1px, transparent 1px, transparent 4px);
 }
 
-/* Faint ruled-paper grain on the parchment panel */
+/* Faint ruled-paper grain + very subtle diagonal fiber on the parchment panel */
 .texture-parchment {
-  background-image: repeating-linear-gradient(
-    0deg,
-    transparent 0px,
-    transparent 22px,
-    rgba(139,100,50,0.042) 22px,
-    rgba(139,100,50,0.042) 23px
-  );
+  background-image:
+    repeating-linear-gradient(0deg, transparent 0px, transparent 22px, rgba(139,100,50,0.042) 22px, rgba(139,100,50,0.042) 23px),
+    repeating-linear-gradient(62deg, transparent 0px, transparent 8px, rgba(110,75,30,0.011) 8px, rgba(110,75,30,0.011) 8.5px);
+}
+
+/* ── Sidebar brand block — botanical ornament ────────────────────────────── */
+
+.sidebar-brand {
+  position: relative;
+  overflow: hidden;
+}
+
+.sidebar-brand::after {
+  content: '❦';
+  position: absolute;
+  top: -0.25rem;
+  right: 0.6rem;
+  font-size: 4.5rem;
+  color: rgba(201, 168, 76, 0.065);
+  pointer-events: none;
+  user-select: none;
+  line-height: 1;
+}
+
+/* ── Sidebar document items — book-spine selection style ─────────────────── */
+
+.sidebar-doc-btn {
+  flex: 1;
+  text-align: left;
+  cursor: pointer;
+  padding: 0.6rem 0.85rem;
+  background: transparent;
+  border: none;
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  word-break: break-word;
+  opacity: 0.72;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.sidebar-doc-btn:hover {
+  opacity: 0.9;
+  background: var(--sidebar-hover);
+}
+
+.sidebar-doc-btn.active {
+  background: var(--sidebar-selected);
+  border-left-color: var(--gold);
+  opacity: 1;
+}
+
+/* ── Wax-seal medallion — replaces green check on completed steps ─────────── */
+
+.wax-seal {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: radial-gradient(circle at 40% 35%, #7a3528, #3d1208);
+  box-shadow: inset 0 1px 4px rgba(0,0,0,0.38), 0 1px 2px rgba(0,0,0,0.14);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(240, 215, 190, 0.82);
+  font-size: 0.62rem;
 }
 
 /* ── Parchment buttons ───────────────────────────────────────────────────── */
@@ -153,16 +211,16 @@ button, input, select, textarea { font-family: inherit; }
   padding: 0.65rem 1rem;
   background: var(--sidebar-bg);
   color: var(--sidebar-text);
-  border: 1px solid rgba(201, 168, 76, 0.18);
+  border: 1px solid rgba(201, 168, 76, 0.32);
   border-radius: var(--chrome-radius);
   font-size: 1rem;
   cursor: pointer;
   letter-spacing: 0.02em;
-  transition: opacity 0.12s;
+  transition: opacity 0.15s, box-shadow 0.2s;
 }
 
-.btn-cta:hover  { opacity: 0.88; }
-.btn-cta:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-cta:hover  { opacity: 0.92; box-shadow: 0 0 14px rgba(201, 168, 76, 0.13); }
+.btn-cta:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
 
 /* ── Cartouche — decorative text frame used for legend / inspector headers ── */
 /* Hand-authored CSS box with double-rule effect; no generated art.            */
