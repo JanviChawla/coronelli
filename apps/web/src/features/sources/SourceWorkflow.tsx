@@ -177,8 +177,10 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
   const [canonicalClaimCount, setCanonicalClaimCount] = useState(0)
   const [atlasEntities, setAtlasEntities] = useState<AtlasEntity[]>([])
   const [synthElapsedMs, setSynthElapsedMs] = useState(0)
+  const [synthPass, setSynthPass] = useState<1 | 2>(1)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const synthPassTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (!sections.length) return
@@ -284,11 +286,14 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
   async function handleSynthesize(force = false) {
     setPhase('synthesizing')
     setSynthElapsedMs(0)
+    setSynthPass(1)
     const synthStart = Date.now()
     timerRef.current = setInterval(() => setSynthElapsedMs(Date.now() - synthStart), 100)
+    synthPassTimerRef.current = setTimeout(() => setSynthPass(2), 15000)
     try {
       await triggerSynthesis(document.id, force)
       if (timerRef.current) clearInterval(timerRef.current)
+      if (synthPassTimerRef.current) clearTimeout(synthPassTimerRef.current)
       const atlas = await fetchAtlas(document.id)
       setCanonicalEntityCount(atlas.entity_count)
       setCanonicalClaimCount(atlas.claim_count)
@@ -297,6 +302,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
       onAtlasChanged?.()
     } catch (e) {
       if (timerRef.current) clearInterval(timerRef.current)
+      if (synthPassTimerRef.current) clearTimeout(synthPassTimerRef.current)
       setWorkflowError(e instanceof Error ? e.message : 'Synthesis failed.')
       setErrorInStep(4)
       setPhase('error')
@@ -567,11 +573,42 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
         </StepActive>
       ) : phase === 'synthesizing' ? (
         <StepActive n={4} label="Synthesize atlas" processing>
-          <p style={{ fontSize: '0.85rem', color: 'var(--ink-muted)', marginBottom: '0.2rem' }}>
-            Synthesizing {totalCandidates} evidence fragment{totalCandidates !== 1 ? 's' : ''} in one pass · {(synthElapsedMs / 1000).toFixed(1)}s
-          </p>
-          <p style={{ fontSize: '0.92rem', color: 'var(--ink-faint)' }}>
-            Merging entities, resolving aliases, anchoring provenance…
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', marginTop: '0.25rem' }}>
+            {/* Pass 1 */}
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', opacity: synthPass > 1 ? 0.55 : 1, transition: 'opacity 0.4s' }}>
+              <div style={{
+                width: '1.35rem', height: '1.35rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.05rem',
+                ...(synthPass > 1
+                  ? { background: 'radial-gradient(circle at 40% 35%, #7a3528, #3d1208)', boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(240,215,190,0.8)', fontSize: '0.45rem' }
+                  : { background: 'var(--step-active-circle)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '0.55rem' }
+                ),
+              }} className={synthPass === 1 ? 'step-processing' : ''}>
+                {synthPass > 1 ? '✦' : 'I'}
+              </div>
+              <div>
+                <div style={{ fontSize: '0.9rem', color: 'var(--ink)', fontWeight: 500 }}>Pass 1 — Entity consolidation</div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '0.15rem' }}>Building canonical place list across {sections.length} sections</div>
+              </div>
+            </div>
+            {/* Pass 2 */}
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', opacity: synthPass < 2 ? 0.38 : 1, transition: 'opacity 0.4s' }}>
+              <div style={{
+                width: '1.35rem', height: '1.35rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.05rem',
+                border: synthPass < 2 ? '1.5px solid var(--gold)' : undefined,
+                background: synthPass >= 2 ? 'var(--step-active-circle)' : undefined,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: synthPass >= 2 ? '#fff' : 'var(--gold)', fontSize: '0.55rem',
+              }} className={synthPass === 2 ? 'step-processing' : ''}>
+                {synthPass >= 2 ? 'II' : ''}
+              </div>
+              <div>
+                <div style={{ fontSize: '0.9rem', color: 'var(--ink)', fontWeight: 500 }}>Pass 2 — Evidence synthesis</div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '0.15rem' }}>Anchoring {totalCandidates} claim{totalCandidates !== 1 ? 's' : ''}, routes, and visual observations</div>
+              </div>
+            </div>
+          </div>
+          <p style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '1rem', fontFamily: 'monospace' }}>
+            {(synthElapsedMs / 1000).toFixed(1)}s elapsed
           </p>
         </StepActive>
       ) : phase === 'harvested' ? (

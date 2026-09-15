@@ -166,7 +166,8 @@ button, input, select, textarea { font-family: inherit; }
 /* ── Sidebar document items — book-spine selection style ─────────────────── */
 
 .sidebar-doc-btn {
-  flex: 1;
+  display: block;
+  width: 100%;
   text-align: left;
   cursor: pointer;
   padding: 0.6rem 0.85rem;

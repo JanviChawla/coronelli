@@ -80,9 +80,8 @@ function HullNode({ data }: NodeProps) {
           userSelect: 'none',
           pointerEvents: 'none',
           maxWidth: 'calc(100% - 1.7rem)',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
+          whiteSpace: 'normal',
+          wordBreak: 'break-word' as const,
         }}
       >
         {label}
@@ -143,9 +142,6 @@ function SchematicNode({ data, selected }: NodeProps) {
         fontStyle: isInferred ? 'italic' : 'normal',
         letterSpacing: isHub ? '0.03em' : '0',
         whiteSpace: 'nowrap',
-        maxWidth: '110px',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
         lineHeight: 1.25,
       }
     : {
@@ -155,10 +151,9 @@ function SchematicNode({ data, selected }: NodeProps) {
         color: '#2c1810',
         textAlign: 'center' as const,
         letterSpacing: '0.03em',
-        maxWidth: `${NODE_W.hub}px`,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
+        maxWidth: `${NODE_W.hub + 40}px`,
+        whiteSpace: 'normal',
+        wordBreak: 'break-word' as const,
       }
 
   const subStyle: React.CSSProperties = labelRight
