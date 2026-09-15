@@ -19,12 +19,7 @@ import { AtlasExplorer } from '../atlas/AtlasExplorer'
 type View = 'workflow' | 'edit-sections' | 'atlas-explorer'
 
 const S = {
-  shell:   { display: 'flex' as const, height: '100%' },
-  sidebar: {
-    width: '288px', flexShrink: 0, backgroundColor: 'var(--sidebar-bg)',
-    borderRight: '1px solid var(--sidebar-border)',
-    overflowY: 'auto' as const, display: 'flex' as const, flexDirection: 'column' as const,
-  },
+  shell: { display: 'flex' as const, height: '100%' },
 }
 
 export function SourceLibrary() {
@@ -42,6 +37,7 @@ export function SourceLibrary() {
   const [editAuthor, setEditAuthor]             = useState('')
   const [editYear, setEditYear]                 = useState('')
   const [editSaving, setEditSaving]             = useState(false)
+  const [sidebarOpen, setSidebarOpen]           = useState(true)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { fetchDocuments().then(setDocuments).catch(() => {}) }, [])
@@ -156,16 +152,74 @@ export function SourceLibrary() {
       {/* ── Body ────────────────────────────────────────────────────── */}
 
         {/* Sidebar */}
-        <nav style={S.sidebar} className="texture-dark">
+        <nav
+          className="texture-dark"
+          style={{
+            width: sidebarOpen ? '288px' : '44px',
+            flexShrink: 0,
+            backgroundColor: 'var(--sidebar-bg)',
+            borderRight: '1px solid var(--sidebar-border)',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column' as const,
+            transition: 'width 0.3s ease',
+            position: 'relative' as const,
+          }}
+        >
+          {/* Collapsed rail — fades in when sidebar is closed */}
+          <button
+            onClick={() => setSidebarOpen(true)}
+            title="Open library"
+            style={{
+              position: 'absolute' as const, inset: 0,
+              display: 'flex', flexDirection: 'column' as const,
+              alignItems: 'center', paddingTop: '1.2rem', gap: '0.75rem',
+              background: 'none', border: 'none', cursor: 'pointer',
+              opacity: sidebarOpen ? 0 : 1,
+              pointerEvents: sidebarOpen ? 'none' : 'auto',
+              transition: 'opacity 0.18s ease',
+            }}
+          >
+            <span style={{ color: 'var(--gold)', fontSize: '1rem', lineHeight: 1 }}>›</span>
+            <span style={{
+              writingMode: 'vertical-rl' as const, transform: 'rotate(180deg)',
+              fontSize: '0.58rem', letterSpacing: '0.22em',
+              color: 'var(--gold)', textTransform: 'uppercase' as const,
+              fontWeight: 400, opacity: 0.72,
+            }}>Coronelli</span>
+          </button>
+
+          {/* Full sidebar content — fades out when collapsed */}
+          <div style={{
+            width: '288px', flex: 1,
+            display: 'flex', flexDirection: 'column' as const, overflowY: 'auto' as const,
+            opacity: sidebarOpen ? 1 : 0,
+            transition: 'opacity 0.15s ease',
+            pointerEvents: sidebarOpen ? 'auto' : 'none' as any,
+          }}>
 
           {/* Brand — sidebar-brand class carries the botanical ::after ornament */}
-          <div className="sidebar-brand" style={{ padding: '1.4rem 1.25rem 1rem', borderBottom: '1px solid var(--sidebar-border)' }}>
-            <div style={{ fontSize: '1.1rem', letterSpacing: '0.18em', color: 'var(--gold)', textTransform: 'uppercase', fontWeight: 400, lineHeight: 1 }}>
-              Coronelli
+          <div className="sidebar-brand" style={{ padding: '1.4rem 1.25rem 1rem', borderBottom: '1px solid var(--sidebar-border)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+            <div>
+              <div style={{ fontSize: '1.1rem', letterSpacing: '0.18em', color: 'var(--gold)', textTransform: 'uppercase', fontWeight: 400, lineHeight: 1 }}>
+                Coronelli
+              </div>
+              <div style={{ fontSize: '0.55rem', color: 'var(--sidebar-muted)', letterSpacing: '0.2em', textTransform: 'uppercase', marginTop: '0.35rem' }}>
+                Texts for places
+              </div>
             </div>
-            <div style={{ fontSize: '0.55rem', color: 'var(--sidebar-muted)', letterSpacing: '0.2em', textTransform: 'uppercase', marginTop: '0.35rem' }}>
-              Texts for places
-            </div>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              title="Collapse library"
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--sidebar-muted)', fontSize: '1.1rem', padding: '0',
+                opacity: 0.45, lineHeight: 1, flexShrink: 0,
+                transition: 'opacity 0.15s',
+              }}
+            >
+              ‹
+            </button>
           </div>
 
           <div style={{ padding: '1.1rem 1.25rem 0.75rem' }}>
@@ -263,6 +317,8 @@ export function SourceLibrary() {
               Reset library
             </button>
           </div>
+
+          </div>{/* end full sidebar content */}
         </nav>
 
         {/* Main content */}
