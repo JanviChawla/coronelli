@@ -44,3 +44,17 @@ export async function fetchAtlas(documentId: string): Promise<AtlasResponse> {
   if (!res.ok) throw new Error('Failed to fetch atlas')
   return res.json()
 }
+
+export async function downloadAtlasPackage(documentId: string, documentTitle: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/atlas-package`)
+  if (!res.ok) throw new Error('Failed to export atlas package')
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `atlas-${documentTitle.replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 40)}.json`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { type AtlasEntity, type AtlasResponse, fetchAtlas } from './atlasApi'
+import { type AtlasEntity, type AtlasResponse, downloadAtlasPackage, fetchAtlas } from './atlasApi'
 
 interface Props {
   documentId: string
+  documentTitle?: string
 }
 
 const PLACE_KIND_COLORS: Record<string, string> = {
@@ -74,10 +75,11 @@ function EntityCard({ entity }: { entity: AtlasEntity }) {
   )
 }
 
-export function ApprovedAtlasView({ documentId }: Props) {
+export function ApprovedAtlasView({ documentId, documentTitle = documentId }: Props) {
   const [atlas, setAtlas] = useState<AtlasResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     fetchAtlas(documentId)
@@ -85,6 +87,17 @@ export function ApprovedAtlasView({ documentId }: Props) {
       .catch(e => setError(e instanceof Error ? e.message : 'Failed to load atlas'))
       .finally(() => setLoading(false))
   }, [documentId])
+
+  async function handleExport() {
+    setExporting(true)
+    try {
+      await downloadAtlasPackage(documentId, documentTitle)
+    } catch {
+      // download errors are non-critical; browser will show its own error
+    } finally {
+      setExporting(false)
+    }
+  }
 
   if (loading) return <p style={{ color: '#888', fontSize: '0.85rem' }}>Loading atlas…</p>
   if (error) return <p role="alert" style={{ color: 'red', fontSize: '0.85rem' }}>{error}</p>
@@ -94,11 +107,21 @@ export function ApprovedAtlasView({ documentId }: Props) {
 
   return (
     <div>
-      <p style={{ fontSize: '0.78rem', color: '#888', marginBottom: '0.75rem' }}>
-        {atlas.entity_count} place{atlas.entity_count !== 1 ? 's' : ''}
-        {atlas.claim_count > 0 && <> · {atlas.claim_count} claim{atlas.claim_count !== 1 ? 's' : ''}</>}
-        {atlas.travel_rule_count > 0 && <> · {atlas.travel_rule_count} route{atlas.travel_rule_count !== 1 ? 's' : ''}</>}
-      </p>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '1rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+        <p style={{ fontSize: '0.78rem', color: '#888', margin: 0 }}>
+          {atlas.entity_count} place{atlas.entity_count !== 1 ? 's' : ''}
+          {atlas.claim_count > 0 && <> · {atlas.claim_count} claim{atlas.claim_count !== 1 ? 's' : ''}</>}
+          {atlas.travel_rule_count > 0 && <> · {atlas.travel_rule_count} route{atlas.travel_rule_count !== 1 ? 's' : ''}</>}
+        </p>
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={exporting}
+          style={{ fontSize: '0.72rem', padding: '0.2rem 0.55rem', cursor: exporting ? 'wait' : 'pointer' }}
+        >
+          {exporting ? 'Exporting…' : 'Export atlas package ↓'}
+        </button>
+      </div>
 
       <div>
         {atlas.entities.map(entity => (

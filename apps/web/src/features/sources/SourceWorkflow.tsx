@@ -292,7 +292,7 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
             <h3 style={{ fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#555', marginBottom: '0.75rem' }}>
               Approved atlas
             </h3>
-            <ApprovedAtlasView documentId={document.id} />
+            <ApprovedAtlasView documentId={document.id} documentTitle={document.title} />
           </div>
         </>
       )}
