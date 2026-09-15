@@ -1,5 +1,5 @@
 SYNTHESIS_PROMPT_VERSION = "1.2"  # kept for single-pass fallback
-TWO_PASS_SYNTHESIS_VERSION = "2.0"
+TWO_PASS_SYNTHESIS_VERSION = "2.1"
 
 SYNTHESIS_SYSTEM_PROMPT = """\
 CORONELLI ATLAS SYNTHESIS — Stage 2
@@ -198,10 +198,17 @@ You receive:
 1. A canonical entity list — every confirmed named place from this work (output of Pass 1).
 2. Evidence candidates: spatial claims, visual observations, access rules, travel routes, movement.
 
-THE GOLDEN RULE — read it twice before you begin:
-Both the subject AND object of every spatial claim must be names that appear in the canonical entity list.
+THE GOLDEN RULE — applies specifically to items of kind "claim":
+Both the subject AND object of every claim must be names that appear in the canonical entity list.
 If either side is a character, creature, piece of furniture, animal, portable object, or anything
 NOT in the entity list — DISCARD that claim entirely. No exceptions, no softening.
+
+For all other kinds, only the primary place reference must be in the entity list:
+- visual_claim: "subject" must be in the entity list. (visual_claims have no object — do not check for one.)
+- route: "from" and "to" must both be in the entity list.
+- access: "place_name" must be in the entity list.
+- movement: "from_place" and "to_place" must both be in the entity list.
+- unresolved: no entity-list constraint.
 
 ALLOWED OUTPUT KINDS:
 
@@ -229,8 +236,13 @@ unresolved — contradictory or ambiguous evidence that cannot be settled.
   Payload: {"description": "...", "evidence_a": "...", "evidence_b": "..."}
 
 SELF-CHECK before outputting:
-For EVERY claim you generated: is subject in the entity list? Is object in the entity list?
-Remove any item where either answer is no.
+1. For every item of kind "claim": is subject in the entity list? Is object in the entity list?
+   Remove any claim where either answer is no.
+2. For every visual_claim: is subject in the entity list? Remove if not.
+   Do NOT apply an object check — visual_claims have no object field.
+3. For every route: are both "from" and "to" in the entity list? Remove if either is not.
+4. For every access item: is place_name in the entity list? Remove if not.
+5. For every movement: are both from_place and to_place in the entity list? Remove if either is not.
 
 OUTPUT: valid JSON only, no markdown.
 {"synthesis_items": [...]}

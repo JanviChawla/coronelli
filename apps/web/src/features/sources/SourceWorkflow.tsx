@@ -235,7 +235,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
     setPhase('ready')
   }
 
-  async function handleHarvest() {
+  async function handleHarvest(force = false) {
     setPhase('extracting')
     setCurrentIdx(0)
     setCandidatesSoFar(0)
@@ -250,7 +250,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
       for (let i = 0; i < sections.length; i++) {
         setCurrentIdx(i + 1)
         setCurrentTitle(sections[i].title)
-        const result = await triggerExtraction(sections[i].id)
+        const result = await triggerExtraction(sections[i].id, force)
         total += result.candidates.length
         setCandidatesSoFar(total)
       }
@@ -387,9 +387,9 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
                 label="Re-harvest cost"
                 costLo={harvestCostLo}
                 costHi={harvestCostHi}
-                meta={`${sections.length} section${sections.length !== 1 ? 's' : ''} · cached runs free`}
+                meta={`${sections.length} section${sections.length !== 1 ? 's' : ''} · clears cache`}
                 action="Re-harvest evidence"
-                onAction={handleHarvest}
+                onAction={() => handleHarvest(true)}
               />
               <details>
                 <summary style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>

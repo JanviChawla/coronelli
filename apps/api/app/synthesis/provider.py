@@ -169,6 +169,13 @@ class OpenAISynthesisProvider:
             try:
                 claims_parsed = json.loads(claims_resp.choices[0].message.content)
                 claims_raw = claims_parsed.get("synthesis_items", [])
+                if not claims_raw:
+                    _log.warning(
+                        "Claims synthesis pass returned 0 items (entity list had %d names). "
+                        "Raw response (first 500 chars): %s",
+                        len(canonical_names),
+                        claims_resp.choices[0].message.content[:500],
+                    )
             except json.JSONDecodeError as exc:
                 _log.warning("Claims synthesis pass failed to parse JSON: %s", exc)
 

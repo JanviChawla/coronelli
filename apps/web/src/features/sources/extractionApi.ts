@@ -28,8 +28,11 @@ export async function fetchPreflight(sectionId: string): Promise<PreflightResult
   return res.json()
 }
 
-export async function triggerExtraction(sectionId: string): Promise<ExtractionRunResult> {
-  const res = await fetch(`${BASE}/api/sections/${sectionId}/extract`, { method: 'POST' })
+export async function triggerExtraction(sectionId: string, force = false): Promise<ExtractionRunResult> {
+  const url = force
+    ? `${BASE}/api/sections/${sectionId}/extract?force=true`
+    : `${BASE}/api/sections/${sectionId}/extract`
+  const res = await fetch(url, { method: 'POST' })
   if (!res.ok) {
     let detail = `Extraction failed (HTTP ${res.status})`
     try {
