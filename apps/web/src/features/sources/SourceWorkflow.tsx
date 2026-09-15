@@ -42,7 +42,7 @@ function StepDone({ label, detail, action }: {
       <div className="wax-seal">✦</div>
       <div style={{ flex: 1, paddingTop: '0.35rem' }}>
         <div style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--ink)' }}>{label}</div>
-        <div style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', marginTop: '0.18rem' }}>{detail}</div>
+        <div style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', marginTop: '0.45rem' }}>{detail}</div>
         {action && <div style={{ marginTop: '1rem' }}>{action}</div>}
       </div>
     </div>
@@ -60,7 +60,7 @@ function StepActive({ n, label, children }: {
       <div style={{ flex: 1, paddingTop: '0.3rem' }}>
         <div style={{
           fontWeight: 600, fontSize: '1.25rem',
-          color: 'var(--step-active-label)', marginBottom: '0.85rem',
+          color: 'var(--step-active-label)', marginBottom: '0.45rem',
         }}>
           {label}
         </div>
@@ -76,7 +76,7 @@ function StepLocked({ n, label, detail }: { n: number; label: string; detail: st
       <div style={{ ...CIRCLE, border: '2px solid var(--step-locked)', color: 'var(--step-locked)' }}>{n}</div>
       <div style={{ flex: 1, paddingTop: '0.35rem' }}>
         <div style={{ fontWeight: 500, fontSize: '1.05rem', color: 'var(--ink-muted)' }}>{label}</div>
-        <div style={{ fontSize: '0.85rem', color: 'var(--ink-faint)', marginTop: '0.15rem' }}>{detail}</div>
+        <div style={{ fontSize: '0.85rem', color: 'var(--ink-faint)', marginTop: '0.45rem' }}>{detail}</div>
       </div>
     </div>
   )
@@ -433,7 +433,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
         </StepActive>
       ) : phase === 'ready' ? (
         <StepActive n={3} label="Harvest evidence">
-          <p style={{ fontSize: '0.95rem', color: 'var(--ink-muted)', marginBottom: '1.25rem', lineHeight: 1.6 }}>
+          <p style={{ fontSize: '0.95rem', color: 'var(--ink-muted)', marginTop: '0.5rem', marginBottom: '1.25rem', lineHeight: 1.6 }}>
             Run the extraction model on each section to collect cartographic evidence —
             places, spatial claims, routes, and visual descriptions — before synthesis begins.
           </p>
@@ -536,7 +536,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
         </StepActive>
       ) : phase === 'harvested' ? (
         <StepActive n={4} label="Synthesize atlas">
-          <p style={{ fontSize: '0.95rem', color: 'var(--ink-muted)', marginBottom: '1.25rem', lineHeight: 1.6 }}>
+          <p style={{ fontSize: '0.95rem', color: 'var(--ink-muted)', marginTop: '0.5rem', marginBottom: '1.25rem', lineHeight: 1.6 }}>
             Stage 2 reads all {totalCandidates} evidence fragment{totalCandidates !== 1 ? 's' : ''} in one pass
             and writes a canonical atlas — merging duplicates, resolving aliases,
             surfacing contradictions, and anchoring each place to its first revealed section.

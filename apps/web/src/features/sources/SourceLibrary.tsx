@@ -202,7 +202,7 @@ export function SourceLibrary() {
               </li>
             )}
             {documents.map(doc => (
-              <li key={doc.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.3rem', margin: '0.2rem 0.5rem 0 0' }}>
+              <li key={doc.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.3rem', margin: '0.6rem 0.5rem 0 0' }}>
                 <button
                   onClick={() => handleSelect(doc)}
                   className={`sidebar-doc-btn${selected?.id === doc.id ? ' active' : ''}`}
