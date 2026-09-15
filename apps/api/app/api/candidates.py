@@ -147,6 +147,24 @@ def review(candidate_id: str, body: ReviewRequest, db: Session = Depends(get_db)
     )
 
 
+@router.post("/api/sections/{section_id}/candidates/approve-all", status_code=200)
+def approve_all_section_candidates(section_id: str, db: Session = Depends(get_db)):
+    proposed = (
+        db.query(Candidate)
+        .filter(Candidate.section_id == section_id, Candidate.review_state == "proposed")
+        .order_by(Candidate.ordinal)
+        .all()
+    )
+    approved = 0
+    for c in proposed:
+        try:
+            _review_candidate(db, c.id, action="approve")
+            approved += 1
+        except ReviewError:
+            pass
+    return {"approved": approved, "section_id": section_id}
+
+
 @router.get("/api/map-entities", response_model=list[MapEntityOut])
 def list_map_entities(db: Session = Depends(get_db)):
     entities = db.query(MapEntity).filter(MapEntity.state == "active").order_by(MapEntity.name).all()

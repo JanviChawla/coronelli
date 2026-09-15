@@ -45,6 +45,12 @@ export async function fetchCandidates(sectionId: string): Promise<Candidate[]> {
   return res.json()
 }
 
+export async function approveAllCandidates(sectionId: string): Promise<{ approved: number; section_id: string }> {
+  const res = await fetch(`${BASE}/api/sections/${sectionId}/candidates/approve-all`, { method: 'POST' })
+  if (!res.ok) throw new Error(`Approve-all failed for section ${sectionId}`)
+  return res.json()
+}
+
 export async function reviewCandidate(
   candidateId: string,
   req: ReviewRequest,

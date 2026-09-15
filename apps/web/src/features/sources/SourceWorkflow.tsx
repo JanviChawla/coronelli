@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { CandidateQueue } from '../candidates/CandidateQueue'
+import { CandidatesTable } from '../candidates/CandidatesTable'
+import { type Candidate, approveAllCandidates, fetchCandidates } from '../candidates/candidateApi'
 import { fetchPreflight, triggerExtraction } from './extractionApi'
 import type { Document, Section } from './sourceApi'
 
@@ -69,9 +70,9 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
   const [totalCandidates, setTotalCandidates] = useState(0)
   const [totalElapsedMs, setTotalElapsedMs] = useState(0)
   const [extractionError, setExtractionError] = useState<string | null>(null)
-  const [reviewSectionId, setReviewSectionId] = useState<string | null>(null)
-  const [reviewSectionTitle, setReviewSectionTitle] = useState<string | null>(null)
+  const [allCandidates, setAllCandidates] = useState<Record<string, Candidate[]>>({})
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
 
   useEffect(() => {
     loadPreflight()
@@ -115,6 +116,7 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
         setCurrentIdx(i + 1)
         setCurrentTitle(section.title)
         const result = await triggerExtraction(section.id)
+        await approveAllCandidates(section.id)
         const count = result.candidates.length
         total += count
         setCandidatesSoFar(total)
@@ -124,6 +126,15 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
       setTotalElapsedMs(Date.now() - startTime)
       setTotalCandidates(total)
       setSectionResults(results)
+
+      // Load full candidate details for the table
+      const bySection: Record<string, Candidate[]> = {}
+      await Promise.all(
+        sections.map(async (s) => {
+          bySection[s.id] = await fetchCandidates(s.id)
+        })
+      )
+      setAllCandidates(bySection)
       setPhase('done')
     } catch (e) {
       if (timerRef.current) clearInterval(timerRef.current)
@@ -208,48 +219,16 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
         <>
           <StepDone
             label="Generate cartographer artifacts"
-            detail={`${totalCandidates} candidate${totalCandidates !== 1 ? 's' : ''} generated · ${(totalElapsedMs / 1000).toFixed(1)}s`}
+            detail={`${totalCandidates} candidate${totalCandidates !== 1 ? 's' : ''} approved · ${(totalElapsedMs / 1000).toFixed(1)}s`}
           />
 
-          <div style={{ marginTop: '0.5rem' }}>
-            <h3 style={{ fontSize: '0.9rem', marginBottom: '0.5rem' }}>Review candidates</h3>
-            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-              {sectionResults.map((r) => (
-                <li
-                  key={r.sectionId}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.4rem 0', borderBottom: '1px solid #eee' }}
-                >
-                  <span style={{ flex: 1, fontSize: '0.9rem' }}>{r.title ?? '(untitled)'}</span>
-                  <span style={{ fontSize: '0.8rem', color: '#888' }}>{r.candidateCount}</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setReviewSectionId(r.sectionId)
-                      setReviewSectionTitle(r.title)
-                    }}
-                    style={{ fontSize: '0.8rem' }}
-                  >
-                    Review
-                  </button>
-                </li>
-              ))}
-            </ul>
+          <div style={{ marginTop: '1.5rem' }}>
+            <CandidatesTable
+              sections={sections.map(s => ({ id: s.id, title: s.title }))}
+              candidates={allCandidates}
+            />
           </div>
         </>
-      )}
-
-      {/* Inline candidate review */}
-      {reviewSectionId && (
-        <div style={{ marginTop: '2rem', paddingTop: '1rem', borderTop: '1px solid #ddd' }}>
-          <button
-            type="button"
-            onClick={() => setReviewSectionId(null)}
-            style={{ fontSize: '0.8rem', marginBottom: '0.75rem' }}
-          >
-            ← Back to sections
-          </button>
-          <CandidateQueue sectionId={reviewSectionId} sectionTitle={reviewSectionTitle} />
-        </div>
       )}
     </div>
   )

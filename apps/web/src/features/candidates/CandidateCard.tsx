@@ -30,13 +30,15 @@ function payloadSummary(candidate: Candidate): string {
   return ''
 }
 
-const _REVIEWED_STATES = new Set(['approved', 'rejected', 'deferred', 'merged'])
+// Candidates in these states have been explicitly resolved — no further challenge offered.
+const _TERMINAL_STATES = new Set(['rejected', 'deferred', 'merged'])
 
 export function CandidateCard({ candidate, onReviewed }: Props) {
   const [challenging, setChallenging] = useState(false)
   const [editing, setEditing] = useState(false)
 
-  const isReviewed = _REVIEWED_STATES.has(candidate.review_state)
+  const isTerminal = _TERMINAL_STATES.has(candidate.review_state)
+  const canChallenge = !isTerminal && !challenging
 
   return (
     <li
@@ -46,7 +48,7 @@ export function CandidateCard({ candidate, onReviewed }: Props) {
         gap: '0.4rem',
         padding: '0.5rem 0',
         borderBottom: '1px solid #eee',
-        opacity: isReviewed ? 0.6 : 1,
+        opacity: isTerminal ? 0.5 : 1,
       }}
     >
       {/* Compact row */}
@@ -69,11 +71,11 @@ export function CandidateCard({ candidate, onReviewed }: Props) {
         <span style={{ fontSize: '0.75rem', color: '#888', whiteSpace: 'nowrap' }}>
           {Math.round(candidate.confidence * 100)}%
         </span>
-        {isReviewed ? (
+        {isTerminal ? (
           <span style={{ fontSize: '0.75rem', color: '#666', whiteSpace: 'nowrap' }}>
             {candidate.review_state}
           </span>
-        ) : !challenging ? (
+        ) : canChallenge ? (
           <button
             type="button"
             onClick={() => setChallenging(true)}

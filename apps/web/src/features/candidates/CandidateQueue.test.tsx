@@ -191,11 +191,18 @@ test('shows empty state when no candidates', async () => {
   await waitFor(() => expect(screen.getByText(/no candidates extracted/i)).toBeInTheDocument())
 })
 
-test('reviewed candidates show review state, not Challenge button', async () => {
+test('approved candidates still show Challenge button', async () => {
   const approved = { ...entityCandidate, review_state: 'approved' }
   mockFetch([approved])
   render(<CandidateQueue sectionId="sec1" sectionTitle="Chapter I" />)
-  await waitFor(() => expect(screen.getByText('approved')).toBeInTheDocument())
-  expect(screen.queryByRole('button', { name: /challenge/i })).not.toBeInTheDocument()
+  await waitFor(() => expect(screen.getByRole('button', { name: /challenge/i })).toBeInTheDocument())
   expect(screen.queryByRole('button', { name: /approve all proposed/i })).not.toBeInTheDocument()
+})
+
+test('terminal states (rejected, deferred) hide Challenge button', async () => {
+  const rejected = { ...entityCandidate, review_state: 'rejected' }
+  mockFetch([rejected])
+  render(<CandidateQueue sectionId="sec1" sectionTitle="Chapter I" />)
+  await waitFor(() => expect(screen.getByText(/Casterbridge/)).toBeInTheDocument())
+  expect(screen.queryByRole('button', { name: /challenge/i })).not.toBeInTheDocument()
 })
