@@ -7,7 +7,7 @@ from app.extraction.prompts import PROMPT_VERSION, SYSTEM_PROMPT, USER_TEMPLATE
 from app.extraction.provider import ExtractionResult, RawCandidate
 
 _VALID_STATUSES = {"explicit", "inferred"}
-_VALID_KINDS = {"entity", "claim", "travel_rule", "visual_claim"}
+_VALID_KINDS = {"entity", "claim", "travel_rule", "visual_claim", "scene_anchor"}
 _VALID_TEMPORAL = {"static", "discovery", "knowledge_revision", "world_state_change"}
 _VALID_RELATION_KINDS = {"supersedes", "contradicts", "qualifies"}
 

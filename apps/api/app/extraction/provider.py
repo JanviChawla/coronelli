@@ -6,7 +6,7 @@ from app.db.models import SourceSection
 
 @dataclass
 class RawCandidate:
-    kind: str           # entity | claim | travel_rule | visual_claim
+    kind: str           # entity | claim | travel_rule | visual_claim | scene_anchor
     payload: dict[str, Any]
     status: str         # explicit | inferred
     confidence: float

@@ -435,5 +435,5 @@ def test_openai_provider_missing_temporal_defaults_to_static():
     assert result.candidates[0].temporal_interpretation == "static"
 
 
-def test_prompt_version_bumped_to_0_2():
-    assert PROMPT_VERSION == "0.2"
+def test_prompt_version_bumped_to_0_3():
+    assert PROMPT_VERSION == "0.3"
