@@ -19,15 +19,7 @@ import { AtlasExplorer } from '../atlas/AtlasExplorer'
 type View = 'workflow' | 'edit-sections' | 'atlas-explorer'
 
 const S = {
-  shell: { display: 'flex' as const, flexDirection: 'column' as const, height: '100%' },
-  header: {
-    background: 'var(--sidebar-bg)', borderBottom: '1px solid var(--sidebar-border)',
-    display: 'flex' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const,
-    padding: '0 1.75rem', height: '52px', flexShrink: 0,
-  },
-  brand:   { fontSize: '1.55rem', color: 'var(--gold)', letterSpacing: '0.04em', fontWeight: 400 },
-  tagline: { fontSize: '0.6rem', color: 'var(--sidebar-muted)', letterSpacing: '0.22em', textTransform: 'uppercase' as const },
-  body:    { flex: 1, display: 'flex' as const, overflow: 'hidden' as const },
+  shell:   { display: 'flex' as const, height: '100%' },
   sidebar: {
     width: '272px', flexShrink: 0, background: 'var(--sidebar-bg)',
     borderRight: '1px solid var(--sidebar-border)',
@@ -155,28 +147,28 @@ export function SourceLibrary() {
     }
   }
 
-  // Main panel: no padding/scroll in atlas or explorer mode
   const mainStyle = view === 'atlas-explorer'
     ? { flex: 1, overflow: 'hidden' as const, background: 'var(--parchment)' }
     : { flex: 1, overflowY: 'auto' as const, background: 'var(--parchment)', padding: '2.75rem 3.25rem' }
 
   return (
     <div style={S.shell}>
-      {/* ── Header ──────────────────────────────────────────────────── */}
-      <header style={S.header}>
-        <span style={S.brand}>Coronelli</span>
-        <span style={S.tagline}>Texts for places · a richer world</span>
-      </header>
-
       {/* ── Body ────────────────────────────────────────────────────── */}
-      <div style={S.body}>
 
         {/* Sidebar */}
-        <nav style={S.sidebar}>
-          <div style={{ padding: '1.5rem 1.25rem 0.75rem' }}>
-            <p style={{ fontSize: '1.2rem', fontWeight: 400, color: 'var(--sidebar-text)', marginBottom: '0.85rem' }}>
-              Library
-            </p>
+        <nav style={S.sidebar} className="texture-dark">
+
+          {/* Brand */}
+          <div style={{ padding: '1.4rem 1.25rem 1rem', borderBottom: '1px solid var(--sidebar-border)' }}>
+            <div style={{ fontSize: '1.1rem', letterSpacing: '0.18em', color: 'var(--gold)', textTransform: 'uppercase', fontWeight: 400, lineHeight: 1 }}>
+              Coronelli
+            </div>
+            <div style={{ fontSize: '0.55rem', color: 'var(--sidebar-muted)', letterSpacing: '0.2em', textTransform: 'uppercase', marginTop: '0.35rem' }}>
+              Texts for places
+            </div>
+          </div>
+
+          <div style={{ padding: '1.1rem 1.25rem 0.75rem' }}>
             <label style={{ display: 'block', cursor: importing ? 'wait' : 'pointer' }}>
               <input ref={fileRef} type="file" accept=".txt,.md,.pdf"
                 style={{ display: 'none' }} onChange={handleImportFile} disabled={importing} />
@@ -268,7 +260,8 @@ export function SourceLibrary() {
               onClick={() => { setShowReset(true); setResetInput('') }}
               style={{
                 fontSize: '0.65rem', color: 'var(--sidebar-muted)', background: 'none',
-                border: 'none', cursor: 'pointer', padding: 0, opacity: 0.45,
+                border: '1px solid var(--sidebar-border)', borderRadius: '3px',
+                padding: '0.18rem 0.55rem', cursor: 'pointer', opacity: 0.65,
                 letterSpacing: '0.08em', textTransform: 'uppercase' as const,
               }}
             >
@@ -278,7 +271,7 @@ export function SourceLibrary() {
         </nav>
 
         {/* Main content */}
-        <main style={mainStyle}>
+        <main style={mainStyle} className="texture-parchment">
           {!selected ? (
             <div style={{ textAlign: 'center', paddingTop: '5rem', color: 'var(--ink-faint)' }}>
               <p style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>Select a work from the library</p>
@@ -308,9 +301,7 @@ export function SourceLibrary() {
             />
           )}
         </main>
-      </div>
 
-      {/* ── Reset confirmation overlay ───────────────────────────────── */}
       {/* ── Edit metadata overlay ───────────────────────────────────── */}
       {editingDoc && (
         <div style={{

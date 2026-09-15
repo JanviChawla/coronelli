@@ -10,12 +10,12 @@
 
 :root {
   /* Palette */
-  --sidebar-bg:       #1e3a2f;
-  --sidebar-text:     #e8dcc8;
-  --sidebar-muted:    #8a7c6e;
-  --sidebar-selected: #3d1535;
-  --sidebar-hover:    rgba(255, 255, 255, 0.06);
-  --sidebar-border:   rgba(201, 168, 76, 0.25);
+  --sidebar-bg:       #131110;
+  --sidebar-text:     #e0d0b8;
+  --sidebar-muted:    #7a6e62;
+  --sidebar-selected: #2a1a2e;
+  --sidebar-hover:    rgba(255, 255, 255, 0.055);
+  --sidebar-border:   rgba(201, 168, 76, 0.22);
   --parchment:        #f5ede0;
   --parchment-alt:    #ede0cc;
   --parchment-card:   #e9dfc9;
@@ -112,6 +112,26 @@ button, input, select, textarea { font-family: inherit; }
 
 .sidebar-delete-btn:hover { opacity: 0.85; color: #e87070; }
 
+/* ── Panel textures — CSS-only grain, no external assets ────────────────── */
+
+/* Fine woven cross-hatch on the dark sidebar */
+.texture-dark {
+  background-image:
+    repeating-linear-gradient(0deg,  rgba(255,255,255,0.019) 0, rgba(255,255,255,0.019) 1px, transparent 1px, transparent 4px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.014) 0, rgba(255,255,255,0.014) 1px, transparent 1px, transparent 4px);
+}
+
+/* Faint ruled-paper grain on the parchment panel */
+.texture-parchment {
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent 0px,
+    transparent 22px,
+    rgba(139,100,50,0.042) 22px,
+    rgba(139,100,50,0.042) 23px
+  );
+}
+
 /* ── Parchment buttons ───────────────────────────────────────────────────── */
 
 .btn-outline-warm {
@@ -133,7 +153,7 @@ button, input, select, textarea { font-family: inherit; }
   padding: 0.65rem 1rem;
   background: var(--sidebar-bg);
   color: var(--sidebar-text);
-  border: none;
+  border: 1px solid rgba(201, 168, 76, 0.18);
   border-radius: var(--chrome-radius);
   font-size: 1rem;
   cursor: pointer;
