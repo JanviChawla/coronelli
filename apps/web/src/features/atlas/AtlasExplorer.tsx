@@ -15,7 +15,7 @@ import type { Node as RFNode, Edge as RFEdge, NodeProps, EdgeProps } from '@xyfl
 import '@xyflow/react/dist/style.css'
 
 import { fetchAtlas, fetchEntityMentions } from './atlasApi'
-import type { AtlasResponse, EntityMention } from './atlasApi'
+import type { AtlasResponse, EntityMention, AtlasEntity, AtlasTravelRule, AtlasClaim } from './atlasApi'
 import {
   buildDiagramViewModel,
   applyFilters,
@@ -94,6 +94,18 @@ function HullNode({ data }: NodeProps) {
 // ── Schematic place node ──────────────────────────────────────────────────────
 
 const CIRCLE_R: Record<string, number> = { hub: 28, normal: 20, origin: 20, inferred: 17 }
+
+const PLACE_KIND_GLYPH: Record<string, string> = {
+  terrain_feature: '△', mountain: '△', hill: '△',
+  settlement: '□', town: '□', city: '□', building: '□', hall: '□', room: '□', court: '□',
+  body_of_water: '≈', river: '≈', lake: '≈', ocean: '≈', sea: '≈',
+  forest: '♦', wood: '♦',
+  cave: '∩', tunnel: '∩', shaft: '∩',
+  island: '◦', region: '◦', world: '◎', exterior: '◦',
+  site: '◆', landmark: '◆',
+  barrier: '‖',
+  portal: '⊕', passage: '⊕', door: '⊕', gateway: '⊕',
+}
 
 // Label is positioned to the right of the circle for all non-hub nodes
 // to avoid vertical stacking and overlap with nearby nodes.
@@ -237,6 +249,26 @@ function SchematicNode({ data, selected }: NodeProps) {
             fontSize="9" fill="#b0a090"
             textAnchor="middle" dominantBaseline="middle">?</text>
         )}
+
+        {/* Place-kind glyph */}
+        {d.placeKind && !isInferred && (() => {
+          const glyph = PLACE_KIND_GLYPH[d.placeKind?.toLowerCase() ?? '']
+          if (!glyph) return null
+          return (
+            <text
+              x={cx}
+              y={cy + r * 0.58}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fontSize={r * 0.52}
+              fill={strokeColor}
+              opacity={0.3}
+              style={{ fontFamily: 'sans-serif', userSelect: 'none', pointerEvents: 'none' }}
+            >
+              {glyph}
+            </text>
+          )
+        })()}
       </svg>
 
       {/* Place label */}
@@ -322,7 +354,7 @@ const edgeTypes = { passage: PassageEdge }
 // ── Edge styling (non-passage) ────────────────────────────────────────────────
 
 type EdgePropsReturn = {
-  type: 'smoothstep' | 'straight' | 'default' | 'passage'
+  type: 'default' | 'passage'
   style: React.CSSProperties
   markerEnd?: { type: string; color: string; width: number; height: number }
 }
@@ -330,28 +362,28 @@ type EdgePropsReturn = {
 function edgeStyleProps(style: DiagramEdge['style']): EdgePropsReturn {
   switch (style) {
     case 'containment':
-      return { type: 'smoothstep', style: { stroke: '#c0ad94', strokeWidth: 1, strokeDasharray: '5 5', opacity: 0.6 } }
+      return { type: 'default', style: { stroke: '#c0ad94', strokeWidth: 1, strokeDasharray: '5 5', opacity: 0.6 } }
     case 'directed':
       return {
-        type: 'smoothstep', style: { stroke: '#3d2a50', strokeWidth: 2 },
+        type: 'default', style: { stroke: '#3d2a50', strokeWidth: 2 },
         markerEnd: { type: MarkerType.ArrowClosed, color: '#3d2a50', width: 11, height: 11 },
       }
     case 'passage':
       return { type: 'passage', style: {} }
     case 'proximity':
-      return { type: 'straight', style: { stroke: '#c9a84c', strokeWidth: 0.9, strokeDasharray: '2 8', opacity: 0.45 } }
+      return { type: 'default', style: { stroke: '#c9a84c', strokeWidth: 0.9, strokeDasharray: '2 8', opacity: 0.45 } }
     case 'compass':
       return {
-        type: 'straight', style: { stroke: '#7a9ab5', strokeWidth: 1, strokeDasharray: '4 4' },
+        type: 'default', style: { stroke: '#7a9ab5', strokeWidth: 1, strokeDasharray: '4 4' },
         markerEnd: { type: MarkerType.Arrow, color: '#7a9ab5', width: 10, height: 10 },
       }
     case 'movement':
       return {
-        type: 'smoothstep', style: { stroke: '#9b8574', strokeWidth: 1.2, strokeDasharray: '8 5' },
+        type: 'default', style: { stroke: '#9b8574', strokeWidth: 1.2, strokeDasharray: '8 5' },
         markerEnd: { type: MarkerType.Arrow, color: '#9b8574', width: 10, height: 10 },
       }
     case 'uncertain':
-      return { type: 'smoothstep', style: { stroke: '#d4bc8a', strokeWidth: 0.9, strokeDasharray: '3 8', opacity: 0.30 } }
+      return { type: 'default', style: { stroke: '#d4bc8a', strokeWidth: 0.9, strokeDasharray: '3 8', opacity: 0.30 } }
   }
 }
 
@@ -365,11 +397,12 @@ interface InnerProps {
   cursor: number
   sectionOrder: Map<string, number>
   onSelect: (t: InspectorTarget) => void
-  allEntities: Map<string, { visualClaims: unknown[] }>
+  allEntities: Map<string, AtlasEntity>
+  travelRules: AtlasTravelRule[]
 }
 
 function InnerDiagram({
-  vm, positions, containmentMap, filters, cursor, sectionOrder, onSelect, allEntities,
+  vm, positions, containmentMap, filters, cursor, sectionOrder, onSelect, allEntities, travelRules,
 }: InnerProps) {
   const { fitView } = useReactFlow()
   const [rfNodes, setRfNodes] = useState<RFNode[]>([])
@@ -472,13 +505,14 @@ function InnerDiagram({
   const onNodeClick = useCallback((_: unknown, node: RFNode) => {
     if (node.type === 'hull') return
     const diagNode = node.data as DiagramNode
-    const entity = allEntities.get(diagNode.id)
-    onSelect({
-      kind: 'node', node: diagNode,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      visualClaims: (entity?.visualClaims ?? []) as any,
+    const entity = allEntities.get(diagNode.id) ?? null
+    const entityName = entity?.name ?? diagNode.label
+    const entityRules = travelRules.filter(r => {
+      const p = r.payload as Record<string, unknown>
+      return p.from === entityName || p.to === entityName || p.via === entityName
     })
-  }, [allEntities, onSelect])
+    onSelect({ kind: 'node', node: diagNode, entity, travelRules: entityRules })
+  }, [allEntities, travelRules, onSelect])
 
   const onEdgeClick = useCallback((_: unknown, edge: RFEdge) => {
     onSelect({ kind: 'edge', edge: edge.data as DiagramEdge })
@@ -505,7 +539,7 @@ function InnerDiagram({
       onPaneClick={onPaneClick}
       fitView
       fitViewOptions={{ padding: 0.14 }}
-      nodesDraggable={false}
+      nodesDraggable={true}
       nodesConnectable={false}
       elementsSelectable
       proOptions={{ hideAttribution: true }}
@@ -739,7 +773,7 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
   const [atlasData, setAtlasData] = useState<AtlasResponse | null>(null)
   const [vm, setVm] = useState<DiagramViewModel | null>(null)
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS)
-  const [allEntities, setAllEntities] = useState<Map<string, { visualClaims: unknown[] }>>(new Map())
+  const [allEntities, setAllEntities] = useState<Map<string, AtlasEntity>>(new Map())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [cursor, setCursor] = useState(() => Math.max(0, sections.length - 1))
@@ -780,9 +814,9 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
         onAtlasLoaded(atlas.entity_count)
         setAtlasData(atlas)
         setEntityMentions(mentions)
-        const map = new Map<string, { visualClaims: unknown[] }>()
+        const map = new Map<string, AtlasEntity>()
         for (const e of atlas.entities) {
-          map.set(e.id, { visualClaims: e.claims.filter(c => c.claim_type === 'visual') })
+          map.set(e.id, e)
         }
         setAllEntities(map)
       })
@@ -858,6 +892,7 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
           sectionOrder={sectionOrder}
           onSelect={setInspectorTarget}
           allEntities={allEntities}
+          travelRules={atlasData?.travel_rules ?? []}
         />
       </ReactFlowProvider>
       <Legend />
@@ -934,7 +969,7 @@ export function InspectorContent({
   }
 
   if (target.kind === 'node') {
-    const { node, visualClaims } = target
+    const { node, entity, travelRules } = target
     const sectionTitle = node.revealSectionId
       ? (sectionTitles.get(node.revealSectionId) ?? node.revealSectionId)
       : null
@@ -945,30 +980,151 @@ export function InspectorContent({
       node.role === 'inferred' ? 'Inferred place' :
       node.placeKind ?? 'Place'
 
+    const allClaims = entity?.claims ?? []
+    const visualClaims = allClaims.filter(c => c.claim_type === 'visual')
+    const spatialClaims = allClaims.filter(c => c.claim_type === 'spatial' && c.predicate && c.predicate !== 'SAME_AS')
+    const accessClaims = allClaims.filter(c => c.claim_type === 'access')
+
+    const observations: string[] = Array.isArray(entity?.payload?.observations)
+      ? (entity!.payload.observations as string[])
+      : []
+
+    function humanizePredicate(pred: string): string {
+      return pred.replace(/_/g, ' ').toLowerCase()
+    }
+
+    function getVisualCategory(c: AtlasClaim): string {
+      return String(c.payload.category ?? c.payload.visual_property ?? '')
+    }
+    function getVisualObservation(c: AtlasClaim): string {
+      return String(c.payload.observation ?? c.payload.value ?? '')
+    }
+    function getVisualSection(c: AtlasClaim): string {
+      return String(c.payload.section_title ?? '')
+    }
+
+    const visualByCategory: Record<string, AtlasClaim[]> = {}
+    for (const c of visualClaims) {
+      const cat = getVisualCategory(c) || 'other'
+      if (!visualByCategory[cat]) visualByCategory[cat] = []
+      visualByCategory[cat].push(c)
+    }
+
     return (
       <div className="inspector-node">
         <div className="inspector-role">{roleLabel}</div>
         <h4 className="inspector-name">{node.label}</h4>
-        {node.placeKind && node.role !== 'inferred' && (
-          <span className="inspector-kind-badge">{node.placeKind}</span>
-        )}
+        <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginBottom: '0.55rem' }}>
+          {node.placeKind && node.role !== 'inferred' && (
+            <span className="inspector-kind-badge">{node.placeKind}</span>
+          )}
+          <span className="inspector-kind-badge" style={{ color: node.status === 'explicit' ? 'var(--step-done)' : 'var(--ink-faint)' }}>
+            {node.status}
+          </span>
+        </div>
+
         {node.aliases.length > 0 && (
-          <p className="inspector-aliases">Also: {node.aliases.join(', ')}</p>
+          <p className="inspector-aliases">Also known as: {node.aliases.join(', ')}</p>
         )}
-        <InspectorRow label="Status"        value={node.status} />
-        {sectionTitle && <InspectorRow label="First revealed" value={sectionTitle} />}
-        <InspectorRow label="Relationships" value={String(node.claimCount)} />
-        {(visualClaims as { payload: Record<string, unknown> }[]).length > 0 && (
-          <div className="inspector-visual-claims">
+
+        {sectionTitle && (
+          <InspectorRow label="First revealed" value={sectionTitle} />
+        )}
+
+        {observations.length > 0 && (
+          <div className="inspector-section-block">
+            <div className="inspector-section-label">Descriptions</div>
+            {observations.map((obs, i) => (
+              <blockquote key={i} className="inspector-observation">
+                {obs}
+              </blockquote>
+            ))}
+          </div>
+        )}
+
+        {Object.keys(visualByCategory).length > 0 && (
+          <div className="inspector-section-block">
             <div className="inspector-section-label">Visual properties</div>
-            {(visualClaims as { id: string; payload: Record<string, unknown> }[]).map(c => (
-              <div key={c.id} className="inspector-claim-row">
-                <span className="inspector-claim-prop">{String(c.payload.visual_property ?? '')}:</span>{' '}
-                {String(c.payload.value ?? '')}
+            {Object.entries(visualByCategory).map(([cat, claims]) => (
+              <div key={cat} className="inspector-visual-category">
+                <span className="inspector-visual-cat-badge">{cat}</span>
+                {claims.map((c, i) => {
+                  const obs = getVisualObservation(c)
+                  const sec = getVisualSection(c)
+                  return obs ? (
+                    <div key={i} className="inspector-visual-obs">
+                      {obs}
+                      {sec && <span className="inspector-visual-sec"> — {sec}</span>}
+                    </div>
+                  ) : null
+                })}
               </div>
             ))}
           </div>
         )}
+
+        {spatialClaims.length > 0 && (
+          <div className="inspector-section-block">
+            <div className="inspector-section-label">Connections ({spatialClaims.length})</div>
+            {spatialClaims.map(c => {
+              const object = String(c.payload.object ?? '')
+              return (
+                <div key={c.id} className="inspector-connection-row">
+                  <span className="inspector-connection-pred">{humanizePredicate(c.predicate ?? '')}</span>
+                  {object && <span className="inspector-connection-target">{object}</span>}
+                  {c.excerpt && (
+                    <blockquote className="inspector-excerpt inspector-excerpt--sm">"{c.excerpt}"</blockquote>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {accessClaims.length > 0 && (
+          <div className="inspector-section-block">
+            <div className="inspector-section-label">Access</div>
+            {accessClaims.map(c => {
+              const accessType = String(c.payload.access_type ?? c.payload.predicate ?? '')
+              const condition = String(c.payload.condition ?? '')
+              const traveler = String(c.payload.traveler ?? '')
+              return (
+                <div key={c.id} className="inspector-connection-row">
+                  <span className={`inspector-access-badge inspector-access-badge--${accessType}`}>
+                    {accessType}
+                  </span>
+                  {traveler && <span className="inspector-connection-target">for: {traveler}</span>}
+                  {condition && <div className="inspector-visual-obs">{condition}</div>}
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {travelRules.length > 0 && (
+          <div className="inspector-section-block">
+            <div className="inspector-section-label">Routes</div>
+            {travelRules.map(r => {
+              const from = String(r.payload.from ?? '')
+              const to = String(r.payload.to ?? '')
+              const via = String(r.payload.via ?? '')
+              const cond = r.condition
+              const canTraverse = r.can_traverse
+              return (
+                <div key={r.id} className="inspector-connection-row">
+                  <span className="inspector-connection-pred" style={{ color: canTraverse === false ? '#8b1a1a' : 'var(--step-done)' }}>
+                    {canTraverse === false ? 'blocked' : 'route'}
+                  </span>
+                  <span className="inspector-connection-target">
+                    {from} → {to}{via ? ` via ${via}` : ''}
+                  </span>
+                  {cond && <div className="inspector-visual-obs">{cond}</div>}
+                </div>
+              )
+            })}
+          </div>
+        )}
+
         <NarrativeThread
           entityId={node.id}
           cursor={cursor}

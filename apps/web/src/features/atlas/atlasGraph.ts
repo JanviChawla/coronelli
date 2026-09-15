@@ -1,4 +1,4 @@
-import type { AtlasClaim, AtlasResponse, AtlasTravelRule } from './atlasApi'
+import type { AtlasResponse, AtlasTravelRule, AtlasEntity } from './atlasApi'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -49,7 +49,7 @@ export interface DiagramViewModel {
 }
 
 export type InspectorTarget =
-  | { kind: 'node'; node: DiagramNode; visualClaims: AtlasClaim[] }
+  | { kind: 'node'; node: DiagramNode; entity: AtlasEntity | null; travelRules: AtlasTravelRule[] }
   | { kind: 'edge'; edge: DiagramEdge }
   | null
 

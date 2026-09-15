@@ -174,7 +174,7 @@ export function computeLayout(
     (alpha: number) => {
       for (const n of _simNodes) {
         const ty = sectionTargetY(n.sectionId)
-        n.vy = (n.vy ?? 0) + (ty - (n.y ?? SIM_H / 2)) * 0.06 * alpha
+        n.vy = (n.vy ?? 0) + (ty - (n.y ?? SIM_H / 2)) * 0.022 * alpha
       }
     },
     // D3 force initialize receives (nodes, random) — random ignored here
@@ -191,13 +191,13 @@ export function computeLayout(
         .strength(d => linkStrength(d.edgeStyle)),
     )
     .force('charge',  forceManyBody<SimNode>().strength(d => chargeStrength(d.role)))
-    .force('center',  forceCenter(SIM_W / 2, SIM_H / 2).strength(0.04))
-    .force('x',       forceX<SimNode>(d => targetX(d.narrativeOrder)).strength(0.22))
-    .force('y',       forceY<SimNode>(d => sectionTargetY(d.sectionId)).strength(0.08))
+    .force('center',  forceCenter(SIM_W / 2, SIM_H / 2).strength(0.07))
+    .force('x',       forceX<SimNode>(d => targetX(d.narrativeOrder)).strength(0.07))
+    .force('y',       forceY<SimNode>(d => sectionTargetY(d.sectionId)).strength(0.04))
     .force('collide', forceCollide<SimNode>(d => collideRadius(d.role)).strength(0.92))
     .force('cluster', sceneClusterForce)
     .stop()
-    .tick(700)
+    .tick(500)
 
   // ── Extract positions ──────────────────────────────────────────────────────
   const positions: LayoutPositions = {}
