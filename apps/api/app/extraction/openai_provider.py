@@ -37,6 +37,8 @@ class OpenAIExtractionProvider:
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
             ],
+            response_format={"type": "json_object"},
+            max_tokens=8192,
         )
 
         raw_text = response.choices[0].message.content
