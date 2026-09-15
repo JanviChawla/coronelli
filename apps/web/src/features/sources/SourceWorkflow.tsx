@@ -322,12 +322,23 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
         label="Import source"
         detail={document.original_filename}
         action={
-          (document.author || document.year) ? (
-            <div style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', lineHeight: 1.55 }}>
-              {document.author && <div>{document.author}</div>}
-              {document.year && <div>{document.year}</div>}
+          <details>
+            <summary style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+              ▸ Inspect metadata
+            </summary>
+            <div style={{ marginTop: '0.6rem', display: 'flex', flexDirection: 'column', gap: '0.18rem' }}>
+              {[
+                ['Title',  document.title],
+                ['Author', document.author || '—'],
+                ['Year',   document.year != null ? String(document.year) : 'N/A'],
+              ].map(([label, value]) => (
+                <div key={label} style={{ display: 'flex', gap: '0.5rem', fontSize: '0.78rem' }}>
+                  <span style={{ color: 'var(--ink-faint)', minWidth: '3.5rem' }}>{label}</span>
+                  <span style={{ color: 'var(--ink)' }}>{value}</span>
+                </div>
+              ))}
             </div>
-          ) : undefined
+          </details>
         }
       />
       <StepConnector />
@@ -348,9 +359,6 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
                   <span style={{ color: 'var(--ink)' }}>{s.title}</span>
                 </div>
               ))}
-              <button type="button" className="btn-outline-warm" style={{ marginTop: '0.65rem' }} onClick={onEditSections}>
-                Edit sections
-              </button>
             </div>
           </details>
         }
