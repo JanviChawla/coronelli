@@ -51,6 +51,8 @@ class OpenAIExtractionProvider:
 
         candidates: list[RawCandidate] = []
         for raw in parsed["candidates"]:
+            if not isinstance(raw, dict):
+                continue
             status = raw.get("status", "")
             if status not in _VALID_STATUSES:
                 # Strip imagined or unknown statuses rather than failing the whole run.
