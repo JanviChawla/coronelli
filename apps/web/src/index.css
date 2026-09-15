@@ -112,21 +112,20 @@ button, input, select, textarea { font-family: inherit; }
 
 .sidebar-delete-btn:hover { opacity: 0.85; color: #e87070; }
 
-/* ── Panel textures — CSS-only grain, no external assets ────────────────── */
+/* ── Panel depth — radial vignettes, no grid or ruled lines ─────────────── */
 
-/* Woven linen grid on the dark sidebar — 6×6px grid, clearly visible */
+/* Dark sidebar: faint inner glow at top, deeper at bottom corners */
 .texture-dark {
   background-image:
-    repeating-linear-gradient(0deg,  rgba(255,255,255,0.07) 0, rgba(255,255,255,0.07) 1px, transparent 1px, transparent 6px),
-    repeating-linear-gradient(90deg, rgba(255,255,255,0.05) 0, rgba(255,255,255,0.05) 1px, transparent 1px, transparent 6px),
-    repeating-linear-gradient(45deg, rgba(255,255,255,0.02) 0, rgba(255,255,255,0.02) 1px, transparent 1px, transparent 8px);
+    radial-gradient(ellipse 120% 60% at 50% 0%, rgba(255,255,255,0.04) 0%, transparent 100%),
+    radial-gradient(ellipse 100% 50% at 50% 100%, rgba(0,0,0,0.18) 0%, transparent 100%);
 }
 
-/* Ruled paper on parchment — visible horizontal lines + light diagonal fiber */
+/* Parchment main panel: warm centre, slightly deeper ivory at the edges */
 .texture-parchment {
   background-image:
-    repeating-linear-gradient(0deg, transparent 0px, transparent 26px, rgba(139,100,50,0.14) 26px, rgba(139,100,50,0.14) 27px),
-    repeating-linear-gradient(62deg, transparent 0px, transparent 8px, rgba(110,75,30,0.045) 8px, rgba(110,75,30,0.045) 8.5px);
+    radial-gradient(ellipse 80% 60% at 50% 38%, rgba(255,248,235,0.55) 0%, transparent 100%),
+    radial-gradient(ellipse 100% 100% at 50% 100%, rgba(160,120,60,0.07) 0%, transparent 70%);
 }
 
 /* ── Sidebar brand block — botanical ornament ────────────────────────────── */
