@@ -1,4 +1,4 @@
-SYNTHESIS_PROMPT_VERSION = "1.1"
+SYNTHESIS_PROMPT_VERSION = "1.2"
 
 SYNTHESIS_SYSTEM_PROMPT = """\
 CORONELLI ATLAS SYNTHESIS — Stage 2
@@ -29,12 +29,17 @@ Produce synthesis_items — consolidated world facts derived from the full evide
 
 ### 1. entity
 A consolidated place entity, merged across all sections where it appears.
-Payload: {"name": str, "type": str, "aliases": [str], "notes": str|null}
+Payload: {"name": str, "type": str, "aliases": [str], "observations": [str]}
 - type must be one of: world, region, island, settlement, landmark, building, room, hall, tunnel,
   shaft, passage, portal, door, exterior, terrain_feature, body_of_water, site, court, barrier
 - Merge duplicate entity candidates from different sections into ONE entity item.
 - Include aliases if the place is named differently across sections.
 - A wall, hedge, fence, gate, or physical barrier that separates regions is a barrier.
+- observations: one brief string per section where the entity appears, in section_ordinal order.
+  Each string captures how the place is described or experienced in that section — different seasons,
+  times of day, narrative roles, who is present. Do not average them into one sentence; preserve
+  the per-section variation. Example: ["Ch.I: A dark, dripping tunnel, barely shoulder-width.",
+  "Ch.VII: The same tunnel, now lit by torchlight, feels almost welcoming."]
 
 ### 2. claim
 A confirmed spatial relationship between two places.
@@ -44,7 +49,9 @@ Payload: {"subject": str, "predicate": str, "object": str}
   BLOCKS_ACCESS_TO, SURROUNDED_BY,
   NORTH_OF, SOUTH_OF, EAST_OF, WEST_OF, NORTHEAST_OF, NORTHWEST_OF, SOUTHEAST_OF, SOUTHWEST_OF
   (compass predicates only when source text explicitly states a direction)
-- Only emit claims supported by at least one explicit candidate or two corroborating inferred ones.
+- Emit claims supported by at least one explicit candidate, OR by a single inferred candidate with
+  confidence ≥ 0.55 (carry its confidence through; do not round up). Prefer to surface a
+  low-confidence claim over silence — the atlas can represent uncertainty.
 
 ### 3. route
 A traversal path between places.
@@ -53,9 +60,12 @@ Payload: {"traveler": str|null, "from": str, "to": str, "via": str|null, "can_tr
 
 ### 4. visual_claim
 A confirmed visual or appearance fact about a place.
-Payload: {"subject": str, "category": str, "observation": str}
+Payload: {"subject": str, "category": str, "observation": str, "section_title": str}
 - category must be one of: architecture, terrain, light, weather, color, material, scale, atmosphere, other
-- Consolidate visual_claim candidates.
+- Emit ONE visual_claim per distinct observation from the ledger. Do NOT merge observations about the
+  same place into one. Different sections often show the same place in different conditions, seasons,
+  or moods — that variation is the point. If a place has 6 visual observations, emit 6 visual_claim items.
+- Include the section_title of the source candidate so observations stay anchored to their narrative moment.
 
 ### 5. access
 A structural access constraint on a place — who may or may not enter, and under what conditions.
@@ -102,20 +112,21 @@ rationale: one sentence explaining what evidence supports this item.
 
 1. MERGE DUPLICATES: If the same place appears in multiple sections, produce ONE entity item (not one per section).
 2. RESOLVE MENTIONS: If evidence suggests two names refer to the same place, emit a same_as item.
-3. PROMOTE CORROBORATED CLAIMS: If ≥2 sections corroborate an inferred claim, promote it.
+3. INCLUDE INFERRED CLAIMS: Emit inferred claims with confidence ≥ 0.55 even from a single section. Mark their confidence accordingly. Do not require two-section corroboration.
 4. SURFACE CONTRADICTIONS: If evidence conflicts, emit an unresolved item rather than guessing.
 5. TEMPORAL FIRST MENTION: Emit a reveal_event for every entity item you produce, at its earliest section_ordinal.
 6. ROUTES OVER RULES: Consolidate travel_rule candidates into route items.
 7. SCENE ANCHORS: Use scene_anchor candidates (especially role=opening or role=ending) as reveal_event signals.
 8. MINIMUM COVERAGE: If the ledger contains evidence for entity, claim, route, and visual_claim, produce at least one of each. Consolidate access and movement candidates from the ledger when present.
+9. PRESERVE VISUAL OBSERVATIONS: Never collapse multiple visual_claim candidates into one. Each distinct observation gets its own visual_claim item. Volume beats brevity here.
 
 ## FINAL CHECK
 
 Before outputting, verify:
-A) Every entity item has a non-empty name and a valid type.
+A) Every entity item has a non-empty name, a valid type, and an observations list (may be empty if no per-section descriptions were extracted, but populate it when evidence exists).
 B) Every claim item has subject, predicate (must be one of the 15 allowed predicates, same set as Stage 1 extraction), and object.
 C) Every route item has from and to fields.
-D) Every visual_claim has subject, category (one of: architecture|terrain|light|weather|color|material|scale|atmosphere|other), and observation.
+D) Every visual_claim has subject, category (one of: architecture|terrain|light|weather|color|material|scale|atmosphere|other), observation, and section_title.
 D2) Every access item has place_name and access_type (permitted|prohibited|conditional).
 D3) Every movement item has from_place and to_place.
 E) Every same_as has a and b fields.

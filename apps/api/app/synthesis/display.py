@@ -25,8 +25,10 @@ def synthesis_item_display_summary(kind: str, payload: dict) -> str:
         # Support both new (category/observation) and legacy (visual_property/value) fields
         prop = _s("category") or _s("visual_property")
         value = _s("observation") or _s("value")
+        section = _s("section_title")
         if subject and prop and value:
-            return f"{subject} · {prop}: {value}"
+            base = f"{subject} · {prop}: {value}"
+            return f"{base} [{section}]" if section else base
         parts = [x for x in [subject, prop, value] if x]
         return " · ".join(parts) if parts else "(incomplete visual claim)"
     if kind == "access":
