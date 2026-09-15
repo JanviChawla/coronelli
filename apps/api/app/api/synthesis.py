@@ -6,10 +6,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db.engine import get_db
-from app.domain.world import MapClaim, MapEntity, MapTravelRule
 from app.synthesis.models import SynthesisItem, SynthesisRun
 from app.synthesis.provider import SynthesisNotConfiguredError, get_synthesis_provider
-from app.synthesis.review import SynthesisReviewError, accept_all_synthesis_items, approve_all_synthesis_entities, review_synthesis_item
 from app.synthesis.service import run_synthesis
 
 router = APIRouter(tags=["synthesis"])
@@ -44,47 +42,6 @@ class SynthesisItemOut(BaseModel):
     display_summary: str
 
     model_config = {"from_attributes": True}
-
-
-class MapEntityOut(BaseModel):
-    id: str
-    name: str
-    entity_kind: str
-    place_kind: str | None
-    aliases: list | None
-    state: str
-
-    model_config = {"from_attributes": True}
-
-
-class MapClaimOut(BaseModel):
-    id: str
-    claim_type: str
-    predicate: str | None
-    state: str
-
-    model_config = {"from_attributes": True}
-
-
-class MapTravelRuleOut(BaseModel):
-    id: str
-    traveler: str | None
-    route: str | None
-    can_traverse: bool | None
-    state: str
-
-    model_config = {"from_attributes": True}
-
-
-class SynthesisReviewRequest(BaseModel):
-    action: str  # approve | reject | defer | challenge
-
-
-class SynthesisReviewResponse(BaseModel):
-    item: SynthesisItemOut
-    created_entity: MapEntityOut | None
-    created_claim: MapClaimOut | None
-    created_travel_rule: MapTravelRuleOut | None
 
 
 class SynthesisResponse(BaseModel):
@@ -178,43 +135,3 @@ def get_provisional_atlas(
         items=[SynthesisItemOut.model_validate(item) for item in items],
         item_count=len(items),
     )
-
-
-@router.post("/api/synthesis-items/{item_id}/review", response_model=SynthesisReviewResponse)
-def review_item(
-    item_id: str,
-    body: SynthesisReviewRequest,
-    db: Session = Depends(get_db),
-) -> SynthesisReviewResponse:
-    try:
-        result = review_synthesis_item(db, item_id, body.action)
-    except SynthesisReviewError as exc:
-        msg = str(exc)
-        code = 404 if "not found" in msg else 422
-        raise HTTPException(status_code=code, detail=msg) from exc
-
-    return SynthesisReviewResponse(
-        item=SynthesisItemOut.model_validate(result.item),
-        created_entity=MapEntityOut.model_validate(result.created_entity) if result.created_entity else None,
-        created_claim=MapClaimOut.model_validate(result.created_claim) if result.created_claim else None,
-        created_travel_rule=MapTravelRuleOut.model_validate(result.created_travel_rule) if result.created_travel_rule else None,
-    )
-
-
-@router.post("/api/documents/{document_id}/synthesis-items/approve-entities", status_code=200)
-def batch_approve_entities(
-    document_id: str,
-    db: Session = Depends(get_db),
-) -> dict:
-    approved = approve_all_synthesis_entities(db, document_id)
-    return {"approved": approved, "document_id": document_id}
-
-
-@router.post("/api/documents/{document_id}/synthesis-items/accept-all", status_code=200)
-def bulk_accept_items(
-    document_id: str,
-    kind: str = Query(..., description="synthesis item kind to accept"),
-    db: Session = Depends(get_db),
-) -> dict:
-    accepted = accept_all_synthesis_items(db, document_id, kind)
-    return {"accepted": accepted, "kind": kind, "document_id": document_id}

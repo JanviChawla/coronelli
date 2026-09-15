@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
 
@@ -64,6 +64,24 @@ class MapClaim(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )
+
+
+class EntityMention(Base):
+    __tablename__ = "entity_mentions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    entity_id: Mapped[str] = mapped_column(
+        String, ForeignKey("map_entities.id", ondelete="CASCADE"), nullable=False
+    )
+    document_id: Mapped[str] = mapped_column(
+        String, ForeignKey("source_documents.id", ondelete="CASCADE"), nullable=False
+    )
+    section_id: Mapped[str] = mapped_column(
+        String, ForeignKey("source_sections.id", ondelete="CASCADE"), nullable=False
+    )
+    section_ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    mention_kind: Mapped[str] = mapped_column(String, nullable=False)  # "origin" | "referenced"
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
 
 class MapTravelRule(Base):

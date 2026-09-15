@@ -12,7 +12,8 @@ import {
   type Section,
   type SectionUpdate,
 } from './sourceApi'
-import { fetchAtlas } from '../atlas/atlasApi'
+import { fetchAtlas, fetchEntityMentions } from '../atlas/atlasApi'
+import type { EntityMention } from '../atlas/atlasApi'
 import { AtlasExplorer, InspectorContent } from '../atlas/AtlasExplorer'
 import type { InspectorTarget } from '../atlas/atlasGraph'
 
@@ -54,9 +55,12 @@ export function SourceLibrary() {
   const [importing, setImporting]               = useState(false)
   const [hasApprovedAtlas, setHasApprovedAtlas] = useState(false)
   const [inspectorTarget, setInspectorTarget]   = useState<InspectorTarget>(null)
+  const [entityMentions, setEntityMentions]     = useState<EntityMention[]>([])
+  const [cursor, setCursor]                     = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const sectionTitles = new Map(sections.map(s => [s.id, s.title]))
+  const sectionOrder  = new Map(sections.map((s, i) => [s.id, i]))
 
   useEffect(() => { fetchDocuments().then(setDocuments).catch(() => {}) }, [])
 
@@ -64,6 +68,9 @@ export function SourceLibrary() {
     try {
       const atlas = await fetchAtlas(docId)
       setHasApprovedAtlas(atlas.entity_count > 0)
+      if (atlas.entity_count > 0) {
+        setEntityMentions(await fetchEntityMentions(docId))
+      }
     } catch {
       setHasApprovedAtlas(false)
     }
@@ -75,6 +82,9 @@ export function SourceLibrary() {
     setError(null)
     setInspectorTarget(null)
     setHasApprovedAtlas(false)
+    setEntityMentions([])
+    setCursor(0)
+    setSections([])
     try {
       setSections(await fetchSections(doc.id))
       await checkAtlas(doc.id)
@@ -112,6 +122,8 @@ export function SourceLibrary() {
         setSections([])
         setHasApprovedAtlas(false)
         setInspectorTarget(null)
+        setEntityMentions([])
+        setCursor(0)
         setView('workflow')
       }
     } catch {
@@ -132,6 +144,9 @@ export function SourceLibrary() {
 
   function handleAtlasLoaded(entityCount: number) {
     setHasApprovedAtlas(entityCount > 0)
+    if (entityCount > 0 && selected) {
+      fetchEntityMentions(selected.id).then(setEntityMentions).catch(() => {})
+    }
   }
 
   // Main panel style differs in explorer mode (no padding, no scroll)
@@ -243,6 +258,7 @@ export function SourceLibrary() {
               sections={sections}
               onSelect={setInspectorTarget}
               onAtlasLoaded={handleAtlasLoaded}
+              onCursorChange={setCursor}
             />
           ) : view === 'edit-sections' ? (
             <>
@@ -258,6 +274,7 @@ export function SourceLibrary() {
               sections={sections}
               onEditSections={() => setView('edit-sections')}
               onAtlasChanged={() => selected && checkAtlas(selected.id)}
+              onViewAtlas={() => { setView('atlas-explorer'); setInspectorTarget(null) }}
             />
           )}
         </main>
@@ -268,7 +285,13 @@ export function SourceLibrary() {
             Inspector
           </h3>
           <div style={{ width: '40px', height: '1px', background: 'var(--gold)', marginBottom: '2rem' }} />
-          <InspectorContent target={inspectorTarget} sectionTitles={sectionTitles} />
+          <InspectorContent
+            target={inspectorTarget}
+            sectionTitles={sectionTitles}
+            cursor={cursor}
+            entityMentions={entityMentions}
+            sectionOrder={sectionOrder}
+          />
         </aside>
       </div>
 

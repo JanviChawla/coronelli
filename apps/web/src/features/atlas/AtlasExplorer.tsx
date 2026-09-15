@@ -12,10 +12,14 @@ import {
 } from '@xyflow/react'
 import type { Node as RFNode, Edge as RFEdge, NodeProps } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-// @ts-ignore — elk.bundled.js has no separate type entry; elkjs types cover the API
-import ELK from 'elkjs/lib/elk.bundled.js'
+import {
+  forceSimulation, forceLink, forceManyBody, forceCenter,
+  forceX, forceY, forceCollide,
+} from 'd3-force'
+import type { SimulationNodeDatum, SimulationLinkDatum } from 'd3-force'
 
 import { fetchAtlas } from './atlasApi'
+import type { AtlasResponse, EntityMention } from './atlasApi'
 import {
   buildDiagramViewModel,
   applyFilters,
@@ -30,141 +34,246 @@ import type {
   InspectorTarget,
 } from './atlasGraph'
 
-// ── ELK layout ────────────────────────────────────────────────────────────────
+// ── D3-force layout ───────────────────────────────────────────────────────────
 
-const elk = new ELK()
+// Node bounding-box dimensions for React Flow (circle + label)
+const NODE_W = { hub: 130, normal: 110 }
+const NODE_H = { hub: 100, normal: 84 }
 
-const NODE_W: Record<string, number> = { place: 180, transition: 130 }
-const NODE_H: Record<string, number> = { place: 52, transition: 38 }
+function nodeSize(role: string): { w: number; h: number } {
+  return role === 'hub'
+    ? { w: NODE_W.hub, h: NODE_H.hub }
+    : { w: NODE_W.normal, h: NODE_H.normal }
+}
 
-async function elkLayout(
+const SIM_W = 1000
+const SIM_H = 700
+
+interface SimNode extends SimulationNodeDatum {
+  id: string
+  role: string
+  narrativeOrder: number
+}
+
+interface SimLink extends SimulationLinkDatum<SimNode> {
+  style: DiagramEdge['style']
+}
+
+function linkDistance(style: DiagramEdge['style']): number {
+  switch (style) {
+    case 'containment': return 60
+    case 'passage':     return 90
+    case 'directed':    return 110
+    case 'proximity':   return 90
+    case 'compass':     return 120
+    case 'movement':    return 130
+    case 'uncertain':   return 100
+  }
+}
+
+function d3ForceLayout(
   nodes: DiagramNode[],
   edges: DiagramEdge[],
-): Promise<Record<string, { x: number; y: number }>> {
+): Record<string, { x: number; y: number }> {
   if (nodes.length === 0) return {}
-  const graph = {
-    id: 'root',
-    layoutOptions: {
-      'elk.algorithm': 'layered',
-      'elk.direction': 'DOWN',
-      'elk.spacing.nodeNode': '48',
-      'elk.layered.spacing.nodeNodeBetweenLayers': '64',
-      'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-    },
-    children: nodes.map(n => ({
-      id: n.id,
-      width: NODE_W[n.kind],
-      height: NODE_H[n.kind],
-    })),
-    edges: edges.map(e => ({
-      id: e.id,
-      sources: [e.source],
-      targets: [e.target],
-    })),
-  }
 
-  const laid = await elk.layout(graph)
+  const maxOrder = Math.max(0, ...nodes.map(n => n.narrativeOrder))
+  const xSpread  = SIM_W * 0.78
+  const xOffset  = SIM_W * 0.11
+
+  const targetX = (narrativeOrder: number) =>
+    maxOrder > 0 ? xOffset + (narrativeOrder / maxOrder) * xSpread : SIM_W / 2
+
+  // Deterministic vertical jitter so the force simulation can break symmetry
+  const simNodes: SimNode[] = nodes.map((n, i) => ({
+    id: n.id,
+    role: n.role,
+    narrativeOrder: n.narrativeOrder,
+    x: targetX(n.narrativeOrder),
+    y: SIM_H / 2 + ((i % 5) - 2) * (SIM_H / 6),
+  }))
+
+  const nodeSet = new Set(simNodes.map(n => n.id))
+  const simLinks: SimLink[] = edges
+    .filter(e => nodeSet.has(e.source) && nodeSet.has(e.target))
+    .map(e => ({ source: e.source, target: e.target, style: e.style }))
+
+  forceSimulation<SimNode>(simNodes)
+    .force(
+      'link',
+      forceLink<SimNode, SimLink>(simLinks)
+        .id(d => d.id)
+        .distance(d => linkDistance(d.style))
+        .strength(0.7),
+    )
+    .force('charge', forceManyBody<SimNode>().strength(d => d.role === 'hub' ? -350 : -180))
+    .force('center', forceCenter(SIM_W / 2, SIM_H / 2).strength(0.12))
+    .force('x', forceX<SimNode>(d => targetX(d.narrativeOrder)).strength(maxOrder > 0 ? 0.15 : 0))
+    .force('y', forceY<SimNode>(SIM_H / 2).strength(0.05))
+    .force('collide', forceCollide<SimNode>(d => d.role === 'hub' ? 65 : 50).strength(0.85))
+    .stop()
+    .tick(400)
+
   const positions: Record<string, { x: number; y: number }> = {}
-  for (const child of laid.children ?? []) {
-    positions[child.id] = { x: child.x ?? 0, y: child.y ?? 0 }
+  for (const n of simNodes) {
+    positions[n.id] = { x: n.x ?? SIM_W / 2, y: n.y ?? SIM_H / 2 }
   }
   return positions
 }
 
-// ── Custom nodes ──────────────────────────────────────────────────────────────
+// ── Schematic node ────────────────────────────────────────────────────────────
 
-function PlaceNode({ data, selected }: NodeProps) {
+// Circle radii per role
+const CIRCLE_R: Record<string, number> = { hub: 26, normal: 19, origin: 19, inferred: 19 }
+
+function SchematicNode({ data, selected }: NodeProps) {
   const d = data as DiagramNode
+  const r = CIRCLE_R[d.role] ?? 19
+  const svgSize = r * 2 + 6
+  const cx = svgSize / 2
+  const cy = svgSize / 2
+
+  const isInferred = d.role === 'inferred'
+  const isHub     = d.role === 'hub'
+  const isOrigin  = d.role === 'origin'
+
+  const stroke     = selected ? '#c9a84c' : isInferred ? '#b8a898' : '#3d2a50'
+  const fillOpacity = selected ? 0.12 : 0.06
+  const fill       = `rgba(201,168,76,${fillOpacity})`
+
   return (
     <div style={{
-      width: NODE_W.place,
-      padding: '0.35rem 0.65rem',
-      background: selected ? '#e8dcc8' : '#f5ede0',
-      border: `1.5px solid ${selected ? '#c9a84c' : '#d4bc8a'}`,
-      borderRadius: '4px',
-      fontSize: '0.72rem',
-      color: '#2c1810',
-      textAlign: 'center',
-      cursor: 'pointer',
-      boxShadow: selected ? '0 0 0 2px rgba(201,168,76,0.35)' : '0 1px 3px rgba(0,0,0,0.08)',
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      cursor: 'pointer', userSelect: 'none',
     }}>
-      <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
-      <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <Handle type="target" position={Position.Left}
+        style={{ opacity: 0, width: 1, height: 1 }} />
+      <svg
+        width={svgSize} height={svgSize}
+        style={{ overflow: 'visible', display: 'block' }}
+      >
+        {/* Outer glow when selected */}
+        {selected && (
+          <circle cx={cx} cy={cy} r={r + 4}
+            fill="none" stroke="#c9a84c" strokeWidth={1} opacity={0.3} />
+        )}
+        {/* Main circle */}
+        <circle
+          cx={cx} cy={cy} r={r}
+          stroke={stroke} strokeWidth={selected ? 2 : 1.5}
+          strokeDasharray={isInferred ? '4 3' : undefined}
+          fill={fill}
+        />
+        {/* Concentric ring for hub places */}
+        {isHub && (
+          <circle cx={cx} cy={cy} r={r - 6}
+            fill="none" stroke={stroke} strokeWidth={0.75} opacity={0.5} />
+        )}
+        {/* Inner dot */}
+        <circle cx={cx} cy={cy} r={isHub ? 4 : 3}
+          fill={isInferred ? '#b8a898' : stroke}
+        />
+        {/* Origin return-loop indicator */}
+        {isOrigin && (
+          <text x={cx + r - 3} y={cy - r + 9}
+            fontSize="9" fill={stroke} textAnchor="middle" dominantBaseline="middle"
+            style={{ fontFamily: 'sans-serif' }}>
+            ↺
+          </text>
+        )}
+        {/* Inferred placement mark */}
+        {isInferred && (
+          <text x={cx + r - 1} y={cy - r + 10}
+            fontSize="9" fill="#b8a898" textAnchor="middle" dominantBaseline="middle">
+            ?
+          </text>
+        )}
+      </svg>
+      {/* Label */}
+      <div style={{
+        marginTop: '0.3rem',
+        fontSize: isHub ? '0.74rem' : '0.68rem',
+        fontWeight: isHub ? 600 : 500,
+        color: isInferred ? '#9b8574' : '#2c1810',
+        textAlign: 'center',
+        maxWidth: isHub ? '130px' : '110px',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        fontStyle: isInferred ? 'italic' : 'normal',
+        letterSpacing: isHub ? '0.02em' : '0',
+      }}>
         {d.label}
       </div>
       {d.placeKind && (
-        <div style={{ fontSize: '0.58rem', color: '#9b8574', marginTop: '0.05rem' }}>
+        <div style={{
+          fontSize: '0.55rem',
+          color: '#9b8574',
+          textAlign: 'center',
+          maxWidth: '110px',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          letterSpacing: '0.05em',
+          textTransform: 'lowercase',
+          marginTop: '0.05rem',
+        }}>
           {d.placeKind}
         </div>
       )}
-      {d.nestedCount > 0 && (
-        <div style={{ fontSize: '0.56rem', color: '#c9a84c', marginTop: '0.05rem' }}>
-          {d.nestedCount} nested
-        </div>
-      )}
-      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Right}
+        style={{ opacity: 0, width: 1, height: 1 }} />
     </div>
   )
 }
 
-function TransitionNode({ data, selected }: NodeProps) {
-  const d = data as DiagramNode
-  return (
-    <div style={{
-      width: NODE_W.transition,
-      padding: '0.3rem 0.55rem',
-      background: selected ? '#3d2d50' : '#2d1b3d',
-      border: `1.5px solid ${selected ? '#c9a84c' : '#5d4d70'}`,
-      borderRadius: '3px',
-      fontSize: '0.66rem',
-      color: '#e8dcc8',
-      textAlign: 'center',
-      cursor: 'pointer',
-      boxShadow: selected ? '0 0 0 2px rgba(201,168,76,0.35)' : '0 1px 3px rgba(0,0,0,0.12)',
-    }}>
-      <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
-      <div style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {d.label}
-      </div>
-      {d.placeKind && (
-        <div style={{ fontSize: '0.56rem', color: '#a090b8', marginTop: '0.04rem' }}>
-          {d.placeKind}
-        </div>
-      )}
-      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
-    </div>
-  )
-}
-
-const nodeTypes = { place: PlaceNode, transition: TransitionNode }
+const nodeTypes = { place: SchematicNode }
 
 // ── Edge styling ──────────────────────────────────────────────────────────────
 
-function edgeProps(style: DiagramEdge['style']) {
+type EdgePropsReturn = {
+  type: 'smoothstep' | 'straight' | 'default'
+  style: React.CSSProperties
+  markerEnd?: { type: string; color: string; width: number; height: number }
+  animated?: boolean
+}
+
+function edgeStyleProps(style: DiagramEdge['style']): EdgePropsReturn {
   switch (style) {
     case 'containment':
       return {
-        type: 'smoothstep' as const,
-        style: { stroke: '#b8a898', strokeWidth: 1.5, strokeDasharray: '5 3' },
-        markerEnd: undefined as undefined,
+        type: 'smoothstep',
+        style: { stroke: '#c0ad94', strokeWidth: 1.2, strokeDasharray: '6 4' },
       }
-    case 'directional':
+    case 'directed':
       return {
-        type: 'smoothstep' as const,
-        style: { stroke: '#2d1b3d', strokeWidth: 1.8 },
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#2d1b3d', width: 14, height: 14 },
+        type: 'smoothstep',
+        style: { stroke: '#3d2a50', strokeWidth: 2 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: '#3d2a50', width: 11, height: 11 },
+      }
+    case 'passage':
+      return {
+        type: 'smoothstep',
+        style: { stroke: '#c9a84c', strokeWidth: 1.5, strokeDasharray: '5 3' },
+        markerEnd: { type: MarkerType.ArrowClosed, color: '#c9a84c', width: 10, height: 10 },
       }
     case 'proximity':
       return {
-        type: 'straight' as const,
-        style: { stroke: '#c9a84c', strokeWidth: 1, strokeDasharray: '2 5', opacity: 0.55 },
-        markerEnd: undefined as undefined,
+        type: 'straight',
+        style: { stroke: '#c9a84c', strokeWidth: 0.9, strokeDasharray: '2 6', opacity: 0.5 },
+      }
+    case 'compass':
+      return {
+        type: 'straight',
+        style: { stroke: '#7a9ab5', strokeWidth: 1, strokeDasharray: '4 4' },
+        markerEnd: { type: MarkerType.Arrow, color: '#7a9ab5', width: 10, height: 10 },
       }
     case 'movement':
       return {
-        type: 'smoothstep' as const,
-        style: { stroke: '#6b5744', strokeWidth: 1.2, strokeDasharray: '6 4' },
-        markerEnd: { type: MarkerType.Arrow, color: '#6b5744', width: 12, height: 12 },
+        type: 'smoothstep',
+        style: { stroke: '#9b8574', strokeWidth: 1.2, strokeDasharray: '8 5' },
+        markerEnd: { type: MarkerType.Arrow, color: '#9b8574', width: 10, height: 10 },
+      }
+    case 'uncertain':
+      return {
+        type: 'smoothstep',
+        style: { stroke: '#d4bc8a', strokeWidth: 0.9, strokeDasharray: '3 7', opacity: 0.35 },
       }
   }
 }
@@ -185,17 +294,14 @@ function InnerDiagram({ vm, filters, cursor, sectionOrder, onSelect, allEntities
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }> | null>(null)
   const [rfNodes, setRfNodes] = useState<RFNode[]>([])
   const [rfEdges, setRfEdges] = useState<RFEdge[]>([])
-  const [laying, setLaying] = useState(true)
 
-  // Phase 1: run ELK once on the full graph for stable positions
+  // Phase 1: run D3-force synchronously on the full graph for stable positions
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    setLaying(true)
-    elkLayout(vm.nodes, vm.edges).then(pos => {
-      setPositions(pos)
-      setLaying(false)
-      setTimeout(() => fitView({ padding: 0.15, duration: 300 }), 50)
-    })
+    setPositions(null)
+    const pos = d3ForceLayout(vm.nodes, vm.edges)
+    setPositions(pos)
+    setTimeout(() => fitView({ padding: 0.18, duration: 350 }), 50)
   }, [vm])
 
   // Phase 2: apply filter + cursor visibility without re-running ELK
@@ -209,31 +315,36 @@ function InnerDiagram({ vm, filters, cursor, sectionOrder, onSelect, allEntities
     const visibleNodeIds = new Set<string>()
     for (const n of vm.nodes) {
       if (!filteredNodeIds.has(n.id)) continue
-      // Null revealSectionId → treat as revealed at section 0 (show from start)
       const revealIdx = n.revealSectionId !== null
         ? (sectionOrder.get(n.revealSectionId) ?? 0)
         : 0
       if (revealIdx <= cursor) visibleNodeIds.add(n.id)
     }
 
-    setRfNodes(vm.nodes.map(n => ({
-      id: n.id,
-      type: n.kind,
-      position: positions[n.id] ?? { x: 0, y: 0 },
-      data: n,
-      hidden: !visibleNodeIds.has(n.id),
-    })))
+    setRfNodes(vm.nodes.map(n => {
+      const { w, h } = nodeSize(n.role)
+      return {
+        id: n.id,
+        type: 'place',
+        position: positions[n.id] ?? { x: 0, y: 0 },
+        data: n,
+        hidden: !visibleNodeIds.has(n.id),
+        style: { width: w, height: h },
+      }
+    }))
 
     setRfEdges(vm.edges.map(e => {
-      const ep = edgeProps(e.style)
+      const ep = edgeStyleProps(e.style)
+      const label = e.style === 'passage' && e.edgeLabel ? e.edgeLabel : undefined
       return {
         id: e.id,
         source: e.source,
         target: e.target,
-        label: e.predicate,
-        labelStyle: { fontSize: '0.6rem', fill: '#9b8574' },
-        labelShowBg: true,
-        labelBgStyle: { fill: '#f5ede0', fillOpacity: 0.85 },
+        label,
+        labelStyle: { fontSize: '0.58rem', fill: '#9b8574', fontFamily: 'NSimSun, monospace' },
+        labelShowBg: !!label,
+        labelBgStyle: { fill: '#f5ede0', fillOpacity: 0.9 },
+        labelBgPadding: [3, 5] as [number, number],
         data: e,
         hidden: !filteredEdgeIds.has(e.id)
           || !visibleNodeIds.has(e.source)
@@ -258,7 +369,7 @@ function InnerDiagram({ vm, filters, cursor, sectionOrder, onSelect, allEntities
     onSelect({ kind: 'edge', edge: edge.data as DiagramEdge })
   }, [onSelect])
 
-  if (laying) {
+  if (!positions) {
     return (
       <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-faint)', fontSize: '0.82rem' }}>
         Computing layout…
@@ -274,17 +385,20 @@ function InnerDiagram({ vm, filters, cursor, sectionOrder, onSelect, allEntities
       onNodeClick={onNodeClick}
       onEdgeClick={onEdgeClick}
       fitView
-      fitViewOptions={{ padding: 0.15 }}
+      fitViewOptions={{ padding: 0.18 }}
       nodesDraggable={false}
       nodesConnectable={false}
       elementsSelectable
       proOptions={{ hideAttribution: true }}
     >
-      <Background color="#d4bc8a" gap={20} size={1} style={{ opacity: 0.25 }} />
+      <Background color="#d4bc8a" gap={24} size={0.8} style={{ opacity: 0.18 }} />
       <Controls style={{ background: 'var(--parchment-alt)', border: '1px solid var(--border-warm)' }} />
       <MiniMap
         style={{ background: 'var(--parchment-alt)', border: '1px solid var(--border-warm)' }}
-        nodeColor={n => (n.type === 'transition' ? '#2d1b3d' : '#d4bc8a')}
+        nodeColor={n => {
+          const d = n.data as DiagramNode
+          return d?.role === 'hub' ? '#3d2a50' : d?.role === 'origin' ? '#c9a84c' : '#b8a898'
+        }}
         maskColor="rgba(245,237,224,0.65)"
       />
     </ReactFlow>
@@ -293,7 +407,12 @@ function InnerDiagram({ vm, filters, cursor, sectionOrder, onSelect, allEntities
 
 // ── Filter bar ────────────────────────────────────────────────────────────────
 
-const FILTER_LABELS: (keyof FilterState)[] = ['places', 'transitions', 'containment', 'relationships']
+const FILTER_LABELS: Array<[keyof FilterState, string]> = [
+  ['places', 'Places'],
+  ['passages', 'Passages'],
+  ['containment', 'Containment'],
+  ['relationships', 'Relationships'],
+]
 
 function FilterBar({ filters, onChange }: { filters: FilterState; onChange: (f: FilterState) => void }) {
   return (
@@ -303,7 +422,7 @@ function FilterBar({ filters, onChange }: { filters: FilterState; onChange: (f: 
       border: '1px solid var(--border-warm)', borderRadius: '4px', padding: '0.3rem 0.65rem',
       fontSize: '0.68rem', color: 'var(--ink-muted)', boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
     }}>
-      {FILTER_LABELS.map(key => (
+      {FILTER_LABELS.map(([key, label]) => (
         <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', userSelect: 'none' }}>
           <input
             type="checkbox"
@@ -311,7 +430,7 @@ function FilterBar({ filters, onChange }: { filters: FilterState; onChange: (f: 
             onChange={e => onChange({ ...filters, [key]: e.target.checked })}
             style={{ accentColor: '#c9a84c' }}
           />
-          {key.charAt(0).toUpperCase() + key.slice(1)}
+          {label}
         </label>
       ))}
     </div>
@@ -350,9 +469,7 @@ function NarrativeScrubber({
           fontSize: '1.1rem', cursor: cursor === 0 ? 'default' : 'pointer',
           color: cursor === 0 ? 'var(--ink-faint)' : 'var(--ink)',
         }}
-      >
-        ‹
-      </button>
+      >‹</button>
       <span style={{ minWidth: '18rem', textAlign: 'center', fontSize: '0.68rem', color: 'var(--ink-muted)' }}>
         <span style={{ color: 'var(--gold)', marginRight: '0.45rem', fontSize: '0.62rem' }}>
           § {cursor + 1} / {total}
@@ -368,9 +485,7 @@ function NarrativeScrubber({
           fontSize: '1.1rem', cursor: cursor === total - 1 ? 'default' : 'pointer',
           color: cursor === total - 1 ? 'var(--ink-faint)' : 'var(--ink)',
         }}
-      >
-        ›
-      </button>
+      >›</button>
     </div>
   )
 }
@@ -378,38 +493,52 @@ function NarrativeScrubber({
 // ── Legend ────────────────────────────────────────────────────────────────────
 
 function Legend() {
+  const dot = (color: string, dashed = false) => (
+    <svg width={14} height={14} style={{ flexShrink: 0 }}>
+      <circle cx={7} cy={7} r={6}
+        stroke={color} strokeWidth={1.2}
+        strokeDasharray={dashed ? '3 2' : undefined}
+        fill="rgba(245,237,224,0.6)"
+      />
+      <circle cx={7} cy={7} r={2.5} fill={color} />
+    </svg>
+  )
+  const line = (color: string, dash?: string, arrow = false) => (
+    <svg width={22} height={10} style={{ flexShrink: 0 }}>
+      <line x1={0} y1={5} x2={arrow ? 16 : 22} y2={5}
+        stroke={color} strokeWidth={1.5}
+        strokeDasharray={dash}
+      />
+      {arrow && <polygon points="16,2 22,5 16,8" fill={color} />}
+    </svg>
+  )
+
   return (
     <div style={{
       position: 'absolute', bottom: '2.5rem', left: '0.75rem', zIndex: 10,
       background: 'var(--parchment)', border: '1px solid var(--border-warm)',
-      borderRadius: '4px', padding: '0.5rem 0.75rem', fontSize: '0.62rem',
-      color: 'var(--ink-muted)', lineHeight: 1.7,
+      borderRadius: '4px', padding: '0.55rem 0.8rem', fontSize: '0.61rem',
+      color: 'var(--ink-muted)', lineHeight: 2,
     }}>
-      <div style={{ fontWeight: 600, marginBottom: '0.25rem', color: 'var(--ink)', fontSize: '0.65rem', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Legend</div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-        <div style={{ width: 14, height: 10, background: 'var(--parchment-card)', border: '1px solid #d4bc8a', borderRadius: 2 }} />
-        Place
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-        <div style={{ width: 14, height: 10, background: '#2d1b3d', borderRadius: 2 }} />
-        Transition
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-        <div style={{ width: 20, height: 1, background: '#2d1b3d', borderTop: '2px solid #2d1b3d' }} />
-        Leads to / opens
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-        <div style={{ width: 20, height: 0, borderTop: '1.5px dashed #b8a898' }} />
-        Contains
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-        <div style={{ width: 20, height: 0, borderTop: '1px dotted #c9a84c' }} />
-        Adjacent / near
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-        <div style={{ width: 20, height: 0, borderTop: '1px dashed #6b5744' }} />
-        Reached from
-      </div>
+      <div style={{ fontWeight: 600, marginBottom: '0.15rem', color: 'var(--ink)', fontSize: '0.63rem', letterSpacing: '0.07em', textTransform: 'uppercase' }}>Legend</div>
+      {[
+        [dot('#3d2a50'), 'Place'],
+        [dot('#3d2a50', false), 'Hub (concentric ring + larger)'],
+        [<svg key="o" width={14} height={14}><circle cx={7} cy={7} r={6} stroke="#c9a84c" strokeWidth={1.2} fill="rgba(201,168,76,0.1)"/><circle cx={7} cy={7} r={2.5} fill="#c9a84c"/><text x={12} y={4} fontSize="7" fill="#c9a84c">↺</text></svg>, 'Story origin'],
+        [dot('#b8a898', true), 'Inferred / uncertain'],
+        [line('#c9a84c', '5 3', true), 'Passage (door / portal)'],
+        [line('#3d2a50', undefined, true), 'Leads to'],
+        [line('#c0ad94', '6 4'), 'Contains / located in'],
+        [line('#c9a84c', '2 6'), 'Adjacent / near'],
+        [line('#7a9ab5', '4 4', true), 'Compass bearing'],
+        [line('#9b8574', '8 5', true), 'Reached from'],
+        [line('#d4bc8a', '3 7'), 'Uncertain connection'],
+      ].map(([icon, label], i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+          {icon}
+          <span>{label as string}</span>
+        </div>
+      ))}
     </div>
   )
 }
@@ -423,7 +552,7 @@ function Disclaimer() {
       zIndex: 10, fontSize: '0.58rem', color: 'var(--ink-faint)',
       letterSpacing: '0.04em', whiteSpace: 'nowrap', pointerEvents: 'none',
     }}>
-      Topological composition of approved spatial relationships. Distance and orientation are not implied.
+      Topological schematic · curves communicate relationships, not distance, scale, or literal terrain
     </div>
   )
 }
@@ -435,32 +564,35 @@ interface Props {
   sections: Array<{ id: string; title: string }>
   onSelect: (t: InspectorTarget) => void
   onAtlasLoaded: (entityCount: number) => void
+  onCursorChange?: (cursor: number) => void
 }
 
-export function AtlasExplorer({ documentId, sections, onSelect, onAtlasLoaded }: Props) {
+export function AtlasExplorer({ documentId, sections, onSelect, onAtlasLoaded, onCursorChange }: Props) {
+  const [atlasData, setAtlasData] = useState<AtlasResponse | null>(null)
   const [vm, setVm] = useState<DiagramViewModel | null>(null)
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS)
   const [allEntities, setAllEntities] = useState<Map<string, { visualClaims: unknown[] }>>(new Map())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [cursor, setCursor] = useState(0)
+  // Start at the last section so all places are visible on open; scrubber lets you rewind
+  const [cursor, setCursor] = useState(() => Math.max(0, sections.length - 1))
 
-  // Map from section id → index in the sections array (= narrative order)
   const sectionOrder = useMemo(() => {
     const map = new Map<string, number>()
     sections.forEach((s, i) => map.set(s.id, i))
     return map
   }, [sections])
 
+  // Load atlas data
   useEffect(() => {
     setLoading(true)
     setError(null)
-    setCursor(0)
+    setCursor(sections.length > 0 ? sections.length - 1 : 0)
     onSelect(null)
     fetchAtlas(documentId)
       .then(atlas => {
         onAtlasLoaded(atlas.entity_count)
-        setVm(buildDiagramViewModel(atlas))
+        setAtlasData(atlas)
         const map = new Map<string, { visualClaims: unknown[] }>()
         for (const e of atlas.entities) {
           map.set(e.id, { visualClaims: e.claims.filter(c => c.claim_type === 'visual') })
@@ -470,6 +602,12 @@ export function AtlasExplorer({ documentId, sections, onSelect, onAtlasLoaded }:
       .catch(e => setError(e instanceof Error ? e.message : 'Failed to load atlas'))
       .finally(() => setLoading(false))
   }, [documentId])
+
+  // Rebuild diagram when atlas data or section order changes
+  useEffect(() => {
+    if (!atlasData) return
+    setVm(buildDiagramViewModel(atlasData, sectionOrder))
+  }, [atlasData, sectionOrder])
 
   // Arrow key navigation
   useEffect(() => {
@@ -486,6 +624,11 @@ export function AtlasExplorer({ documentId, sections, onSelect, onAtlasLoaded }:
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [sections.length])
+
+  // Propagate cursor to parent for inspector temporal state
+  useEffect(() => {
+    onCursorChange?.(cursor)
+  }, [cursor, onCursorChange])
 
   if (loading) {
     return (
@@ -508,7 +651,7 @@ export function AtlasExplorer({ documentId, sections, onSelect, onAtlasLoaded }:
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-faint)', textAlign: 'center', gap: '0.5rem' }}>
         <div style={{ fontSize: '2rem', opacity: 0.2 }}>⊙</div>
         <p style={{ fontSize: '0.9rem' }}>No approved places yet.</p>
-        <p style={{ fontSize: '0.78rem' }}>Review and approve synthesis items in the workflow to build the atlas.</p>
+        <p style={{ fontSize: '0.78rem' }}>Complete synthesis in the workflow to build the atlas.</p>
       </div>
     )
   }
@@ -533,21 +676,84 @@ export function AtlasExplorer({ documentId, sections, onSelect, onAtlasLoaded }:
   )
 }
 
+// ── Narrative thread sub-component ───────────────────────────────────────────
+
+function NarrativeThread({
+  entityId,
+  cursor,
+  entityMentions,
+  sectionOrder,
+  sectionTitles,
+}: {
+  entityId: string
+  cursor: number
+  entityMentions: EntityMention[]
+  sectionOrder: Map<string, number>
+  sectionTitles: Map<string, string>
+}) {
+  const visible = entityMentions
+    .filter(m => m.entity_id === entityId)
+    .filter(m => (sectionOrder.get(m.section_id) ?? Infinity) <= cursor)
+    .sort((a, b) => a.section_ordinal - b.section_ordinal)
+
+  if (visible.length === 0) return null
+
+  return (
+    <div style={{ marginTop: '1rem' }}>
+      <div style={{
+        fontSize: '0.6rem', color: 'var(--ink-faint)',
+        letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '0.4rem',
+      }}>
+        Narrative thread
+      </div>
+      {visible.map(m => {
+        const sectionIdx = sectionOrder.get(m.section_id) ?? 0
+        const title = sectionTitles.get(m.section_id) ?? m.section_id
+        return (
+          <div key={m.id} style={{
+            display: 'flex', alignItems: 'baseline', gap: '0.4rem',
+            marginBottom: '0.22rem', fontSize: '0.74rem',
+          }}>
+            <span style={{ color: 'var(--gold)', minWidth: '2rem', flexShrink: 0, fontSize: '0.62rem' }}>
+              §{sectionIdx + 1}
+            </span>
+            <span style={{ color: 'var(--ink)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {title}
+            </span>
+            <span style={{
+              color: m.mention_kind === 'origin' ? 'var(--gold)' : 'var(--ink-faint)',
+              fontSize: '0.6rem', flexShrink: 0, fontStyle: 'italic',
+            }}>
+              {m.mention_kind === 'origin' ? 'introduced' : 'referenced'}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ── Inspector renderer (used by SourceLibrary) ────────────────────────────────
 
 export function InspectorContent({
   target,
   sectionTitles,
+  cursor = 0,
+  entityMentions = [],
+  sectionOrder = new Map(),
 }: {
   target: InspectorTarget
   sectionTitles: Map<string, string>
+  cursor?: number
+  entityMentions?: EntityMention[]
+  sectionOrder?: Map<string, number>
 }) {
   if (!target) {
     return (
       <div style={{ textAlign: 'center', paddingTop: '2rem', color: 'var(--ink-faint)' }}>
         <div style={{ fontSize: '2.25rem', marginBottom: '0.85rem', opacity: 0.25 }}>⊙</div>
         <p style={{ fontSize: '0.8rem', lineHeight: 1.55 }}>
-          Select a place, route, or source detail to inspect it.
+          Select a place or passage to inspect it.
         </p>
       </div>
     )
@@ -559,18 +765,24 @@ export function InspectorContent({
       ? (sectionTitles.get(node.revealSectionId) ?? node.revealSectionId)
       : null
 
+    const roleLabel =
+      node.role === 'hub'      ? 'Hub place' :
+      node.role === 'origin'   ? 'Story origin' :
+      node.role === 'inferred' ? 'Inferred place' :
+      node.placeKind ?? 'Place'
+
     return (
       <div style={{ fontSize: '0.8rem', lineHeight: 1.6 }}>
         <div style={{
           fontSize: '0.55rem', color: 'var(--ink-faint)',
           letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '0.25rem',
         }}>
-          {node.kind === 'transition' ? 'Transition feature' : 'Place'}
+          {roleLabel}
         </div>
         <h4 style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--ink)', marginBottom: '0.1rem' }}>
           {node.label}
         </h4>
-        {node.placeKind && (
+        {node.placeKind && node.role !== 'inferred' && (
           <div style={{
             display: 'inline-block', fontSize: '0.62rem', color: 'var(--ink-muted)',
             background: 'var(--parchment-card)', border: '1px solid var(--border-warm)',
@@ -586,7 +798,7 @@ export function InspectorContent({
           </p>
         )}
 
-        <Row label="Status" value={node.status} />
+        <Row label="Status"       value={node.status} />
         {sectionTitle && <Row label="First revealed" value={sectionTitle} />}
         <Row label="Relationships" value={String(node.claimCount)} />
 
@@ -605,6 +817,14 @@ export function InspectorContent({
             ))}
           </div>
         )}
+
+        <NarrativeThread
+          entityId={node.id}
+          cursor={cursor}
+          entityMentions={entityMentions}
+          sectionOrder={sectionOrder}
+          sectionTitles={sectionTitles}
+        />
       </div>
     )
   }
@@ -618,15 +838,20 @@ export function InspectorContent({
         fontSize: '0.55rem', color: 'var(--ink-faint)',
         letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '0.25rem',
       }}>
-        Spatial relationship
+        {edge.style === 'passage' ? 'Passage' : 'Spatial relationship'}
       </div>
-      <h4 style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--ink)', marginBottom: '0.5rem', fontFamily: 'monospace' }}>
-        {edge.predicate}
+      <h4 style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--ink)', marginBottom: '0.1rem' }}>
+        {edge.edgeLabel ?? edge.predicate}
       </h4>
+      {edge.edgeLabel && (
+        <div style={{ fontSize: '0.62rem', color: 'var(--ink-faint)', fontFamily: 'monospace', marginBottom: '0.45rem' }}>
+          {edge.predicate}
+        </div>
+      )}
       {desc && <p style={{ color: 'var(--ink-muted)', marginBottom: '0.65rem', fontSize: '0.77rem' }}>{desc}</p>}
 
-      <Row label="Subject" value={edge.sourceName} />
-      <Row label="Object" value={edge.targetName} />
+      <Row label="From" value={edge.sourceName} />
+      <Row label="To"   value={edge.targetName} />
 
       {edge.excerpt && (
         <blockquote style={{
