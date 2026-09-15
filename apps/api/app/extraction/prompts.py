@@ -581,6 +581,15 @@ M5. CLAIMS: If two or more catalog places appear with any stated or implied spat
     relationship, emit at least one claim. A section with multiple places and zero claims
     is an incomplete extraction.
 
+M6. PROXIMITY & REACH: Scan for language like "not far from", "a few miles from",
+    "near", "beyond", "past", "on the way to", "visible from", "overlooking",
+    "a stone's throw", "on the outskirts of", "bordering", "a short ride from",
+    "can be reached from". Each such phrase between two catalog places yields a
+    NEAR or ADJACENT_TO claim. Do not skip these — they are the connective tissue
+    of the map and are frequently missed.
+    Also emit REACHED_FROM for any narrated journey where the route is unspecified
+    but the departure and destination places are both in the catalog.
+
 FINAL CHECK before outputting:
 A. Does every claim have BOTH subject and object in the catalog? Remove any that don't.
    HAS_OPENING is only valid when the opening (door, window) is itself a catalog place.
