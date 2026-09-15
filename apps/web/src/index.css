@@ -116,6 +116,12 @@ button, input, select, textarea { font-family: inherit; }
     animation: none !important;
     transition-duration: 0.01ms !important;
   }
+  /* Slow ambient gold effects are not disorienting — restore them */
+  .btn-cta::after           { animation: goldShimmer 4.2s ease-in-out infinite !important; }
+  .sidebar-doc-btn.active   { animation: spineBreath 3.2s ease-in-out infinite !important; }
+  .step-processing          { animation: goldHalo    2s   ease-in-out infinite !important; }
+  .connector-flow-line      { animation: connectorFlow 1.6s linear    infinite !important; }
+  .atlas-passage-edge       { animation: atlas-dash-flow 1.8s linear  infinite !important; }
 }
 
 /* ── Sidebar items ───────────────────────────────────────────────────────── */
