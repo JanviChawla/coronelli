@@ -18,7 +18,7 @@ import {
 } from 'd3-force'
 import type { SimulationNodeDatum, SimulationLinkDatum } from 'd3-force'
 
-import { fetchAtlas } from './atlasApi'
+import { fetchAtlas, fetchEntityMentions } from './atlasApi'
 import type { AtlasResponse, EntityMention } from './atlasApi'
 import {
   buildDiagramViewModel,
@@ -36,7 +36,6 @@ import type {
 
 // ── D3-force layout ───────────────────────────────────────────────────────────
 
-// Node bounding-box dimensions for React Flow (circle + label)
 const NODE_W = { hub: 130, normal: 110 }
 const NODE_H = { hub: 100, normal: 84 }
 
@@ -84,7 +83,6 @@ function d3ForceLayout(
   const targetX = (narrativeOrder: number) =>
     maxOrder > 0 ? xOffset + (narrativeOrder / maxOrder) * xSpread : SIM_W / 2
 
-  // Deterministic vertical jitter so the force simulation can break symmetry
   const simNodes: SimNode[] = nodes.map((n, i) => ({
     id: n.id,
     role: n.role,
@@ -123,7 +121,6 @@ function d3ForceLayout(
 
 // ── Schematic node ────────────────────────────────────────────────────────────
 
-// Circle radii per role
 const CIRCLE_R: Record<string, number> = { hub: 26, normal: 19, origin: 19, inferred: 19 }
 
 function SchematicNode({ data, selected }: NodeProps) {
@@ -148,48 +145,32 @@ function SchematicNode({ data, selected }: NodeProps) {
     }}>
       <Handle type="target" position={Position.Left}
         style={{ opacity: 0, width: 1, height: 1 }} />
-      <svg
-        width={svgSize} height={svgSize}
-        style={{ overflow: 'visible', display: 'block' }}
-      >
-        {/* Outer glow when selected */}
+      <svg width={svgSize} height={svgSize} style={{ overflow: 'visible', display: 'block' }}>
         {selected && (
           <circle cx={cx} cy={cy} r={r + 4}
             fill="none" stroke="#c9a84c" strokeWidth={1} opacity={0.3} />
         )}
-        {/* Main circle */}
         <circle
           cx={cx} cy={cy} r={r}
           stroke={stroke} strokeWidth={selected ? 2 : 1.5}
           strokeDasharray={isInferred ? '4 3' : undefined}
           fill={fill}
         />
-        {/* Concentric ring for hub places */}
         {isHub && (
           <circle cx={cx} cy={cy} r={r - 6}
             fill="none" stroke={stroke} strokeWidth={0.75} opacity={0.5} />
         )}
-        {/* Inner dot */}
-        <circle cx={cx} cy={cy} r={isHub ? 4 : 3}
-          fill={isInferred ? '#b8a898' : stroke}
-        />
-        {/* Origin return-loop indicator */}
+        <circle cx={cx} cy={cy} r={isHub ? 4 : 3} fill={isInferred ? '#b8a898' : stroke} />
         {isOrigin && (
           <text x={cx + r - 3} y={cy - r + 9}
             fontSize="9" fill={stroke} textAnchor="middle" dominantBaseline="middle"
-            style={{ fontFamily: 'sans-serif' }}>
-            ↺
-          </text>
+            style={{ fontFamily: 'sans-serif' }}>↺</text>
         )}
-        {/* Inferred placement mark */}
         {isInferred && (
           <text x={cx + r - 1} y={cy - r + 10}
-            fontSize="9" fill="#b8a898" textAnchor="middle" dominantBaseline="middle">
-            ?
-          </text>
+            fontSize="9" fill="#b8a898" textAnchor="middle" dominantBaseline="middle">?</text>
         )}
       </svg>
-      {/* Label */}
       <div style={{
         marginTop: '0.3rem',
         fontSize: isHub ? '0.74rem' : '0.68rem',
@@ -205,14 +186,9 @@ function SchematicNode({ data, selected }: NodeProps) {
       </div>
       {d.placeKind && (
         <div style={{
-          fontSize: '0.55rem',
-          color: '#9b8574',
-          textAlign: 'center',
-          maxWidth: '110px',
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          letterSpacing: '0.05em',
-          textTransform: 'lowercase',
-          marginTop: '0.05rem',
+          fontSize: '0.55rem', color: '#9b8574', textAlign: 'center',
+          maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          letterSpacing: '0.05em', textTransform: 'lowercase', marginTop: '0.05rem',
         }}>
           {d.placeKind}
         </div>
@@ -237,48 +213,35 @@ type EdgePropsReturn = {
 function edgeStyleProps(style: DiagramEdge['style']): EdgePropsReturn {
   switch (style) {
     case 'containment':
-      return {
-        type: 'smoothstep',
-        style: { stroke: '#c0ad94', strokeWidth: 1.2, strokeDasharray: '6 4' },
-      }
+      return { type: 'smoothstep', style: { stroke: '#c0ad94', strokeWidth: 1.2, strokeDasharray: '6 4' } }
     case 'directed':
       return {
-        type: 'smoothstep',
-        style: { stroke: '#3d2a50', strokeWidth: 2 },
+        type: 'smoothstep', style: { stroke: '#3d2a50', strokeWidth: 2 },
         markerEnd: { type: MarkerType.ArrowClosed, color: '#3d2a50', width: 11, height: 11 },
       }
     case 'passage':
       return {
-        type: 'smoothstep',
-        style: { stroke: '#c9a84c', strokeWidth: 1.5, strokeDasharray: '5 3' },
+        type: 'smoothstep', style: { stroke: '#c9a84c', strokeWidth: 1.5, strokeDasharray: '5 3' },
         markerEnd: { type: MarkerType.ArrowClosed, color: '#c9a84c', width: 10, height: 10 },
       }
     case 'proximity':
-      return {
-        type: 'straight',
-        style: { stroke: '#c9a84c', strokeWidth: 0.9, strokeDasharray: '2 6', opacity: 0.5 },
-      }
+      return { type: 'straight', style: { stroke: '#c9a84c', strokeWidth: 0.9, strokeDasharray: '2 6', opacity: 0.5 } }
     case 'compass':
       return {
-        type: 'straight',
-        style: { stroke: '#7a9ab5', strokeWidth: 1, strokeDasharray: '4 4' },
+        type: 'straight', style: { stroke: '#7a9ab5', strokeWidth: 1, strokeDasharray: '4 4' },
         markerEnd: { type: MarkerType.Arrow, color: '#7a9ab5', width: 10, height: 10 },
       }
     case 'movement':
       return {
-        type: 'smoothstep',
-        style: { stroke: '#9b8574', strokeWidth: 1.2, strokeDasharray: '8 5' },
+        type: 'smoothstep', style: { stroke: '#9b8574', strokeWidth: 1.2, strokeDasharray: '8 5' },
         markerEnd: { type: MarkerType.Arrow, color: '#9b8574', width: 10, height: 10 },
       }
     case 'uncertain':
-      return {
-        type: 'smoothstep',
-        style: { stroke: '#d4bc8a', strokeWidth: 0.9, strokeDasharray: '3 7', opacity: 0.35 },
-      }
+      return { type: 'smoothstep', style: { stroke: '#d4bc8a', strokeWidth: 0.9, strokeDasharray: '3 7', opacity: 0.35 } }
   }
 }
 
-// ── Inner diagram (needs ReactFlowProvider above it) ─────────────────────────
+// ── Inner diagram ─────────────────────────────────────────────────────────────
 
 interface InnerProps {
   vm: DiagramViewModel
@@ -295,7 +258,6 @@ function InnerDiagram({ vm, filters, cursor, sectionOrder, onSelect, allEntities
   const [rfNodes, setRfNodes] = useState<RFNode[]>([])
   const [rfEdges, setRfEdges] = useState<RFEdge[]>([])
 
-  // Phase 1: run D3-force synchronously on the full graph for stable positions
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     setPositions(null)
@@ -304,7 +266,6 @@ function InnerDiagram({ vm, filters, cursor, sectionOrder, onSelect, allEntities
     setTimeout(() => fitView({ padding: 0.18, duration: 350 }), 50)
   }, [vm])
 
-  // Phase 2: apply filter + cursor visibility without re-running ELK
   useEffect(() => {
     if (!positions) return
 
@@ -324,11 +285,9 @@ function InnerDiagram({ vm, filters, cursor, sectionOrder, onSelect, allEntities
     setRfNodes(vm.nodes.map(n => {
       const { w, h } = nodeSize(n.role)
       return {
-        id: n.id,
-        type: 'place',
+        id: n.id, type: 'place',
         position: positions[n.id] ?? { x: 0, y: 0 },
-        data: n,
-        hidden: !visibleNodeIds.has(n.id),
+        data: n, hidden: !visibleNodeIds.has(n.id),
         style: { width: w, height: h },
       }
     }))
@@ -337,18 +296,12 @@ function InnerDiagram({ vm, filters, cursor, sectionOrder, onSelect, allEntities
       const ep = edgeStyleProps(e.style)
       const label = e.style === 'passage' && e.edgeLabel ? e.edgeLabel : undefined
       return {
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        label,
-        labelStyle: { fontSize: '0.58rem', fill: '#9b8574', fontFamily: 'NSimSun, monospace' },
-        labelShowBg: !!label,
-        labelBgStyle: { fill: '#f5ede0', fillOpacity: 0.9 },
+        id: e.id, source: e.source, target: e.target,
+        label, labelStyle: { fontSize: '0.58rem', fill: '#9b8574', fontFamily: 'NSimSun, monospace' },
+        labelShowBg: !!label, labelBgStyle: { fill: '#f5ede0', fillOpacity: 0.9 },
         labelBgPadding: [3, 5] as [number, number],
         data: e,
-        hidden: !filteredEdgeIds.has(e.id)
-          || !visibleNodeIds.has(e.source)
-          || !visibleNodeIds.has(e.target),
+        hidden: !filteredEdgeIds.has(e.id) || !visibleNodeIds.has(e.source) || !visibleNodeIds.has(e.target),
         ...ep,
       }
     }))
@@ -358,8 +311,7 @@ function InnerDiagram({ vm, filters, cursor, sectionOrder, onSelect, allEntities
     const diagNode = node.data as DiagramNode
     const entity = allEntities.get(diagNode.id)
     onSelect({
-      kind: 'node',
-      node: diagNode,
+      kind: 'node', node: diagNode,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       visualClaims: (entity?.visualClaims ?? []) as any,
     })
@@ -367,6 +319,10 @@ function InnerDiagram({ vm, filters, cursor, sectionOrder, onSelect, allEntities
 
   const onEdgeClick = useCallback((_: unknown, edge: RFEdge) => {
     onSelect({ kind: 'edge', edge: edge.data as DiagramEdge })
+  }, [onSelect])
+
+  const onPaneClick = useCallback(() => {
+    onSelect(null)
   }, [onSelect])
 
   if (!positions) {
@@ -384,6 +340,7 @@ function InnerDiagram({ vm, filters, cursor, sectionOrder, onSelect, allEntities
       nodeTypes={nodeTypes}
       onNodeClick={onNodeClick}
       onEdgeClick={onEdgeClick}
+      onPaneClick={onPaneClick}
       fitView
       fitViewOptions={{ padding: 0.18 }}
       nodesDraggable={false}
@@ -425,8 +382,7 @@ function FilterBar({ filters, onChange }: { filters: FilterState; onChange: (f: 
       {FILTER_LABELS.map(([key, label]) => (
         <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', userSelect: 'none' }}>
           <input
-            type="checkbox"
-            checked={filters[key]}
+            type="checkbox" checked={filters[key]}
             onChange={e => onChange({ ...filters, [key]: e.target.checked })}
             style={{ accentColor: '#c9a84c' }}
           />
@@ -440,9 +396,7 @@ function FilterBar({ filters, onChange }: { filters: FilterState; onChange: (f: 
 // ── Narrative scrubber ────────────────────────────────────────────────────────
 
 function NarrativeScrubber({
-  sections,
-  cursor,
-  onChange,
+  sections, cursor, onChange,
 }: {
   sections: Array<{ id: string; title: string }>
   cursor: number
@@ -495,20 +449,15 @@ function NarrativeScrubber({
 function Legend() {
   const dot = (color: string, dashed = false) => (
     <svg width={14} height={14} style={{ flexShrink: 0 }}>
-      <circle cx={7} cy={7} r={6}
-        stroke={color} strokeWidth={1.2}
-        strokeDasharray={dashed ? '3 2' : undefined}
-        fill="rgba(245,237,224,0.6)"
-      />
+      <circle cx={7} cy={7} r={6} stroke={color} strokeWidth={1.2}
+        strokeDasharray={dashed ? '3 2' : undefined} fill="rgba(245,237,224,0.6)" />
       <circle cx={7} cy={7} r={2.5} fill={color} />
     </svg>
   )
   const line = (color: string, dash?: string, arrow = false) => (
     <svg width={22} height={10} style={{ flexShrink: 0 }}>
       <line x1={0} y1={5} x2={arrow ? 16 : 22} y2={5}
-        stroke={color} strokeWidth={1.5}
-        strokeDasharray={dash}
-      />
+        stroke={color} strokeWidth={1.5} strokeDasharray={dash} />
       {arrow && <polygon points="16,2 22,5 16,8" fill={color} />}
     </svg>
   )
@@ -557,25 +506,76 @@ function Disclaimer() {
   )
 }
 
+// ── Inspector overlay ─────────────────────────────────────────────────────────
+
+function InspectorOverlay({
+  target, sectionTitles, cursor, entityMentions, sectionOrder, onClose,
+}: {
+  target: InspectorTarget
+  sectionTitles: Map<string, string>
+  cursor: number
+  entityMentions: EntityMention[]
+  sectionOrder: Map<string, number>
+  onClose: () => void
+}) {
+  if (!target) return null
+
+  return (
+    <div style={{
+      position: 'absolute', top: '0.75rem', right: '0.75rem', zIndex: 20,
+      width: '268px', maxHeight: 'calc(100% - 1.5rem)', overflowY: 'auto',
+      background: 'var(--parchment)', border: '1px solid var(--border-warm)',
+      borderRadius: '5px', boxShadow: '0 3px 14px rgba(0,0,0,0.18)',
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '0.65rem 0.9rem 0.55rem',
+        borderBottom: '1px solid var(--border-warm)',
+      }}>
+        <span style={{ fontSize: '0.58rem', color: 'var(--ink-faint)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
+          Inspector
+        </span>
+        <button
+          onClick={onClose}
+          aria-label="Close inspector"
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--ink-faint)', fontSize: '1.1rem', lineHeight: 1,
+            padding: '0 0.15rem', opacity: 0.65,
+          }}
+        >×</button>
+      </div>
+      <div style={{ padding: '0.85rem 1rem 1rem' }}>
+        <InspectorContent
+          target={target}
+          sectionTitles={sectionTitles}
+          cursor={cursor}
+          entityMentions={entityMentions}
+          sectionOrder={sectionOrder}
+        />
+      </div>
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 interface Props {
   documentId: string
   sections: Array<{ id: string; title: string }>
-  onSelect: (t: InspectorTarget) => void
   onAtlasLoaded: (entityCount: number) => void
-  onCursorChange?: (cursor: number) => void
 }
 
-export function AtlasExplorer({ documentId, sections, onSelect, onAtlasLoaded, onCursorChange }: Props) {
+export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
   const [atlasData, setAtlasData] = useState<AtlasResponse | null>(null)
   const [vm, setVm] = useState<DiagramViewModel | null>(null)
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS)
   const [allEntities, setAllEntities] = useState<Map<string, { visualClaims: unknown[] }>>(new Map())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  // Start at the last section so all places are visible on open; scrubber lets you rewind
   const [cursor, setCursor] = useState(() => Math.max(0, sections.length - 1))
+  const [inspectorTarget, setInspectorTarget] = useState<InspectorTarget>(null)
+  const [entityMentions, setEntityMentions] = useState<EntityMention[]>([])
 
   const sectionOrder = useMemo(() => {
     const map = new Map<string, number>()
@@ -583,16 +583,27 @@ export function AtlasExplorer({ documentId, sections, onSelect, onAtlasLoaded, o
     return map
   }, [sections])
 
-  // Load atlas data
+  const sectionTitles = useMemo(() => {
+    const map = new Map<string, string>()
+    sections.forEach(s => map.set(s.id, s.title))
+    return map
+  }, [sections])
+
   useEffect(() => {
     setLoading(true)
     setError(null)
     setCursor(sections.length > 0 ? sections.length - 1 : 0)
-    onSelect(null)
-    fetchAtlas(documentId)
-      .then(atlas => {
+    setInspectorTarget(null)
+    setEntityMentions([])
+
+    Promise.all([
+      fetchAtlas(documentId),
+      fetchEntityMentions(documentId).catch(() => [] as EntityMention[]),
+    ])
+      .then(([atlas, mentions]) => {
         onAtlasLoaded(atlas.entity_count)
         setAtlasData(atlas)
+        setEntityMentions(mentions)
         const map = new Map<string, { visualClaims: unknown[] }>()
         for (const e of atlas.entities) {
           map.set(e.id, { visualClaims: e.claims.filter(c => c.claim_type === 'visual') })
@@ -603,13 +614,11 @@ export function AtlasExplorer({ documentId, sections, onSelect, onAtlasLoaded, o
       .finally(() => setLoading(false))
   }, [documentId])
 
-  // Rebuild diagram when atlas data or section order changes
   useEffect(() => {
     if (!atlasData) return
     setVm(buildDiagramViewModel(atlasData, sectionOrder))
   }, [atlasData, sectionOrder])
 
-  // Arrow key navigation
   useEffect(() => {
     if (!sections.length) return
     function onKeyDown(e: KeyboardEvent) {
@@ -624,11 +633,6 @@ export function AtlasExplorer({ documentId, sections, onSelect, onAtlasLoaded, o
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [sections.length])
-
-  // Propagate cursor to parent for inspector temporal state
-  useEffect(() => {
-    onCursorChange?.(cursor)
-  }, [cursor, onCursorChange])
 
   if (loading) {
     return (
@@ -665,25 +669,29 @@ export function AtlasExplorer({ documentId, sections, onSelect, onAtlasLoaded, o
           filters={filters}
           cursor={cursor}
           sectionOrder={sectionOrder}
-          onSelect={onSelect}
+          onSelect={setInspectorTarget}
           allEntities={allEntities}
         />
       </ReactFlowProvider>
       <Legend />
       <NarrativeScrubber sections={sections} cursor={cursor} onChange={setCursor} />
       <Disclaimer />
+      <InspectorOverlay
+        target={inspectorTarget}
+        sectionTitles={sectionTitles}
+        cursor={cursor}
+        entityMentions={entityMentions}
+        sectionOrder={sectionOrder}
+        onClose={() => setInspectorTarget(null)}
+      />
     </div>
   )
 }
 
-// ── Narrative thread sub-component ───────────────────────────────────────────
+// ── Narrative thread sub-component ────────────────────────────────────────────
 
 function NarrativeThread({
-  entityId,
-  cursor,
-  entityMentions,
-  sectionOrder,
-  sectionTitles,
+  entityId, cursor, entityMentions, sectionOrder, sectionTitles,
 }: {
   entityId: string
   cursor: number
@@ -733,14 +741,10 @@ function NarrativeThread({
   )
 }
 
-// ── Inspector renderer (used by SourceLibrary) ────────────────────────────────
+// ── Inspector renderer ────────────────────────────────────────────────────────
 
 export function InspectorContent({
-  target,
-  sectionTitles,
-  cursor = 0,
-  entityMentions = [],
-  sectionOrder = new Map(),
+  target, sectionTitles, cursor = 0, entityMentions = [], sectionOrder = new Map(),
 }: {
   target: InspectorTarget
   sectionTitles: Map<string, string>
@@ -750,10 +754,10 @@ export function InspectorContent({
 }) {
   if (!target) {
     return (
-      <div style={{ textAlign: 'center', paddingTop: '2rem', color: 'var(--ink-faint)' }}>
-        <div style={{ fontSize: '2.25rem', marginBottom: '0.85rem', opacity: 0.25 }}>⊙</div>
-        <p style={{ fontSize: '0.8rem', lineHeight: 1.55 }}>
-          Select a place or passage to inspect it.
+      <div style={{ textAlign: 'center', paddingTop: '1.5rem', color: 'var(--ink-faint)' }}>
+        <div style={{ fontSize: '2rem', marginBottom: '0.65rem', opacity: 0.25 }}>⊙</div>
+        <p style={{ fontSize: '0.78rem', lineHeight: 1.55 }}>
+          Select a place or passage<br />to inspect it.
         </p>
       </div>
     )
@@ -791,17 +795,14 @@ export function InspectorContent({
             {node.placeKind}
           </div>
         )}
-
         {node.aliases.length > 0 && (
           <p style={{ color: 'var(--ink-muted)', fontStyle: 'italic', marginBottom: '0.4rem' }}>
             Also known as: {node.aliases.join(', ')}
           </p>
         )}
-
-        <Row label="Status"       value={node.status} />
+        <Row label="Status"        value={node.status} />
         {sectionTitle && <Row label="First revealed" value={sectionTitle} />}
         <Row label="Relationships" value={String(node.claimCount)} />
-
         {(visualClaims as { payload: Record<string, unknown> }[]).length > 0 && (
           <div style={{ marginTop: '0.75rem' }}>
             <div style={{ fontSize: '0.6rem', color: 'var(--ink-faint)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '0.35rem' }}>
@@ -817,7 +818,6 @@ export function InspectorContent({
             ))}
           </div>
         )}
-
         <NarrativeThread
           entityId={node.id}
           cursor={cursor}
@@ -829,7 +829,6 @@ export function InspectorContent({
     )
   }
 
-  // Edge inspector
   const { edge } = target
   const desc = PREDICATE_DESCRIPTIONS[edge.predicate]
   return (
@@ -849,19 +848,13 @@ export function InspectorContent({
         </div>
       )}
       {desc && <p style={{ color: 'var(--ink-muted)', marginBottom: '0.65rem', fontSize: '0.77rem' }}>{desc}</p>}
-
       <Row label="From" value={edge.sourceName} />
       <Row label="To"   value={edge.targetName} />
-
       {edge.excerpt && (
         <blockquote style={{
-          margin: '0.75rem 0 0',
-          padding: '0.5rem 0.65rem',
-          borderLeft: '2px solid var(--gold)',
-          background: 'var(--parchment-card)',
-          color: 'var(--ink-muted)',
-          fontSize: '0.75rem',
-          fontStyle: 'italic',
+          margin: '0.75rem 0 0', padding: '0.5rem 0.65rem',
+          borderLeft: '2px solid var(--gold)', background: 'var(--parchment-card)',
+          color: 'var(--ink-muted)', fontSize: '0.75rem', fontStyle: 'italic',
           borderRadius: '0 3px 3px 0',
         }}>
           "{edge.excerpt}"

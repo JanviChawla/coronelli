@@ -13,10 +13,7 @@ import {
   type Section,
   type SectionUpdate,
 } from './sourceApi'
-import { fetchAtlas, fetchEntityMentions } from '../atlas/atlasApi'
-import type { EntityMention } from '../atlas/atlasApi'
-import { AtlasExplorer, InspectorContent } from '../atlas/AtlasExplorer'
-import type { InspectorTarget } from '../atlas/atlasGraph'
+import { AtlasExplorer } from '../atlas/AtlasExplorer'
 
 type View = 'workflow' | 'edit-sections' | 'atlas-explorer'
 
@@ -35,10 +32,6 @@ const S = {
     borderRight: '1px solid var(--sidebar-border)',
     overflowY: 'auto' as const, display: 'flex' as const, flexDirection: 'column' as const,
   },
-  inspector: {
-    width: '288px', flexShrink: 0, background: 'var(--parchment-alt)',
-    borderLeft: '1px solid var(--border-warm)', overflowY: 'auto' as const, padding: '1.75rem 1.5rem',
-  },
 }
 
 export function SourceLibrary() {
@@ -48,44 +41,20 @@ export function SourceLibrary() {
   const [view, setView]                         = useState<View>('workflow')
   const [error, setError]                       = useState<string | null>(null)
   const [importing, setImporting]               = useState(false)
-  const [hasApprovedAtlas, setHasApprovedAtlas] = useState(false)
-  const [inspectorTarget, setInspectorTarget]   = useState<InspectorTarget>(null)
-  const [entityMentions, setEntityMentions]     = useState<EntityMention[]>([])
-  const [cursor, setCursor]                     = useState(0)
   const [showReset, setShowReset]               = useState(false)
   const [resetInput, setResetInput]             = useState('')
   const [resetting, setResetting]               = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const sectionTitles = new Map(sections.map(s => [s.id, s.title]))
-  const sectionOrder  = new Map(sections.map((s, i) => [s.id, i]))
-
   useEffect(() => { fetchDocuments().then(setDocuments).catch(() => {}) }, [])
-
-  async function checkAtlas(docId: string) {
-    try {
-      const atlas = await fetchAtlas(docId)
-      setHasApprovedAtlas(atlas.entity_count > 0)
-      if (atlas.entity_count > 0) {
-        setEntityMentions(await fetchEntityMentions(docId))
-      }
-    } catch {
-      setHasApprovedAtlas(false)
-    }
-  }
 
   async function handleSelect(doc: Document) {
     setSelected(doc)
     setView('workflow')
     setError(null)
-    setInspectorTarget(null)
-    setHasApprovedAtlas(false)
-    setEntityMentions([])
-    setCursor(0)
     setSections([])
     try {
       setSections(await fetchSections(doc.id))
-      await checkAtlas(doc.id)
     } catch {
       setError('Could not load sections.')
     }
@@ -102,7 +71,6 @@ export function SourceLibrary() {
       setSelected(result.document)
       setSections(result.sections)
       setView('workflow')
-      setHasApprovedAtlas(false)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Import failed.')
     } finally {
@@ -118,10 +86,6 @@ export function SourceLibrary() {
       if (selected?.id === doc.id) {
         setSelected(null)
         setSections([])
-        setHasApprovedAtlas(false)
-        setInspectorTarget(null)
-        setEntityMentions([])
-        setCursor(0)
         setView('workflow')
       }
     } catch {
@@ -147,10 +111,6 @@ export function SourceLibrary() {
       setDocuments([])
       setSelected(null)
       setSections([])
-      setHasApprovedAtlas(false)
-      setInspectorTarget(null)
-      setEntityMentions([])
-      setCursor(0)
       setView('workflow')
       setError(null)
     } catch {
@@ -162,14 +122,7 @@ export function SourceLibrary() {
     }
   }
 
-  function handleAtlasLoaded(entityCount: number) {
-    setHasApprovedAtlas(entityCount > 0)
-    if (entityCount > 0 && selected) {
-      fetchEntityMentions(selected.id).then(setEntityMentions).catch(() => {})
-    }
-  }
-
-  // Main panel style differs in explorer mode (no padding, no scroll)
+  // Main panel: no padding/scroll in atlas or explorer mode
   const mainStyle = view === 'atlas-explorer'
     ? { flex: 1, overflow: 'hidden' as const, background: 'var(--parchment)' }
     : { flex: 1, overflowY: 'auto' as const, background: 'var(--parchment)', padding: '2.75rem 3.25rem' }
@@ -297,9 +250,7 @@ export function SourceLibrary() {
             <AtlasExplorer
               documentId={selected.id}
               sections={sections}
-              onSelect={setInspectorTarget}
-              onAtlasLoaded={handleAtlasLoaded}
-              onCursorChange={setCursor}
+              onAtlasLoaded={() => {}}
             />
           ) : view === 'edit-sections' ? (
             <>
@@ -314,26 +265,11 @@ export function SourceLibrary() {
               document={selected}
               sections={sections}
               onEditSections={() => setView('edit-sections')}
-              onAtlasChanged={() => selected && checkAtlas(selected.id)}
-              onViewAtlas={() => { setView('atlas-explorer'); setInspectorTarget(null) }}
+              onAtlasChanged={() => {}}
+              onViewAtlas={() => setView('atlas-explorer')}
             />
           )}
         </main>
-
-        {/* Inspector */}
-        <aside style={S.inspector}>
-          <h3 style={{ fontSize: '1.2rem', fontWeight: 400, color: 'var(--ink)', marginBottom: '0.35rem' }}>
-            Inspector
-          </h3>
-          <div style={{ width: '40px', height: '1px', background: 'var(--gold)', marginBottom: '2rem' }} />
-          <InspectorContent
-            target={inspectorTarget}
-            sectionTitles={sectionTitles}
-            cursor={cursor}
-            entityMentions={entityMentions}
-            sectionOrder={sectionOrder}
-          />
-        </aside>
       </div>
 
       {/* ── Reset confirmation overlay ───────────────────────────────── */}
