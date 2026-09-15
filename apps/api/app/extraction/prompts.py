@@ -445,6 +445,10 @@ RULES:
   do NOT add names from your training knowledge of other books or other works.
 - Do NOT include: characters, creatures, furniture, food, portable objects, animals,
   abstract concepts, emotions, non-spatial events.
+- NEVER use a person's name as a place name. If a place is known only by its
+  owner ("Hans Van Ripper's farm", "the widow's cottage"), name it by what it IS
+  physically ("the Van Ripper farmhouse", "the widow's cottage"), not by the
+  person alone. A personal name like "Hans Van Ripper" is never a valid entry.
 - Do NOT invent. Extract only what the text names or clearly describes.
 - When in doubt, INCLUDE — synthesis will filter.
 
@@ -611,9 +615,9 @@ OUTPUT: valid JSON only. No markdown, no comments.
       "status": "explicit",
       "confidence": 0.95,
       "temporal_interpretation": "static",
-      "excerpt": "she entered the manor gates",
+      "excerpt": "he crossed the bridge into the village",
       "rationale": "section opens at this catalog place",
-      "payload": {"place": "Tamlin's Manor", "scene_role": "opening"}
+      "payload": {"place": "Millbrook", "scene_role": "opening"}
     }
   ]
 }
