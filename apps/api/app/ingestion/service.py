@@ -48,6 +48,8 @@ def import_document(
         narrative_body_start=normalized.body_start,
         narrative_body_end=normalized.body_end,
         normalization_diagnostics=normalized.diagnostics or None,
+        author=parsed.author,
+        year=parsed.year,
     )
 
     sections = replace_sections(session, doc.id, proposed)

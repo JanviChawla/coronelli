@@ -230,17 +230,24 @@ export function SourceLibrary() {
               </li>
             )}
             {documents.map(doc => (
-              <li key={doc.id} style={{ display: 'flex', alignItems: 'center' }}>
+              <li key={doc.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4rem', margin: '0.35rem 1rem 0' }}>
                 <button
-                  className={`sidebar-item${selected?.id === doc.id ? ' active' : ''}`}
                   onClick={() => handleSelect(doc)}
+                  style={{
+                    flex: 1, textAlign: 'left', cursor: 'pointer', padding: '0.7rem 1rem',
+                    background: 'var(--parchment-card, var(--sidebar-bg))',
+                    border: `1px solid ${selected?.id === doc.id ? 'var(--gold)' : 'var(--sidebar-border)'}`,
+                    borderRadius: '4px', wordBreak: 'break-word',
+                  }}
                 >
-                  <span style={{ fontSize: '0.75rem', opacity: 0.5, flexShrink: 0 }}>◻</span>
-                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <div style={{ fontWeight: 400, fontSize: '0.82rem', color: 'var(--ink)', lineHeight: 1.35, marginBottom: doc.author || doc.year ? '0.4rem' : 0 }}>
                     {doc.title}
-                  </span>
-                  {selected?.id === doc.id && (
-                    <span style={{ fontSize: '0.7rem', opacity: 0.6, flexShrink: 0 }}>›</span>
+                  </div>
+                  {doc.author && (
+                    <div style={{ fontSize: '0.7rem', color: 'var(--ink-muted)' }}>{doc.author}</div>
+                  )}
+                  {doc.year && (
+                    <div style={{ fontSize: '0.65rem', color: 'var(--ink-faint)', marginTop: '0.15rem' }}>{doc.year}</div>
                   )}
                 </button>
                 <button className="sidebar-delete-btn" onClick={() => handleDelete(doc)} title={`Remove ${doc.title}`}>

@@ -39,6 +39,8 @@ class DocumentResponse(BaseModel):
     category: str
     series_id: str | None
     series_order: int | None
+    author: str | None
+    year: int | None
 
     model_config = {"from_attributes": True}
 

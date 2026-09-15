@@ -258,10 +258,26 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
       <h2 style={{ fontSize: '1.9rem', fontWeight: 400, color: 'var(--ink)', lineHeight: 1.2 }}>
         {document.title}
       </h2>
+      {document.author && (
+        <p style={{ fontSize: '0.85rem', color: 'var(--ink-muted)', marginTop: '0.25rem' }}>
+          {document.author}{document.year ? `, ${document.year}` : ''}
+        </p>
+      )}
       <Ornament />
 
       {/* ── Step 1 ──────────────────────────────────────────────────── */}
-      <StepDone label="Import source" detail={document.original_filename} />
+      <StepDone
+        label="Import source"
+        detail={document.original_filename}
+        action={
+          (document.author || document.year) ? (
+            <div style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', lineHeight: 1.55 }}>
+              {document.author && <div>{document.author}</div>}
+              {document.year && <div>{document.year}</div>}
+            </div>
+          ) : undefined
+        }
+      />
       <StepConnector />
 
       {/* ── Step 2 ──────────────────────────────────────────────────── */}
@@ -310,11 +326,9 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
                   />
                 </div>
               </details>
-              {phase !== 'synthesizing' && phase !== 'done' && (
-                <button type="button" className="btn-outline-warm" style={{ alignSelf: 'flex-start' }} onClick={handleHarvest}>
-                  Re-harvest
-                </button>
-              )}
+              <button type="button" className="btn-outline-warm" style={{ alignSelf: 'flex-start' }} onClick={handleHarvest}>
+                Re-harvest
+              </button>
             </div>
           }
         />
@@ -399,11 +413,6 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
           action={
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
               <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap' }}>
-                {onViewAtlas && (
-                  <button type="button" className="btn-outline-warm" onClick={onViewAtlas}>
-                    Atlas Explorer →
-                  </button>
-                )}
                 <button type="button" className="btn-outline-warm" onClick={() => handleSynthesize(true)}>
                   Re-synthesize
                 </button>
@@ -468,6 +477,24 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
         </StepActive>
       ) : (
         <StepLocked n={4} label="Synthesize atlas" detail="Reads all harvested evidence in one pass and writes the canonical atlas automatically." />
+      )}
+      <StepConnector />
+
+      {/* ── Step 5: Atlas Explorer ───────────────────────────────── */}
+      {step4Done ? (
+        <StepDone
+          label="Atlas Explorer"
+          detail={`${canonicalEntityCount} place${canonicalEntityCount !== 1 ? 's' : ''} · interactive map`}
+          action={
+            onViewAtlas ? (
+              <button type="button" className="btn-outline-warm" onClick={onViewAtlas}>
+                Open Atlas Explorer →
+              </button>
+            ) : undefined
+          }
+        />
+      ) : (
+        <StepLocked n={5} label="Atlas Explorer" detail="Available once the atlas is synthesized." />
       )}
     </div>
   )

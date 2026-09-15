@@ -36,6 +36,8 @@ class SourceDocument(Base):
     narrative_body_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     narrative_body_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
     normalization_diagnostics: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    author: Mapped[str | None] = mapped_column(String, nullable=True)
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     sections: Mapped[list["SourceSection"]] = relationship(
         "SourceSection",

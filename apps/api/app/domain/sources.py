@@ -33,6 +33,8 @@ def create_document(
     narrative_body_start: int | None = None,
     narrative_body_end: int | None = None,
     normalization_diagnostics: list | None = None,
+    author: str | None = None,
+    year: int | None = None,
 ) -> SourceDocument:
     doc = SourceDocument(
         id=str(uuid.uuid4()),
@@ -47,6 +49,8 @@ def create_document(
         narrative_body_start=narrative_body_start,
         narrative_body_end=narrative_body_end,
         normalization_diagnostics=normalization_diagnostics or None,
+        author=author,
+        year=year,
     )
     session.add(doc)
     session.commit()

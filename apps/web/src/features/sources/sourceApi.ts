@@ -22,6 +22,8 @@ export type Document = {
   category: string
   series_id: string | null
   series_order: number | null
+  author: string | null
+  year: number | null
 }
 
 export type SectionUpdate = {
