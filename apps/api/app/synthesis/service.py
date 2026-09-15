@@ -26,13 +26,30 @@ def _build_evidence_ledger(session: Session, document_id: str) -> list[dict]:
         .all()
     )
 
+    # Collect candidates, restricting each section to its most recent completed run.
+    from app.extraction.models import ExtractionRun
     ledger: list[dict] = []
     for section in sections:
         if section.section_kind != "narrative":
             continue
+        # Find the most recent completed run for this section.
+        latest_run = (
+            session.query(ExtractionRun)
+            .filter(
+                ExtractionRun.section_id == section.id,
+                ExtractionRun.status == "completed",
+            )
+            .order_by(ExtractionRun.completed_at.desc())
+            .first()
+        )
+        if latest_run is None:
+            continue
         candidates = (
             session.query(Candidate)
-            .filter(Candidate.section_id == section.id)
+            .filter(
+                Candidate.section_id == section.id,
+                Candidate.extraction_run_id == latest_run.id,
+            )
             .order_by(Candidate.ordinal)
             .all()
         )
@@ -48,7 +65,31 @@ def _build_evidence_ledger(session: Session, document_id: str) -> list[dict]:
                 "review_state": c.review_state,
             })
 
-    return ledger
+    # Deduplicate entity candidates in Python — keep the highest-confidence
+    # record per normalized name. This cuts 200+ repetitions to ~60 unique places
+    # before the LLM sees them, dramatically reducing input size.
+    seen_names: dict[str, int] = {}  # normalized name → index in deduped list
+    deduped: list[dict] = []
+    non_entity: list[dict] = []
+    for item in ledger:
+        if item["kind"] != "entity":
+            non_entity.append(item)
+            continue
+        name = (item["payload"].get("name") or "").strip().lower()
+        if not name:
+            non_entity.append(item)
+            continue
+        if name not in seen_names:
+            seen_names[name] = len(deduped)
+            deduped.append(item)
+        elif item["confidence"] > deduped[seen_names[name]]["confidence"]:
+            deduped[seen_names[name]] = item
+
+    _log.info(
+        "Evidence ledger for %s: %d raw entity candidates → %d unique; %d evidence items",
+        document_id, len(ledger) - len(non_entity), len(deduped), len(non_entity),
+    )
+    return deduped + non_entity
 
 
 def _evidence_hash(ledger: list[dict]) -> str:
@@ -142,7 +183,12 @@ def run_synthesis(
     session.flush()
 
     try:
-        result = provider.synthesize(ledger)
+        entity_ledger = [item for item in ledger if item["kind"] == "entity"]
+        evidence_ledger = [item for item in ledger if item["kind"] != "entity"]
+        if hasattr(provider, "synthesize_two_pass"):
+            result = provider.synthesize_two_pass(entity_ledger, evidence_ledger)
+        else:
+            result = provider.synthesize(ledger)
 
         run.status = "completed"
         run.provider = result.provider

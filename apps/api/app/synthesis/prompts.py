@@ -1,4 +1,5 @@
-SYNTHESIS_PROMPT_VERSION = "1.2"
+SYNTHESIS_PROMPT_VERSION = "1.2"  # kept for single-pass fallback
+TWO_PASS_SYNTHESIS_VERSION = "2.0"
 
 SYNTHESIS_SYSTEM_PROMPT = """\
 CORONELLI ATLAS SYNTHESIS — Stage 2
@@ -134,4 +135,97 @@ F) Every unresolved has a description.
 G) Every reveal_event has entity_name, section_title, section_ordinal, and excerpt.
 H) No duplicate entity names (merge instead).
 I) confidence is a float between 0.0 and 1.0 for each item.
+"""
+
+# ── Two-pass synthesis (v2.0) ─────────────────────────────────────────────────
+
+ENTITY_CONSOLIDATION_SYSTEM_PROMPT = """\
+CORONELLI ATLAS SYNTHESIS — Pass 1: Entity Consolidation
+
+You receive entity candidates extracted section-by-section from a literary work.
+These have been roughly deduplicated by name in Python, but may still contain:
+- Different phrasings of the same place ("the Manor" / "Tamlin's Estate" / "the estate")
+- Non-places that slipped through (furniture, objects, abstract nouns)
+
+YOUR TASK: produce a canonical list of unique named places.
+
+RULES:
+1. ONE entity per distinct real place. Merge any variants that name the same place.
+2. Canonical name: the most specific, unambiguous, and complete name.
+3. type must be one of: world, region, island, settlement, landmark, building, room, hall,
+   tunnel, shaft, passage, portal, door, exterior, terrain_feature, body_of_water, site, court, barrier
+4. aliases: all other names or phrasings used for this place in the source.
+5. observations: one brief sentence per section where the place appears with distinctive description.
+   Capture what is spatially/visually specific to that section (season, time, atmosphere, who is present).
+6. Include ONLY named places. Reject: characters, creatures, furniture, portable objects,
+   food, abstract concepts, body parts, emotions, pronouns, vague descriptors ("the dark", "inside").
+7. Also emit reveal_event for every entity — the earliest section_ordinal it appears.
+
+OUTPUT: valid JSON only, no markdown.
+{
+  "synthesis_items": [
+    {
+      "kind": "entity",
+      "payload": {
+        "name": "Spring Court",
+        "type": "region",
+        "aliases": ["the Court", "Spring lands"],
+        "observations": ["Vast sunlit territory ruled by Tamlin, always in perpetual bloom", "Rose gardens in full color, warm golden light at midday"]
+      },
+      "confidence": 0.92,
+      "rationale": "Appears in 8 sections as the primary setting."
+    },
+    {
+      "kind": "reveal_event",
+      "payload": {"entity_name": "Spring Court", "section_title": "Chapter 1", "section_ordinal": 1, "excerpt": "the Spring Court's lands"},
+      "confidence": 0.92,
+      "rationale": "First mention in chapter 1."
+    }
+  ]
+}
+"""
+
+CLAIMS_SYNTHESIS_SYSTEM_PROMPT = """\
+CORONELLI ATLAS SYNTHESIS — Pass 2: Evidence Synthesis
+
+You receive:
+1. A canonical entity list — every confirmed named place from this work (output of Pass 1).
+2. Evidence candidates: spatial claims, visual observations, access rules, travel routes, movement.
+
+THE GOLDEN RULE — read it twice before you begin:
+Both the subject AND object of every spatial claim must be names that appear in the canonical entity list.
+If either side is a character, creature, piece of furniture, animal, portable object, or anything
+NOT in the entity list — DISCARD that claim entirely. No exceptions, no softening.
+
+ALLOWED OUTPUT KINDS:
+
+claim — spatial relationship between two places.
+  Payload: {"subject": "canonical place", "predicate": "PREDICATE", "object": "canonical place"}
+  Predicates: CONTAINS, LOCATED_IN, LEADS_TO, OPENS_TOWARD, ADJACENT_TO, NEAR, UNDER, ABOVE,
+  DESCENDS_TO, ENDS_AT, HAS_OPENING, REACHED_FROM, SAME_AS, IN_OR_ADJACENT_TO, BLOCKS_ACCESS_TO,
+  SURROUNDED_BY, NORTH_OF, SOUTH_OF, EAST_OF, WEST_OF, NORTHEAST_OF, NORTHWEST_OF, SOUTHEAST_OF, SOUTHWEST_OF
+
+visual_claim — confirmed appearance or description of a canonical place.
+  Payload: {"subject": "canonical place", "category": "...", "observation": "...", "section_title": "..."}
+  category: architecture | terrain | light | weather | color | material | scale | atmosphere | other
+  Emit ONE visual_claim per distinct observation. Never merge. Different sections = different items.
+
+access — structural rule about who can enter a canonical place.
+  Payload: {"place_name": "canonical place", "access_type": "permitted|prohibited|conditional", "condition": null, "traveler": null}
+
+route — traversal path between canonical places.
+  Payload: {"traveler": null, "from": "canonical place", "to": "canonical place", "via": null, "can_traverse": true, "condition": null}
+
+movement — narrated journey between canonical places.
+  Payload: {"traveler": null, "from_place": "canonical place", "to_place": "canonical place", "via": null, "mechanism": null, "stops": []}
+
+unresolved — contradictory or ambiguous evidence that cannot be settled.
+  Payload: {"description": "...", "evidence_a": "...", "evidence_b": "..."}
+
+SELF-CHECK before outputting:
+For EVERY claim you generated: is subject in the entity list? Is object in the entity list?
+Remove any item where either answer is no.
+
+OUTPUT: valid JSON only, no markdown.
+{"synthesis_items": [...]}
 """

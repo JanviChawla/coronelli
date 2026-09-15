@@ -90,6 +90,16 @@ def run_extraction(
                 .all()
             )
             return existing, cached_candidates, True
+    else:
+        # Hard re-harvest: wipe all previous candidates and runs for this section
+        # so synthesis never sees a mix of old and new data.
+        session.query(Candidate).filter(
+            Candidate.section_id == section_id,
+        ).delete(synchronize_session=False)
+        session.query(ExtractionRun).filter(
+            ExtractionRun.section_id == section_id,
+        ).update({"status": "superseded"}, synchronize_session=False)
+        session.flush()
 
     run = ExtractionRun(
         section_id=section_id,
