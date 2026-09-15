@@ -12,6 +12,17 @@ from app.extraction.prompts import (
     CATALOG_SYSTEM_PROMPT, CATALOG_USER_TEMPLATE,
     EVIDENCE_SYSTEM_PROMPT, EVIDENCE_USER_TEMPLATE,
     GLOBAL_CATALOG_VERSION, GLOBAL_EVIDENCE_VERSION,
+    EVIDENCE_SUBPASS_USER_TEMPLATE,
+    SPATIAL_CLAIMS_SYSTEM_PROMPT,
+    VISUAL_CLAIMS_SYSTEM_PROMPT,
+    TRAVELRULE_SYSTEM_PROMPT,
+    MOVEMENT_SYSTEM_PROMPT,
+    ACCESS_SYSTEM_PROMPT,
+    GLOBAL_EVIDENCE_SPATIAL_VERSION,
+    GLOBAL_EVIDENCE_VISUAL_VERSION,
+    GLOBAL_EVIDENCE_TRAVELRULE_VERSION,
+    GLOBAL_EVIDENCE_MOVEMENT_VERSION,
+    GLOBAL_EVIDENCE_ACCESS_VERSION,
 )
 from app.extraction.provider import ExtractionResult, RawCandidate
 from app.extraction.validation import _ALLOWED_ENTITY_TYPES
@@ -188,83 +199,118 @@ class OpenAIExtractionProvider:
                 temporal_interpretation="static",
             ))
 
-        # ── Pass 2: Evidence Extraction ───────────────────────────────────────
+        # ── Pass 2: Evidence — 5 focused sub-passes ──────────────────────────
         cumulative_names = {e["name"] for e in cumulative_catalog}
         full_catalog_list = list(cumulative_catalog) + [
             {"name": p["name"], "type": p.get("type", ""), "aliases": p.get("aliases", [])}
             for p in new_places
             if p.get("name") and p["name"] not in cumulative_names
         ]
-
-        evidence_user = EVIDENCE_USER_TEMPLATE.format(
-            section_order=section.ordinal,
-            title=section.title or "(untitled)",
-            text=section.text or "",
-            place_catalog_json=json.dumps(
-                [{"name": e["name"], "type": e.get("type", "")} for e in full_catalog_list],
-                ensure_ascii=False,
-            ),
+        subpass_candidates, subpass_in, subpass_out = self._run_evidence_subpasses(
+            section=section,
+            full_catalog_list=full_catalog_list,
         )
-        evidence_resp = self._client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": EVIDENCE_SYSTEM_PROMPT},
-                {"role": "user", "content": evidence_user},
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=8192,
-        )
-        evidence_text = evidence_resp.choices[0].message.content
-        evidence_parsed: dict = {}
-        raw_evidence: list = []
-        try:
-            evidence_parsed = json.loads(evidence_text)
-            raw_ev = evidence_parsed.get("candidates", [])
-            raw_evidence = raw_ev if isinstance(raw_ev, list) else []
-        except json.JSONDecodeError:
-            _log.warning("Evidence pass failed to parse JSON: %s", evidence_text[:500])
-
-        try:
-            evidence_input_tokens = int(evidence_resp.usage.prompt_tokens)
-            evidence_output_tokens = int(evidence_resp.usage.completion_tokens)
-        except (AttributeError, TypeError, ValueError):
-            evidence_input_tokens = 0
-            evidence_output_tokens = 0
-
-        _EVIDENCE_KINDS = {"claim", "travel_rule", "visual_claim", "access", "movement", "scene_anchor"}
-        evidence_candidates: list[RawCandidate] = []
-        for raw in raw_evidence:
-            if not isinstance(raw, dict):
-                continue
-            status = raw.get("status", "")
-            if status not in _VALID_STATUSES:
-                continue
-            kind = raw.get("kind", "")
-            if kind not in _EVIDENCE_KINDS:
-                continue
-            temporal = raw.get("temporal_interpretation", "static")
-            if temporal not in _VALID_TEMPORAL:
-                temporal = "static"
-            evidence_candidates.append(RawCandidate(
-                kind=kind,
-                payload=raw.get("payload", {}),
-                status=status,
-                confidence=float(raw.get("confidence", 0.5)),
-                excerpt=str(raw.get("excerpt", "")),
-                rationale=str(raw.get("rationale", "")),
-                temporal_interpretation=temporal,
-            ))
 
         return ExtractionResult(
-            candidates=entity_candidates + evidence_candidates,
-            raw_response={"catalog": catalog_parsed, "evidence": evidence_parsed},
+            candidates=entity_candidates + subpass_candidates,
+            raw_response={"catalog": catalog_parsed},
             provider="openai",
             model=self._model,
             prompt_version=COMBINED_PROMPT_VERSION,
-            input_tokens=catalog_input_tokens + evidence_input_tokens,
-            output_tokens=catalog_output_tokens + evidence_output_tokens,
+            input_tokens=catalog_input_tokens + subpass_in,
+            output_tokens=catalog_output_tokens + subpass_out,
         )
 
+
+    def _run_evidence_subpasses(
+        self,
+        section: SourceSection,
+        full_catalog_list: list[dict],
+    ) -> tuple[list[RawCandidate], int, int]:
+        """Run all 5 focused evidence sub-passes and return merged candidates + token counts."""
+
+        catalog_json = json.dumps(
+            [{"name": e["name"], "type": e.get("type", "")} for e in full_catalog_list],
+            ensure_ascii=False,
+        )
+        user_content = EVIDENCE_SUBPASS_USER_TEMPLATE.format(
+            section_order=section.ordinal,
+            title=section.title or "(untitled)",
+            text=section.text or "",
+            place_catalog_json=catalog_json,
+        )
+
+        _SUBPASS_ALLOWED: dict[str, set[str]] = {
+            GLOBAL_EVIDENCE_SPATIAL_VERSION:    {"claim", "scene_anchor"},
+            GLOBAL_EVIDENCE_VISUAL_VERSION:     {"visual_claim"},
+            GLOBAL_EVIDENCE_TRAVELRULE_VERSION: {"travel_rule"},
+            GLOBAL_EVIDENCE_MOVEMENT_VERSION:   {"movement"},
+            GLOBAL_EVIDENCE_ACCESS_VERSION:     {"access"},
+        }
+        _SUBPASS_PROMPTS: dict[str, str] = {
+            GLOBAL_EVIDENCE_SPATIAL_VERSION:    SPATIAL_CLAIMS_SYSTEM_PROMPT,
+            GLOBAL_EVIDENCE_VISUAL_VERSION:     VISUAL_CLAIMS_SYSTEM_PROMPT,
+            GLOBAL_EVIDENCE_TRAVELRULE_VERSION: TRAVELRULE_SYSTEM_PROMPT,
+            GLOBAL_EVIDENCE_MOVEMENT_VERSION:   MOVEMENT_SYSTEM_PROMPT,
+            GLOBAL_EVIDENCE_ACCESS_VERSION:     ACCESS_SYSTEM_PROMPT,
+        }
+
+        all_candidates: list[RawCandidate] = []
+        total_in = 0
+        total_out = 0
+
+        for version, system_prompt in _SUBPASS_PROMPTS.items():
+            allowed_kinds = _SUBPASS_ALLOWED[version]
+            try:
+                resp = self._client.chat.completions.create(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_content},
+                    ],
+                    response_format={"type": "json_object"},
+                    max_tokens=4096,
+                )
+                raw_text = resp.choices[0].message.content
+                try:
+                    in_tok = int(resp.usage.prompt_tokens)
+                    out_tok = int(resp.usage.completion_tokens)
+                except (AttributeError, TypeError, ValueError):
+                    in_tok = out_tok = 0
+                total_in += in_tok
+                total_out += out_tok
+
+                parsed = json.loads(raw_text)
+                raw_list = parsed.get("candidates", [])
+                if not isinstance(raw_list, list):
+                    raw_list = []
+            except (json.JSONDecodeError, Exception) as exc:
+                _log.warning("Evidence sub-pass %s failed: %s", version, exc)
+                continue
+
+            for raw in raw_list:
+                if not isinstance(raw, dict):
+                    continue
+                status = raw.get("status", "")
+                if status not in _VALID_STATUSES:
+                    continue
+                kind = raw.get("kind", "")
+                if kind not in allowed_kinds:
+                    continue
+                temporal = raw.get("temporal_interpretation", "static")
+                if temporal not in _VALID_TEMPORAL:
+                    temporal = "static"
+                all_candidates.append(RawCandidate(
+                    kind=kind,
+                    payload=raw.get("payload", {}),
+                    status=status,
+                    confidence=float(raw.get("confidence", 0.5)),
+                    excerpt=str(raw.get("excerpt", "")),
+                    rationale=str(raw.get("rationale", "")),
+                    temporal_interpretation=temporal,
+                ))
+
+        return all_candidates, total_in, total_out
 
     def extract_catalog_only(
         self,
@@ -339,74 +385,19 @@ class OpenAIExtractionProvider:
         section: SourceSection,
         global_catalog: list[dict],
     ) -> ExtractionResult:
-        """Global evidence pass: extract claims/visual/routes using full global catalog."""
-        evidence_user = EVIDENCE_USER_TEMPLATE.format(
-            section_order=section.ordinal,
-            title=section.title or "(untitled)",
-            text=section.text or "",
-            place_catalog_json=json.dumps(
-                [{"name": e["name"], "type": e.get("type", "")} for e in global_catalog],
-                ensure_ascii=False,
-            ),
+        """Global evidence pass: 5 focused sub-passes using the full global catalog."""
+        candidates, total_in, total_out = self._run_evidence_subpasses(
+            section=section,
+            full_catalog_list=global_catalog,
         )
-        resp = self._client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": EVIDENCE_SYSTEM_PROMPT},
-                {"role": "user", "content": evidence_user},
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=8192,
-        )
-        raw_text = resp.choices[0].message.content
-        parsed: dict = {}
-        raw_evidence: list = []
-        try:
-            parsed = json.loads(raw_text)
-            raw_ev = parsed.get("candidates", [])
-            raw_evidence = raw_ev if isinstance(raw_ev, list) else []
-        except json.JSONDecodeError:
-            _log.warning("Evidence pass failed to parse JSON: %s", raw_text[:500])
-
-        try:
-            input_tokens = int(resp.usage.prompt_tokens)
-            output_tokens = int(resp.usage.completion_tokens)
-        except (AttributeError, TypeError, ValueError):
-            input_tokens = 0
-            output_tokens = 0
-
-        _EVIDENCE_KINDS = {"claim", "travel_rule", "visual_claim", "access", "movement", "scene_anchor"}
-        evidence_candidates: list[RawCandidate] = []
-        for raw in raw_evidence:
-            if not isinstance(raw, dict):
-                continue
-            status = raw.get("status", "")
-            if status not in _VALID_STATUSES:
-                continue
-            kind = raw.get("kind", "")
-            if kind not in _EVIDENCE_KINDS:
-                continue
-            temporal = raw.get("temporal_interpretation", "static")
-            if temporal not in _VALID_TEMPORAL:
-                temporal = "static"
-            evidence_candidates.append(RawCandidate(
-                kind=kind,
-                payload=raw.get("payload", {}),
-                status=status,
-                confidence=float(raw.get("confidence", 0.5)),
-                excerpt=str(raw.get("excerpt", "")),
-                rationale=str(raw.get("rationale", "")),
-                temporal_interpretation=temporal,
-            ))
-
         return ExtractionResult(
-            candidates=evidence_candidates,
-            raw_response={"evidence": parsed},
+            candidates=candidates,
+            raw_response={},
             provider="openai",
             model=self._model,
             prompt_version=GLOBAL_EVIDENCE_VERSION,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
+            input_tokens=total_in,
+            output_tokens=total_out,
         )
 
 

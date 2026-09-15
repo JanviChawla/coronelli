@@ -415,6 +415,13 @@ COMBINED_PROMPT_VERSION = "2.0"
 GLOBAL_CATALOG_VERSION = "3.0-catalog"
 GLOBAL_EVIDENCE_VERSION = "3.2-evidence"
 
+# v4: evidence split into three focused sub-passes
+GLOBAL_EVIDENCE_SPATIAL_VERSION    = "4.0-spatial"    # claim + scene_anchor
+GLOBAL_EVIDENCE_VISUAL_VERSION     = "4.0-visual"     # visual_claim
+GLOBAL_EVIDENCE_TRAVELRULE_VERSION = "4.0-travelrule" # travel_rule
+GLOBAL_EVIDENCE_MOVEMENT_VERSION   = "4.0-movement"   # movement
+GLOBAL_EVIDENCE_ACCESS_VERSION     = "4.0-access"     # access
+
 # ── Pass 1: Place Catalog ─────────────────────────────────────────────────────
 
 CATALOG_SYSTEM_PROMPT = """\
@@ -647,4 +654,247 @@ Section {section_order}: {title}
 
 Place Catalog (cumulative — all places from this and all prior sections of this book):
 {place_catalog_json}
+"""
+
+# ── Evidence sub-passes (v4) — one focused prompt per claim type ──────────────
+# All three share EVIDENCE_SUBPASS_USER_TEMPLATE for the user turn.
+
+EVIDENCE_SUBPASS_USER_TEMPLATE = """\
+Section {section_order}: {title}
+
+{text}
+
+Place Catalog (all confirmed places from this work — only these names are valid targets):
+{place_catalog_json}
+"""
+
+SPATIAL_CLAIMS_SYSTEM_PROMPT = """\
+CORONELLI SPATIAL CLAIMS — Evidence Sub-Pass A of 3
+
+You are reading one section of written fiction. A Place Catalog is provided.
+
+YOUR ONLY TASK: extract spatial relationships between catalog places, and identify
+the scene anchor (where this section opens).
+
+EMIT ONLY these two kinds: claim, scene_anchor.
+Emit NOTHING else — no visual_claim, no travel_rule, no movement, no access.
+
+══════════════════════════════════════════════════════════════
+GOLDEN RULE
+Both the subject AND the object of every claim MUST be names
+from the Place Catalog. If either side is a character, person,
+creature, or any non-place — DISCARD the claim entirely.
+══════════════════════════════════════════════════════════════
+
+PREDICATES:
+  Containment  : CONTAINS, LOCATED_IN, SURROUNDED_BY, IN_OR_ADJACENT_TO
+  Directional  : LEADS_TO, OPENS_TOWARD, DESCENDS_TO, ENDS_AT,
+                 HAS_OPENING, BLOCKS_ACCESS_TO, CONNECTS_TO
+  Proximity    : ADJACENT_TO, NEAR
+  Identity     : SAME_AS  (two catalog entries are the same place)
+  Reach        : REACHED_FROM  (journey narrated, route unspecified)
+  Compass      : NORTH_OF, SOUTH_OF, EAST_OF, WEST_OF,
+                 NORTHEAST_OF, NORTHWEST_OF, SOUTHEAST_OF, SOUTHWEST_OF
+
+CONTAINMENT CHECKLIST — ask for every catalog place in this section:
+  □ Is every room / hall / interior marked LOCATED_IN its parent building?
+  □ Is every building / structure marked LOCATED_IN its settlement?
+  □ Is every settlement marked LOCATED_IN its region or territory?
+  □ Is every region marked LOCATED_IN its world or continent?
+  Emit containment claims even when the text implies rather than states them.
+
+PROXIMITY CHECKLIST — scan for phrases:
+  "not far from", "a few miles from", "near", "beyond", "past",
+  "visible from", "overlooking", "on the outskirts of", "bordering",
+  "a short ride from", "a stone's throw", "on the way to", "lies between"
+  Each such phrase between two catalog places → NEAR or ADJACENT_TO claim.
+
+SAME_AS CHECKLIST — scan for:
+  Any passage that equates two catalog entries as the same physical place → SAME_AS.
+
+OUTPUT: valid JSON only. No markdown, no comments.
+{
+  "candidates": [
+    {
+      "kind": "claim",
+      "status": "explicit",
+      "confidence": 0.88,
+      "temporal_interpretation": "static",
+      "excerpt": "the hollow lies not far from Tarrytown",
+      "rationale": "explicit proximity between two catalog places",
+      "payload": {"subject": "Sleepy Hollow", "predicate": "NEAR", "object": "Tarrytown"}
+    },
+    {
+      "kind": "scene_anchor",
+      "status": "explicit",
+      "confidence": 0.95,
+      "temporal_interpretation": "static",
+      "excerpt": "he crossed the bridge into the village",
+      "rationale": "section opens at this catalog place",
+      "payload": {"place": "Millbrook", "scene_role": "opening"}
+    }
+  ]
+}
+"""
+
+VISUAL_CLAIMS_SYSTEM_PROMPT = """\
+CORONELLI VISUAL CLAIMS — Evidence Sub-Pass B of 3
+
+You are reading one section of written fiction. A Place Catalog is provided.
+
+YOUR ONLY TASK: extract physical observations about catalog places.
+
+EMIT ONLY this kind: visual_claim.
+Emit NOTHING else — no claim, no travel_rule, no movement, no access, no scene_anchor.
+
+A visual_claim captures ONE distinct physical quality of ONE catalog place:
+  color, smell, texture, sound, temperature, light quality, architectural detail,
+  vegetation, water features, scale, atmosphere, decay, structural furnishings
+  (fixed wallpaper, bars on windows, built-in shelves, rings bolted to walls,
+  a waterwheel, a crumbling chimney).
+
+RULES:
+  - One visual_claim per distinct observation — never merge two observations into one.
+  - The subject field must be a name from the Place Catalog.
+  - Include structural / fixed features; exclude portable objects and characters.
+  - category: architecture | terrain | light | weather | color | material |
+               scale | atmosphere | other
+
+COMPLETENESS: For every catalog place that appears in this section, list every
+physical quality the text gives it and emit one visual_claim for each.
+A richly described place with fewer than 3 visual_claims is likely incomplete.
+
+OUTPUT: valid JSON only. No markdown, no comments.
+{
+  "candidates": [
+    {
+      "kind": "visual_claim",
+      "status": "explicit",
+      "confidence": 0.85,
+      "temporal_interpretation": "static",
+      "excerpt": "the hall was lit by a row of hanging lamps",
+      "rationale": "architectural lighting detail for catalog place",
+      "payload": {
+        "subject": "Long Hall",
+        "category": "light",
+        "observation": "lit by a row of lamps hanging from the roof",
+        "section_title": "Chapter 1"
+      }
+    }
+  ]
+}
+"""
+
+TRAVELRULE_SYSTEM_PROMPT = """\
+CORONELLI TRAVEL RULES — Evidence Sub-Pass C of 5
+
+You are reading one section of written fiction. A Place Catalog is provided.
+
+YOUR ONLY TASK: extract reusable traversal routes between catalog places.
+
+EMIT ONLY this kind: travel_rule.
+Emit NOTHING else — no claim, no visual_claim, no movement, no access, no scene_anchor.
+
+A travel_rule describes a route that can be traversed between two or more catalog places —
+a path, road, bridge, or habitual journey that exists as a standing possibility.
+Both ends of every route must be catalog place names.
+
+COMPLETENESS:
+  □ For every journey or path mentioned in this section, ask: does this establish
+    a reusable connection between two catalog places? If yes → emit travel_rule.
+  □ "He always rode from the village to the church" → travel_rule (reusable route).
+  □ A single one-time trip that reveals a connection still qualifies as a travel_rule.
+
+OUTPUT: valid JSON only. No markdown, no comments.
+{
+  "candidates": [
+    {
+      "kind": "travel_rule",
+      "status": "explicit",
+      "confidence": 0.82,
+      "temporal_interpretation": "static",
+      "excerpt": "he rode from the village to the church every Sunday",
+      "rationale": "reusable route between two catalog places",
+      "payload": {"traveler": null, "can_traverse": true, "route": "Millbrook -> Old Church", "condition": null}
+    }
+  ]
+}
+"""
+
+MOVEMENT_SYSTEM_PROMPT = """\
+CORONELLI MOVEMENT — Evidence Sub-Pass D of 5
+
+You are reading one section of written fiction. A Place Catalog is provided.
+
+YOUR ONLY TASK: extract narrated journeys between catalog places.
+
+EMIT ONLY this kind: movement.
+Emit NOTHING else — no claim, no visual_claim, no travel_rule, no access, no scene_anchor.
+
+A movement records a specific narrated journey — a character physically going from one
+catalog place to another within this section. Both from_place and to_place must be
+catalog place names.
+
+COMPLETENESS:
+  □ For every instance where a character travels from one place to another in this
+    section, emit one movement candidate.
+  □ If the journey has intermediate stops (both catalog places), list them in stops[].
+  □ If the mechanism of travel is described (on horseback, by boat), include it.
+
+OUTPUT: valid JSON only. No markdown, no comments.
+{
+  "candidates": [
+    {
+      "kind": "movement",
+      "status": "explicit",
+      "confidence": 0.80,
+      "temporal_interpretation": "static",
+      "excerpt": "she crossed the courtyard and entered the hall",
+      "rationale": "narrated journey from one catalog place to another",
+      "payload": {"traveler": null, "from_place": "Courtyard", "to_place": "Long Hall", "via": null, "mechanism": null, "stops": []}
+    }
+  ]
+}
+"""
+
+ACCESS_SYSTEM_PROMPT = """\
+CORONELLI ACCESS — Evidence Sub-Pass E of 5
+
+You are reading one section of written fiction. A Place Catalog is provided.
+
+YOUR ONLY TASK: extract access conditions — who can or cannot enter a catalog place,
+and under what circumstances.
+
+EMIT ONLY this kind: access.
+Emit NOTHING else — no claim, no visual_claim, no travel_rule, no movement, no scene_anchor.
+
+An access candidate records a stated or strongly implied rule about entry to a catalog place.
+place_name must be a name from the Place Catalog.
+
+access_type:
+  "permitted"    — entry is explicitly allowed or easy
+  "prohibited"   — entry is explicitly forbidden or impossible
+  "conditional"  — entry depends on a stated condition
+
+COMPLETENESS:
+  □ For every catalog place in this section, ask: does the text state or imply a rule
+    about who can enter, under what conditions, or that entry was refused / barred?
+    If yes → emit access.
+  □ Locked doors, guards, enchantments, social barriers, time-of-day restrictions all
+    qualify as conditions.
+
+OUTPUT: valid JSON only. No markdown, no comments.
+{
+  "candidates": [
+    {
+      "kind": "access",
+      "status": "explicit",
+      "confidence": 0.75,
+      "temporal_interpretation": "static",
+      "excerpt": "none but the keeper may enter the inner vault",
+      "rationale": "stated access restriction on a catalog place",
+      "payload": {"place_name": "Inner Vault", "access_type": "prohibited", "condition": "entry restricted to the keeper", "traveler": null}
+    }
+  ]
+}
 """
