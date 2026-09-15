@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { CandidatesTable } from '../candidates/CandidatesTable'
 import { type Candidate, fetchCandidates } from '../candidates/candidateApi'
 import { fetchPreflight, triggerExtraction } from './extractionApi'
@@ -15,7 +16,19 @@ interface Props {
 
 type Phase = 'preflight' | 'ready' | 'extracting' | 'harvested' | 'synthesizing' | 'done' | 'error'
 
-// ── Step chrome components ────────────────────────────────────────────────────
+// ── Step chrome ───────────────────────────────────────────────────────────────
+
+const CIRCLE: CSSProperties = {
+  width: '2rem',
+  height: '2rem',
+  borderRadius: '50%',
+  flexShrink: 0,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  fontSize: '0.8rem',
+  fontWeight: 700,
+}
 
 function StepDone({ label, detail, action }: {
   label: string
@@ -23,11 +36,11 @@ function StepDone({ label, detail, action }: {
   action?: React.ReactNode
 }) {
   return (
-    <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem' }}>
-      <span style={{ minWidth: '1.5rem', color: '#16a34a', fontWeight: 'bold', fontSize: '1.1rem', lineHeight: 1 }}>✓</span>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontWeight: 600 }}>{label}</div>
-        <div style={{ fontSize: '0.82rem', color: '#666', marginTop: '0.15rem' }}>{detail}</div>
+    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
+      <div style={{ ...CIRCLE, background: 'var(--step-done)', color: '#fff', fontSize: '1rem' }}>✓</div>
+      <div style={{ flex: 1, paddingTop: '0.3rem' }}>
+        <div style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--ink)' }}>{label}</div>
+        <div style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', marginTop: '0.1rem' }}>{detail}</div>
         {action && <div style={{ marginTop: '0.5rem' }}>{action}</div>}
       </div>
     </div>
@@ -37,21 +50,18 @@ function StepDone({ label, detail, action }: {
 function StepActive({ n, label, children }: {
   n: number
   label: string
-  children: React.ReactNode
+  children: ReactNode
 }) {
   return (
-    <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem' }}>
-      <span style={{
-        minWidth: '1.5rem', width: '1.5rem', height: '1.5rem',
-        border: '2px solid #111', borderRadius: '50%',
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: '0.72rem', fontWeight: 700, flexShrink: 0, marginTop: '0.05rem',
-        background: '#111', color: '#fff',
-      }}>
-        {n}
-      </span>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontWeight: 600, marginBottom: '0.6rem' }}>{label}</div>
+    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
+      <div style={{ ...CIRCLE, background: 'var(--step-active-circle)', color: '#fff' }}>{n}</div>
+      <div style={{ flex: 1, paddingTop: '0.25rem' }}>
+        <div style={{
+          fontWeight: 600, fontSize: '1.05rem',
+          color: 'var(--step-active-label)', marginBottom: '0.65rem',
+        }}>
+          {label}
+        </div>
         {children}
       </div>
     </div>
@@ -60,20 +70,32 @@ function StepActive({ n, label, children }: {
 
 function StepLocked({ n, label, detail }: { n: number; label: string; detail: string }) {
   return (
-    <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem', opacity: 0.35 }}>
-      <span style={{
-        minWidth: '1.5rem', width: '1.5rem', height: '1.5rem',
-        border: '2px solid #999', borderRadius: '50%',
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: '0.72rem', fontWeight: 700, flexShrink: 0, marginTop: '0.05rem',
-        color: '#999',
-      }}>
-        {n}
-      </span>
-      <div>
-        <div style={{ fontWeight: 600 }}>{label}</div>
-        <div style={{ fontSize: '0.82rem', color: '#888', marginTop: '0.15rem' }}>{detail}</div>
+    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start', opacity: 0.38 }}>
+      <div style={{ ...CIRCLE, border: '2px solid var(--step-locked)', color: 'var(--step-locked)' }}>{n}</div>
+      <div style={{ flex: 1, paddingTop: '0.3rem' }}>
+        <div style={{ fontWeight: 500, fontSize: '0.92rem', color: 'var(--ink-muted)' }}>{label}</div>
+        <div style={{ fontSize: '0.75rem', color: 'var(--ink-faint)', marginTop: '0.1rem' }}>{detail}</div>
       </div>
+    </div>
+  )
+}
+
+function StepConnector() {
+  return (
+    <div style={{ display: 'flex', gap: '1rem', height: '1.5rem', margin: '0.2rem 0' }}>
+      <div style={{ width: '2rem', flexShrink: 0, display: 'flex', justifyContent: 'center' }}>
+        <div style={{ width: '1px', height: '100%', background: 'var(--gold)', opacity: 0.35 }} />
+      </div>
+    </div>
+  )
+}
+
+function Ornament() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', margin: '1rem 0 2rem' }}>
+      <div style={{ flex: 1, height: '1px', background: 'var(--gold)', opacity: 0.3 }} />
+      <span style={{ fontSize: '0.6rem', color: 'var(--gold)', opacity: 0.6 }}>◆</span>
+      <div style={{ flex: 1, height: '1px', background: 'var(--gold)', opacity: 0.3 }} />
     </div>
   )
 }
@@ -105,7 +127,6 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
 
   async function initWorkflow() {
     setPhase('preflight')
-    // Restore synthesis state if a completed run exists
     try {
       const atlas = await fetchProvisionalAtlas(document.id)
       if (atlas.items.length > 0) {
@@ -124,7 +145,6 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
       }
     } catch { /* no synthesis run yet */ }
 
-    // Restore harvested state if candidates exist
     try {
       const bySection: Record<string, Candidate[]> = {}
       let total = 0
@@ -206,7 +226,6 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
     }
   }
 
-  // Derived booleans for step state
   const step3Done = phase === 'harvested' || phase === 'synthesizing' || phase === 'done' || (phase === 'error' && errorInStep === 4)
   const step4Done = phase === 'done'
   const step3Error = phase === 'error' && errorInStep === 3
@@ -214,34 +233,50 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
 
   return (
     <div>
-      <p style={{ fontSize: '0.7rem', color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>
+      {/* Document header */}
+      <p style={{
+        fontSize: '0.62rem', color: 'var(--ink-muted)',
+        textTransform: 'uppercase', letterSpacing: '0.16em', marginBottom: '0.4rem',
+      }}>
         Source work
       </p>
-      <h2 style={{ marginBottom: '2rem' }}>{document.title}</h2>
+      <h2 style={{ fontSize: '1.9rem', fontWeight: 400, color: 'var(--ink)', lineHeight: 1.2 }}>
+        {document.title}
+      </h2>
+      <Ornament />
 
-      {/* ── Step 1: Import source ───────────────────────────────────── */}
+      {/* ── Step 1 ──────────────────────────────────────────────────── */}
       <StepDone label="Import source" detail={document.original_filename} />
+      <StepConnector />
 
-      {/* ── Step 2: Prepare sections ───────────────────────────────── */}
+      {/* ── Step 2 ──────────────────────────────────────────────────── */}
       <StepDone
         label="Prepare sections"
         detail={`${sections.length} section${sections.length !== 1 ? 's' : ''} ready`}
         action={
-          <button type="button" onClick={onEditSections} style={{ fontSize: '0.8rem' }}>
+          <button
+            type="button"
+            className="btn-outline-warm"
+            onClick={onEditSections}
+          >
             Review and edit
           </button>
         }
       />
+      <StepConnector />
 
-      {/* ── Step 3: Harvest evidence ───────────────────────────────── */}
-      {step3Done && (
+      {/* ── Step 3: Harvest evidence ─────────────────────────────────── */}
+      {step3Done ? (
         <StepDone
           label="Harvest evidence"
-          detail={`${totalCandidates} candidate${totalCandidates !== 1 ? 's' : ''} extracted across ${sections.length} sections · ${(totalElapsedMs / 1000).toFixed(1)}s`}
+          detail={`${totalCandidates} candidate${totalCandidates !== 1 ? 's' : ''} across ${sections.length} sections · ${(totalElapsedMs / 1000).toFixed(1)}s`}
           action={
             <details>
-              <summary style={{ fontSize: '0.78rem', color: '#888', cursor: 'pointer' }}>
-                Inspect raw candidates ({totalCandidates})
+              <summary style={{
+                fontSize: '0.78rem', color: 'var(--ink-muted)',
+                cursor: 'pointer', listStyle: 'none',
+              }}>
+                ▸ Inspect raw candidates ({totalCandidates})
               </summary>
               <div style={{ marginTop: '0.75rem' }}>
                 <CandidatesTable
@@ -252,102 +287,120 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
             </details>
           }
         />
-      )}
-
-      {phase === 'preflight' && (
+      ) : step3Error ? (
         <StepActive n={3} label="Harvest evidence">
-          <p style={{ fontSize: '0.85rem', color: '#888' }}>Checking cache and estimating cost…</p>
-        </StepActive>
-      )}
-
-      {phase === 'ready' && (
-        <StepActive n={3} label="Harvest evidence">
-          <p style={{ fontSize: '0.82rem', color: '#555', marginBottom: '0.75rem' }}>
-            Run the extraction model on each section to collect cartographic evidence — places, spatial
-            claims, routes, and visual descriptions — before synthesis begins.
+          <p role="alert" style={{ color: 'var(--error-text)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+            {workflowError}
           </p>
-          {totalCost !== null && (
-            <p style={{ fontSize: '0.82rem', color: '#555', marginBottom: '0.75rem' }}>
-              Estimated cost: <strong>${totalCost.toFixed(4)}</strong>
-              {' · '}{sections.length} section{sections.length !== 1 ? 's' : ''} · OpenAI
-              {cachedCount > 0 && <> · {cachedCount} cached</>}
-            </p>
-          )}
-          <button type="button" onClick={handleHarvest} style={{ fontWeight: 600 }}>
-            Harvest evidence
+          <button className="btn-cta" style={{ maxWidth: '200px' }} type="button" onClick={handleHarvest}>
+            Retry
           </button>
-          <p style={{ fontSize: '0.75rem', color: '#999', marginTop: '0.4rem' }}>
-            Results stay local until you export.
-          </p>
         </StepActive>
-      )}
-
-      {phase === 'extracting' && (
+      ) : phase === 'extracting' ? (
         <StepActive n={3} label="Harvest evidence">
-          <p style={{ fontSize: '0.85rem', marginBottom: '0.2rem' }}>
+          <p style={{ fontSize: '0.85rem', color: 'var(--ink-muted)', marginBottom: '0.2rem' }}>
             Section {currentIdx} of {sections.length}
             {currentTitle && <> · <em>{currentTitle}</em></>}
             {' · '}{(elapsedMs / 1000).toFixed(1)}s
           </p>
-          <p style={{ fontSize: '0.82rem', color: '#666' }}>
+          <p style={{ fontSize: '0.82rem', color: 'var(--ink-faint)' }}>
             {candidatesSoFar} candidate{candidatesSoFar !== 1 ? 's' : ''} so far
           </p>
         </StepActive>
-      )}
-
-      {step3Error && (
+      ) : phase === 'ready' ? (
         <StepActive n={3} label="Harvest evidence">
-          <p role="alert" style={{ color: '#dc2626', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
-            {workflowError}
+          <p style={{ fontSize: '0.82rem', color: 'var(--ink-muted)', marginBottom: '1rem', lineHeight: 1.55 }}>
+            Run the extraction model on each section to collect cartographic evidence —
+            places, spatial claims, routes, and visual descriptions — before synthesis begins.
           </p>
-          <button type="button" onClick={handleHarvest}>Retry</button>
+          <div style={{
+            border: '1px solid var(--border-warm)',
+            borderRadius: '6px',
+            background: 'var(--parchment-card)',
+            padding: '1.25rem 1.5rem',
+            marginBottom: '0.6rem',
+          }}>
+            <p style={{
+              fontSize: '0.58rem', color: 'var(--ink-muted)',
+              letterSpacing: '0.16em', textTransform: 'uppercase',
+              textAlign: 'center', marginBottom: '0.5rem',
+            }}>
+              Estimated extraction cost
+            </p>
+            <p style={{ textAlign: 'center', marginBottom: '0.5rem' }}>
+              {totalCost !== null ? (
+                <span style={{ fontSize: '1.75rem', color: 'var(--ink)', fontWeight: 400 }}>
+                  ${(totalCost * 0.85).toFixed(2)} – ${(totalCost * 1.15).toFixed(2)}
+                </span>
+              ) : (
+                <span style={{ fontSize: '1.1rem', color: 'var(--ink-faint)' }}>Estimating…</span>
+              )}
+            </p>
+            <p style={{
+              fontSize: '0.7rem', color: 'var(--ink-faint)',
+              textAlign: 'center', fontFamily: 'monospace', marginBottom: '1.1rem',
+            }}>
+              {document.original_filename} · {sections.length} section{sections.length !== 1 ? 's' : ''} · OpenAI provider
+              {cachedCount > 0 && ` · ${cachedCount} cached`}
+            </p>
+            <button className="btn-cta" type="button" onClick={handleHarvest}>
+              Harvest evidence
+            </button>
+          </div>
+          <p style={{ fontSize: '0.7rem', color: 'var(--ink-faint)', textAlign: 'center' }}>
+            ● Results stay local until you export.
+          </p>
+        </StepActive>
+      ) : (
+        <StepActive n={3} label="Harvest evidence">
+          <p style={{ fontSize: '0.82rem', color: 'var(--ink-faint)' }}>
+            Checking sections and estimating cost…
+          </p>
         </StepActive>
       )}
+      <StepConnector />
 
-      {/* ── Step 4: Synthesize atlas ───────────────────────────────── */}
-      {step4Done && (
+      {/* ── Step 4: Synthesize atlas ─────────────────────────────────── */}
+      {step4Done ? (
         <StepDone
           label="Synthesize atlas"
           detail={`${synthesisItems.length} synthesis item${synthesisItems.length !== 1 ? 's' : ''} produced${synthesisFromCache ? ' · from cache' : ''}`}
         />
-      )}
-
-      {phase === 'harvested' && (
+      ) : step4Error ? (
         <StepActive n={4} label="Synthesize atlas">
-          <p style={{ fontSize: '0.82rem', color: '#555', marginBottom: '0.75rem' }}>
+          <p role="alert" style={{ color: 'var(--error-text)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+            {workflowError}
+          </p>
+          <button className="btn-cta" style={{ maxWidth: '200px' }} type="button" onClick={() => handleSynthesize(false)}>
+            Retry
+          </button>
+        </StepActive>
+      ) : phase === 'synthesizing' ? (
+        <StepActive n={4} label="Synthesize atlas">
+          <p style={{ fontSize: '0.82rem', color: 'var(--ink-faint)' }}>
+            Synthesizing — this may take a moment…
+          </p>
+        </StepActive>
+      ) : phase === 'harvested' ? (
+        <StepActive n={4} label="Synthesize atlas">
+          <p style={{ fontSize: '0.82rem', color: 'var(--ink-muted)', marginBottom: '1rem', lineHeight: 1.55 }}>
             Stage 2 reads all {totalCandidates} evidence fragment{totalCandidates !== 1 ? 's' : ''} in one pass
             and produces a consolidated provisional atlas — merging duplicates, proposing same-as
             identities, surfacing contradictions, and tracking where each place is first revealed.
           </p>
-          <button type="button" onClick={() => handleSynthesize(false)} style={{ fontWeight: 600 }}>
+          <button className="btn-cta" style={{ maxWidth: '240px' }} type="button" onClick={() => handleSynthesize(false)}>
             Synthesize atlas
           </button>
         </StepActive>
-      )}
-
-      {phase === 'synthesizing' && (
-        <StepActive n={4} label="Synthesize atlas">
-          <p style={{ fontSize: '0.85rem', color: '#888' }}>Synthesizing — this may take a moment…</p>
-        </StepActive>
-      )}
-
-      {step4Error && (
-        <StepActive n={4} label="Synthesize atlas">
-          <p role="alert" style={{ color: '#dc2626', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
-            {workflowError}
-          </p>
-          <button type="button" onClick={() => handleSynthesize(false)}>Retry</button>
-        </StepActive>
-      )}
-
-      {!step3Done && !step3Error && !step4Error && (
+      ) : (
         <StepLocked n={4} label="Synthesize atlas" detail="Reads all harvested evidence in one pass and consolidates it into a provisional atlas." />
       )}
+      <StepConnector />
 
-      {/* ── Step 5: Review provisional atlas ──────────────────────── */}
+      {/* ── Step 5: Review provisional atlas ─────────────────────────── */}
       {step4Done ? (
         <StepActive n={5} label="Review provisional atlas">
-          <p style={{ fontSize: '0.82rem', color: '#555', marginBottom: '0.75rem' }}>
+          <p style={{ fontSize: '0.82rem', color: 'var(--ink-muted)', marginBottom: '0.85rem', lineHeight: 1.55 }}>
             Approve, reject, or defer each synthesis item. Approved places and claims are written
             to the atlas. Same-as approvals merge duplicate entities. This step is iterative — you
             can re-synthesize at any time.
@@ -362,15 +415,20 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
       ) : (
         <StepLocked n={5} label="Review provisional atlas" detail="Approve, reject, or defer synthesis items. Same-as proposals merge entities; reveal events anchor places to their first chapter." />
       )}
+      <StepConnector />
 
-      {/* ── Step 6: Approved atlas ─────────────────────────────────── */}
+      {/* ── Step 6: Approved atlas ────────────────────────────────────── */}
       {step4Done ? (
         <StepActive n={6} label="Approved atlas">
-          <p style={{ fontSize: '0.82rem', color: '#555', marginBottom: '0.75rem' }}>
+          <p style={{ fontSize: '0.82rem', color: 'var(--ink-muted)', marginBottom: '0.85rem', lineHeight: 1.55 }}>
             The canonical atlas built from approved items. Export as an Atlas Package (JSON) to use
             in downstream tools or share with collaborators.
           </p>
-          <ApprovedAtlasView documentId={document.id} documentTitle={document.title} refreshSignal={atlasRefreshKey} />
+          <ApprovedAtlasView
+            documentId={document.id}
+            documentTitle={document.title}
+            refreshSignal={atlasRefreshKey}
+          />
         </StepActive>
       ) : (
         <StepLocked n={6} label="Approved atlas" detail="The canonical place graph built from your review decisions. Export as an Atlas Package when ready." />
