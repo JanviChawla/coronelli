@@ -2,7 +2,9 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session
 
+from app.db.models import SourceSection
 from app.domain.world import MapClaim, MapEntity, MapTravelRule
+from app.extraction.models import Candidate
 from app.synthesis.models import SynthesisItem
 
 _VALID_ACTIONS = {"approve", "reject", "defer", "challenge"}
@@ -29,6 +31,29 @@ class SynthesisReviewResult:
 
 # ── Per-kind approval helpers ─────────────────────────────────────────────────
 
+def _find_provenance_section(session: Session, document_id: str, name: str) -> str | None:
+    """Return the id of the earliest section containing a candidate that names this entity."""
+    name_lower = name.lower()
+    sections = (
+        session.query(SourceSection)
+        .filter(SourceSection.document_id == document_id)
+        .order_by(SourceSection.ordinal)
+        .all()
+    )
+    for section in sections:
+        candidates = (
+            session.query(Candidate)
+            .filter(Candidate.section_id == section.id)
+            .all()
+        )
+        for c in candidates:
+            p = c.payload or {}
+            candidate_names = [p.get("name", ""), p.get("subject", ""), p.get("object", "")]
+            if any(n and n.lower() == name_lower for n in candidate_names):
+                return section.id
+    return None
+
+
 def _find_or_create_entity(session: Session, document_id: str, name: str, place_kind: str | None, payload: dict) -> MapEntity:
     existing = (
         session.query(MapEntity)
@@ -49,7 +74,7 @@ def _find_or_create_entity(session: Session, document_id: str, name: str, place_
         status="explicit",
         state="active",
         provenance_document_id=document_id,
-        provenance_section_id=None,
+        provenance_section_id=_find_provenance_section(session, document_id, name),
         candidate_id=None,
         payload=payload,
         aliases=list(payload.get("aliases") or []),
@@ -174,7 +199,6 @@ def _approve_reveal_event(session: Session, document_id: str, payload: dict) -> 
         return
 
     if entity.provenance_section_id is None and section_ordinal is not None:
-        from app.db.models import SourceSection  # noqa: PLC0415
         section = (
             session.query(SourceSection)
             .filter(

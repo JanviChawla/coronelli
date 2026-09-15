@@ -240,6 +240,7 @@ export function SourceLibrary() {
           ) : view === 'atlas-explorer' ? (
             <AtlasExplorer
               documentId={selected.id}
+              sections={sections}
               onSelect={setInspectorTarget}
               onAtlasLoaded={handleAtlasLoaded}
             />

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ReactFlow,
   Background,
@@ -41,6 +41,7 @@ async function elkLayout(
   nodes: DiagramNode[],
   edges: DiagramEdge[],
 ): Promise<Record<string, { x: number; y: number }>> {
+  if (nodes.length === 0) return {}
   const graph = {
     id: 'root',
     layoutOptions: {
@@ -173,30 +174,59 @@ function edgeProps(style: DiagramEdge['style']) {
 interface InnerProps {
   vm: DiagramViewModel
   filters: FilterState
+  cursor: number
+  sectionOrder: Map<string, number>
   onSelect: (t: InspectorTarget) => void
-  allEntities: Map<string, { visualClaims: ReturnType<typeof Array.prototype.filter> }>
+  allEntities: Map<string, { visualClaims: unknown[] }>
 }
 
-function InnerDiagram({ vm, filters, onSelect, allEntities }: InnerProps) {
+function InnerDiagram({ vm, filters, cursor, sectionOrder, onSelect, allEntities }: InnerProps) {
   const { fitView } = useReactFlow()
+  const [positions, setPositions] = useState<Record<string, { x: number; y: number }> | null>(null)
   const [rfNodes, setRfNodes] = useState<RFNode[]>([])
   const [rfEdges, setRfEdges] = useState<RFEdge[]>([])
   const [laying, setLaying] = useState(true)
 
+  // Phase 1: run ELK once on the full graph for stable positions
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    const { nodes, edges } = applyFilters(vm, filters)
-    if (nodes.length === 0) { setRfNodes([]); setRfEdges([]); setLaying(false); return }
-
     setLaying(true)
-    elkLayout(nodes, edges).then(positions => {
-      setRfNodes(nodes.map(n => ({
-        id: n.id,
-        type: n.kind,
-        position: positions[n.id] ?? { x: 0, y: 0 },
-        data: n,
-      })))
+    elkLayout(vm.nodes, vm.edges).then(pos => {
+      setPositions(pos)
+      setLaying(false)
+      setTimeout(() => fitView({ padding: 0.15, duration: 300 }), 50)
+    })
+  }, [vm])
 
-      setRfEdges(edges.map(e => ({
+  // Phase 2: apply filter + cursor visibility without re-running ELK
+  useEffect(() => {
+    if (!positions) return
+
+    const { nodes: filteredNodes, edges: filteredEdges } = applyFilters(vm, filters)
+    const filteredNodeIds = new Set(filteredNodes.map(n => n.id))
+    const filteredEdgeIds = new Set(filteredEdges.map(e => e.id))
+
+    const visibleNodeIds = new Set<string>()
+    for (const n of vm.nodes) {
+      if (!filteredNodeIds.has(n.id)) continue
+      // Null revealSectionId → treat as revealed at section 0 (show from start)
+      const revealIdx = n.revealSectionId !== null
+        ? (sectionOrder.get(n.revealSectionId) ?? 0)
+        : 0
+      if (revealIdx <= cursor) visibleNodeIds.add(n.id)
+    }
+
+    setRfNodes(vm.nodes.map(n => ({
+      id: n.id,
+      type: n.kind,
+      position: positions[n.id] ?? { x: 0, y: 0 },
+      data: n,
+      hidden: !visibleNodeIds.has(n.id),
+    })))
+
+    setRfEdges(vm.edges.map(e => {
+      const ep = edgeProps(e.style)
+      return {
         id: e.id,
         source: e.source,
         target: e.target,
@@ -205,13 +235,13 @@ function InnerDiagram({ vm, filters, onSelect, allEntities }: InnerProps) {
         labelShowBg: true,
         labelBgStyle: { fill: '#f5ede0', fillOpacity: 0.85 },
         data: e,
-        ...edgeProps(e.style),
-      })))
-
-      setLaying(false)
-      setTimeout(() => fitView({ padding: 0.15, duration: 300 }), 50)
-    })
-  }, [vm, filters])
+        hidden: !filteredEdgeIds.has(e.id)
+          || !visibleNodeIds.has(e.source)
+          || !visibleNodeIds.has(e.target),
+        ...ep,
+      }
+    }))
+  }, [positions, vm, filters, cursor, sectionOrder])
 
   const onNodeClick = useCallback((_: unknown, node: RFNode) => {
     const diagNode = node.data as DiagramNode
@@ -288,6 +318,63 @@ function FilterBar({ filters, onChange }: { filters: FilterState; onChange: (f: 
   )
 }
 
+// ── Narrative scrubber ────────────────────────────────────────────────────────
+
+function NarrativeScrubber({
+  sections,
+  cursor,
+  onChange,
+}: {
+  sections: Array<{ id: string; title: string }>
+  cursor: number
+  onChange: (n: number) => void
+}) {
+  const total = sections.length
+  if (total === 0) return null
+  const section = sections[cursor]
+
+  return (
+    <div style={{
+      position: 'absolute', bottom: '1.85rem', left: '50%', transform: 'translateX(-50%)',
+      zIndex: 10, display: 'flex', alignItems: 'center', gap: '0.5rem',
+      background: 'var(--parchment)', border: '1px solid var(--border-warm)',
+      borderRadius: '4px', padding: '0.3rem 0.75rem',
+      boxShadow: '0 1px 4px rgba(0,0,0,0.1)', userSelect: 'none',
+    }}>
+      <button
+        onClick={() => onChange(Math.max(0, cursor - 1))}
+        disabled={cursor === 0}
+        aria-label="Previous section"
+        style={{
+          background: 'none', border: 'none', lineHeight: 1, padding: '0 0.15rem',
+          fontSize: '1.1rem', cursor: cursor === 0 ? 'default' : 'pointer',
+          color: cursor === 0 ? 'var(--ink-faint)' : 'var(--ink)',
+        }}
+      >
+        ‹
+      </button>
+      <span style={{ minWidth: '18rem', textAlign: 'center', fontSize: '0.68rem', color: 'var(--ink-muted)' }}>
+        <span style={{ color: 'var(--gold)', marginRight: '0.45rem', fontSize: '0.62rem' }}>
+          § {cursor + 1} / {total}
+        </span>
+        <span style={{ color: 'var(--ink)', fontWeight: 500 }}>{section?.title ?? ''}</span>
+      </span>
+      <button
+        onClick={() => onChange(Math.min(total - 1, cursor + 1))}
+        disabled={cursor === total - 1}
+        aria-label="Next section"
+        style={{
+          background: 'none', border: 'none', lineHeight: 1, padding: '0 0.15rem',
+          fontSize: '1.1rem', cursor: cursor === total - 1 ? 'default' : 'pointer',
+          color: cursor === total - 1 ? 'var(--ink-faint)' : 'var(--ink)',
+        }}
+      >
+        ›
+      </button>
+    </div>
+  )
+}
+
 // ── Legend ────────────────────────────────────────────────────────────────────
 
 function Legend() {
@@ -332,7 +419,7 @@ function Legend() {
 function Disclaimer() {
   return (
     <div style={{
-      position: 'absolute', bottom: '0.5rem', left: '50%', transform: 'translateX(-50%)',
+      position: 'absolute', bottom: '0.3rem', left: '50%', transform: 'translateX(-50%)',
       zIndex: 10, fontSize: '0.58rem', color: 'var(--ink-faint)',
       letterSpacing: '0.04em', whiteSpace: 'nowrap', pointerEvents: 'none',
     }}>
@@ -345,20 +432,30 @@ function Disclaimer() {
 
 interface Props {
   documentId: string
+  sections: Array<{ id: string; title: string }>
   onSelect: (t: InspectorTarget) => void
   onAtlasLoaded: (entityCount: number) => void
 }
 
-export function AtlasExplorer({ documentId, onSelect, onAtlasLoaded }: Props) {
+export function AtlasExplorer({ documentId, sections, onSelect, onAtlasLoaded }: Props) {
   const [vm, setVm] = useState<DiagramViewModel | null>(null)
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS)
   const [allEntities, setAllEntities] = useState<Map<string, { visualClaims: unknown[] }>>(new Map())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [cursor, setCursor] = useState(0)
+
+  // Map from section id → index in the sections array (= narrative order)
+  const sectionOrder = useMemo(() => {
+    const map = new Map<string, number>()
+    sections.forEach((s, i) => map.set(s.id, i))
+    return map
+  }, [sections])
 
   useEffect(() => {
     setLoading(true)
     setError(null)
+    setCursor(0)
     onSelect(null)
     fetchAtlas(documentId)
       .then(atlas => {
@@ -373,6 +470,22 @@ export function AtlasExplorer({ documentId, onSelect, onAtlasLoaded }: Props) {
       .catch(e => setError(e instanceof Error ? e.message : 'Failed to load atlas'))
       .finally(() => setLoading(false))
   }, [documentId])
+
+  // Arrow key navigation
+  useEffect(() => {
+    if (!sections.length) return
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        setCursor(c => Math.min(sections.length - 1, c + 1))
+        e.preventDefault()
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        setCursor(c => Math.max(0, c - 1))
+        e.preventDefault()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [sections.length])
 
   if (loading) {
     return (
@@ -404,9 +517,17 @@ export function AtlasExplorer({ documentId, onSelect, onAtlasLoaded }: Props) {
     <div style={{ position: 'relative', height: '100%' }}>
       <FilterBar filters={filters} onChange={setFilters} />
       <ReactFlowProvider>
-        <InnerDiagram vm={vm} filters={filters} onSelect={onSelect} allEntities={allEntities} />
+        <InnerDiagram
+          vm={vm}
+          filters={filters}
+          cursor={cursor}
+          sectionOrder={sectionOrder}
+          onSelect={onSelect}
+          allEntities={allEntities}
+        />
       </ReactFlowProvider>
       <Legend />
+      <NarrativeScrubber sections={sections} cursor={cursor} onChange={setCursor} />
       <Disclaimer />
     </div>
   )

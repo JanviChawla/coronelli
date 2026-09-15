@@ -67,9 +67,9 @@ Payload: {"description": str, "evidence_a": str, "evidence_b": str}
 - Prefer to surface contradictions rather than guess a resolution.
 
 ### 7. reveal_event
-The section where a significant place is first unambiguously revealed.
+The section where a place entity is first unambiguously revealed.
 Payload: {"entity_name": str, "section_title": str, "section_ordinal": int, "excerpt": str}
-- Emit one reveal_event per significant entity (use the earliest section_ordinal where it appears).
+- Emit one reveal_event for every entity item you produce (use the earliest section_ordinal where it appears).
 - Use scene_anchor candidates as strong signals for reveal_events.
 
 ## OUTPUT CONTRACT
@@ -92,7 +92,7 @@ rationale: one sentence explaining what evidence supports this item.
 2. RESOLVE MENTIONS: If evidence suggests two names refer to the same place, emit a same_as item.
 3. PROMOTE CORROBORATED CLAIMS: If ≥2 sections corroborate an inferred claim, promote it.
 4. SURFACE CONTRADICTIONS: If evidence conflicts, emit an unresolved item rather than guessing.
-5. TEMPORAL FIRST MENTION: Emit a reveal_event for each significant entity at its earliest section.
+5. TEMPORAL FIRST MENTION: Emit a reveal_event for every entity item you produce, at its earliest section_ordinal.
 6. ROUTES OVER RULES: Consolidate travel_rule candidates into route items.
 7. SCENE ANCHORS: Use scene_anchor candidates (especially role=opening or role=ending) as reveal_event signals.
 8. MINIMUM COVERAGE: If the ledger contains evidence for entity, claim, route, and visual_claim, produce at least one of each.
