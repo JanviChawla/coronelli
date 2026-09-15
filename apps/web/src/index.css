@@ -157,23 +157,10 @@ button, input, select, textarea { font-family: inherit; }
     radial-gradient(ellipse 85% 75% at 50% 48%, transparent 25%, rgba(148,108,42,0.16) 100%);
 }
 
-/* ── Sidebar brand block — botanical ornament ────────────────────────────── */
+/* ── Sidebar brand block ─────────────────────────────────────────────────── */
 
 .sidebar-brand {
   position: relative;
-  overflow: hidden;
-}
-
-.sidebar-brand::after {
-  content: '❦';
-  position: absolute;
-  top: -0.25rem;
-  right: 0.6rem;
-  font-size: 4.5rem;
-  color: rgba(201, 168, 76, 0.065);
-  pointer-events: none;
-  user-select: none;
-  line-height: 1;
 }
 
 /* ── Sidebar document items — book-spine selection style ─────────────────── */
