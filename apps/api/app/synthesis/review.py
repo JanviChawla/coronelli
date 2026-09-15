@@ -5,12 +5,13 @@ from sqlalchemy.orm import Session
 from app.domain.world import MapClaim, MapEntity, MapTravelRule
 from app.synthesis.models import SynthesisItem
 
-_VALID_ACTIONS = {"approve", "reject", "defer"}
+_VALID_ACTIONS = {"approve", "reject", "defer", "challenge"}
 
 _ACTION_TO_STATE = {
     "approve": "approved",
     "reject": "rejected",
     "defer": "deferred",
+    "challenge": "challenged",
 }
 
 
@@ -223,6 +224,24 @@ def review_synthesis_item(
             _approve_reveal_event(session, document_id, payload)
         # unresolved: no domain write
 
+    elif action == "challenge":
+        document_id = item.document_id
+        payload = item.payload
+
+        if item.kind == "entity":
+            entity = _approve_entity(session, document_id, payload)
+        elif item.kind == "claim":
+            claim = _approve_claim(session, document_id, payload, "spatial")
+        elif item.kind == "route":
+            travel_rule = _approve_route(session, document_id, payload)
+        elif item.kind == "visual_claim":
+            claim = _approve_claim(session, document_id, payload, "visual")
+        elif item.kind == "same_as":
+            entity = _approve_same_as(session, document_id, payload)
+        elif item.kind == "reveal_event":
+            _approve_reveal_event(session, document_id, payload)
+        # unresolved: no domain write
+
     item.review_state = _ACTION_TO_STATE[action]
     session.commit()
 
@@ -256,3 +275,28 @@ def approve_all_synthesis_entities(
         except SynthesisReviewError:
             pass
     return approved
+
+
+def accept_all_synthesis_items(
+    session: Session,
+    document_id: str,
+    kind: str,
+) -> int:
+    items = (
+        session.query(SynthesisItem)
+        .filter(
+            SynthesisItem.document_id == document_id,
+            SynthesisItem.kind == kind,
+            SynthesisItem.review_state == "provisional",
+        )
+        .order_by(SynthesisItem.ordinal)
+        .all()
+    )
+    accepted = 0
+    for item in items:
+        try:
+            review_synthesis_item(session, item.id, "approve")
+            accepted += 1
+        except SynthesisReviewError:
+            pass
+    return accepted

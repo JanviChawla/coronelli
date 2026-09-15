@@ -47,7 +47,7 @@ VALID_ENTITY = {
 
 VALID_CLAIM = {
     "kind": "claim",
-    "payload": {"subject": "Neverland", "predicate": "surrounded_by", "object": "sea"},
+    "payload": {"subject": "Neverland", "predicate": "SURROUNDED_BY", "object": "sea"},
     "status": "inferred",
     "confidence": 0.75,
     "excerpt": "surrounded by the sea",

@@ -148,9 +148,9 @@ character changes size, or an earlier place is no longer visible.
 
 ALLOWED ENTITY TYPES
 
-Use only: world, region, settlement, landmark, building, room, hall, tunnel, \
-shaft, passage, portal, door, exterior, terrain_feature, body_of_water, site, \
-court, barrier.
+Use only: world, region, island, settlement, landmark, building, room, hall, \
+tunnel, shaft, passage, portal, door, exterior, terrain_feature, body_of_water, \
+site, court, barrier.
 
 Use the narrowest supported type. A large garden is a site or exterior, not a \
 region. A hall is a hall, not a room. A named house with internal rooms is a \
@@ -184,6 +184,12 @@ distances, scale, road networks, or a complete layout.
   adjacency is not.
 - BLOCKS_ACCESS_TO: a barrier/opening/condition-bearing spatial feature -> \
   a place currently inaccessible through it.
+- SURROUNDED_BY: a place or region -> the enclosing terrain, water, or zone \
+  that fully encircles it (e.g. an island surrounded by sea).
+- NORTH_OF / SOUTH_OF / EAST_OF / WEST_OF: absolute compass placement when \
+  the source text explicitly states a direction. Do NOT invent compass bearings; \
+  do NOT use these for relative terms like "to the right" or "nearby". \
+  Also NORTHEAST_OF, NORTHWEST_OF, SOUTHEAST_OF, SOUTHWEST_OF.
 
 KNOWN-ENTITY RULES
 

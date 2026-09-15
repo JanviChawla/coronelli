@@ -159,7 +159,7 @@ def test_world_state_change_stored(db, doc_and_sections):
                 candidates=[
                     RawCandidate(
                         kind="claim",
-                        payload={"subject": "The Forest", "predicate": "BLOCKS", "object": "North Road"},
+                        payload={"subject": "The Forest", "predicate": "BLOCKS_ACCESS_TO", "object": "North Road"},
                         status="explicit",
                         confidence=0.85,
                         excerpt="the forest had burned",
@@ -186,7 +186,7 @@ def test_knowledge_revision_stored(db, doc_and_sections):
                 candidates=[
                     RawCandidate(
                         kind="claim",
-                        payload={"subject": "The Forest", "predicate": "NORTH_OF", "object": "Village"},
+                        payload={"subject": "The Forest", "predicate": "NEAR", "object": "Village"},
                         status="inferred",
                         confidence=0.7,
                         excerpt="lay to the north",
@@ -215,7 +215,7 @@ def test_supersedes_relation_stored(db, doc_and_sections):
                 candidates=[
                     RawCandidate(
                         kind="claim",
-                        payload={"subject": "North Road", "predicate": "ACCESSIBLE_FROM", "object": "Village"},
+                        payload={"subject": "North Road", "predicate": "REACHED_FROM", "object": "Village"},
                         status="explicit",
                         confidence=0.9,
                         excerpt="The great forest lay to the north",
@@ -237,7 +237,7 @@ def test_supersedes_relation_stored(db, doc_and_sections):
                 candidates=[
                     RawCandidate(
                         kind="claim",
-                        payload={"subject": "North Road", "predicate": "BLOCKS", "object": "Village"},
+                        payload={"subject": "North Road", "predicate": "BLOCKS_ACCESS_TO", "object": "Village"},
                         status="explicit",
                         confidence=0.95,
                         excerpt="the forest had burned",
@@ -268,7 +268,7 @@ def test_contradicts_relation_stored(db, doc_and_sections):
                 candidates=[
                     RawCandidate(
                         kind="claim",
-                        payload={"subject": "The Forest", "predicate": "SOUTH_OF", "object": "Village"},
+                        payload={"subject": "The Forest", "predicate": "NEAR", "object": "Village"},
                         status="inferred",
                         confidence=0.6,
                         excerpt="forest had burned",

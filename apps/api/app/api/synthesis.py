@@ -9,7 +9,7 @@ from app.db.engine import get_db
 from app.domain.world import MapClaim, MapEntity, MapTravelRule
 from app.synthesis.models import SynthesisItem, SynthesisRun
 from app.synthesis.provider import SynthesisNotConfiguredError, get_synthesis_provider
-from app.synthesis.review import SynthesisReviewError, approve_all_synthesis_entities, review_synthesis_item
+from app.synthesis.review import SynthesisReviewError, accept_all_synthesis_items, approve_all_synthesis_entities, review_synthesis_item
 from app.synthesis.service import run_synthesis
 
 router = APIRouter(tags=["synthesis"])
@@ -77,7 +77,7 @@ class MapTravelRuleOut(BaseModel):
 
 
 class SynthesisReviewRequest(BaseModel):
-    action: str  # approve | reject | defer
+    action: str  # approve | reject | defer | challenge
 
 
 class SynthesisReviewResponse(BaseModel):
@@ -208,3 +208,13 @@ def batch_approve_entities(
 ) -> dict:
     approved = approve_all_synthesis_entities(db, document_id)
     return {"approved": approved, "document_id": document_id}
+
+
+@router.post("/api/documents/{document_id}/synthesis-items/accept-all", status_code=200)
+def bulk_accept_items(
+    document_id: str,
+    kind: str = Query(..., description="synthesis item kind to accept"),
+    db: Session = Depends(get_db),
+) -> dict:
+    accepted = accept_all_synthesis_items(db, document_id, kind)
+    return {"accepted": accepted, "kind": kind, "document_id": document_id}

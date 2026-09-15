@@ -19,7 +19,6 @@ export function SourceLibrary() {
   const [selected, setSelected] = useState<Document | null>(null)
   const [sections, setSections] = useState<Section[]>([])
   const [view, setView] = useState<View>('workflow')
-  const [category, setCategory] = useState<'demo' | 'private'>('demo')
   const [error, setError] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -48,7 +47,7 @@ export function SourceLibrary() {
     setImporting(true)
     setError(null)
     try {
-      const result = await importDocument(file, category)
+      const result = await importDocument(file, 'demo')
       setDocuments((prev) => [...prev, result.document])
       setSelected(result.document)
       setSections(result.sections)
@@ -90,14 +89,6 @@ export function SourceLibrary() {
       <section aria-label="Import document">
         <form onSubmit={handleImport}>
           <input ref={fileRef} type="file" accept=".txt,.md,.pdf" aria-label="Choose file" />
-          <select
-            value={category}
-            onChange={(e) => setCategory(e.target.value as 'demo' | 'private')}
-            aria-label="Workspace category"
-          >
-            <option value="demo">Demo</option>
-            <option value="private">Private</option>
-          </select>
           <button type="submit" disabled={importing}>
             {importing ? 'Importing…' : 'Import'}
           </button>
@@ -118,9 +109,6 @@ export function SourceLibrary() {
                   aria-current={selected?.id === doc.id ? 'true' : undefined}
                 >
                   {doc.title}
-                  <span style={{ marginLeft: '0.5rem', fontSize: '0.75rem', color: '#888' }}>
-                    ({doc.category})
-                  </span>
                 </button>
                 <button
                   onClick={() => handleDelete(doc)}

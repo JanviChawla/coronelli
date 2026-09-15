@@ -79,7 +79,7 @@ class FakeProvider:
                 ),
                 RawCandidate(
                     kind="claim",
-                    payload={"subject": "Casterbridge", "predicate": "located_amid", "object": "cornfields"},
+                    payload={"subject": "Casterbridge", "predicate": "ADJACENT_TO", "object": "cornfields"},
                     status="inferred",
                     confidence=0.7,
                     excerpt="lay amid the cornfields",

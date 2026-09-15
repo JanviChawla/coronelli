@@ -12,51 +12,71 @@ interface Props {
   candidates: Record<string, Candidate[]>
 }
 
-function contentCell(c: Candidate) {
-  const summary = c.display_summary
-  if (!summary || !summary.trim()) {
-    return (
-      <span style={{ color: '#c00', fontSize: '0.75rem', fontStyle: 'italic' }}>
-        ⚠ missing display summary
-      </span>
-    )
-  }
-  return summary
+const KIND_LABELS: Record<string, string> = {
+  entity: 'Place',
+  claim: 'Claim',
+  visual_claim: 'Visual',
+  travel_rule: 'Route',
+  scene_anchor: 'Anchor',
 }
 
+const KIND_BADGE_COLORS: Record<string, string> = {
+  entity: '#dbeafe',
+  claim: '#dcfce7',
+  visual_claim: '#fef9c3',
+  travel_rule: '#ede9fe',
+  scene_anchor: '#fee2e2',
+}
+
+const KIND_ORDER = ['entity', 'claim', 'travel_rule', 'visual_claim', 'scene_anchor']
+
+const _TERMINAL_STATES = new Set(['rejected', 'deferred', 'merged'])
+
 function kindBadge(kind: string) {
-  const labels: Record<string, string> = {
-    entity: 'Place',
-    claim: 'Claim',
-    visual_claim: 'Visual',
-    travel_rule: 'Route',
-    scene_anchor: 'Anchor',
-  }
-  const colors: Record<string, string> = {
-    entity: '#dbeafe',
-    claim: '#dcfce7',
-    visual_claim: '#fef9c3',
-    travel_rule: '#ede9fe',
-    scene_anchor: '#fee2e2',
-  }
   return (
     <span style={{
       fontSize: '0.68rem',
-      background: colors[kind] ?? '#f0f0f0',
+      background: KIND_BADGE_COLORS[kind] ?? '#f0f0f0',
       padding: '0.15rem 0.45rem',
       borderRadius: '3px',
       whiteSpace: 'nowrap',
     }}>
-      {labels[kind] ?? kind}
+      {KIND_LABELS[kind] ?? kind}
     </span>
   )
 }
 
-const _TERMINAL_STATES = new Set(['rejected', 'deferred', 'merged'])
+function KindSummary({ candidates }: { candidates: Record<string, Candidate[]> }) {
+  const counts: Record<string, number> = {}
+  let total = 0
+  for (const rows of Object.values(candidates)) {
+    for (const c of rows) {
+      counts[c.kind] = (counts[c.kind] ?? 0) + 1
+      total++
+    }
+  }
+  const parts = KIND_ORDER.filter(k => counts[k]).map(k => (
+    <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+      <span style={{
+        display: 'inline-block',
+        width: '0.55rem', height: '0.55rem', borderRadius: '2px',
+        background: KIND_BADGE_COLORS[k] ?? '#ccc',
+        flexShrink: 0,
+      }} />
+      {counts[k]} {KIND_LABELS[k] ?? k}
+    </span>
+  ))
+  return (
+    <p style={{ fontSize: '0.8rem', color: '#888', marginBottom: '0.75rem', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+      <strong style={{ color: '#555' }}>{total} candidates</strong>
+      {parts}
+    </p>
+  )
+}
 
 export function CandidatesTable({ sections, candidates: initialCandidates }: Props) {
   const [candidates, setCandidates] = useState(initialCandidates)
-  const [challengingId, setChallengingId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -76,26 +96,26 @@ export function CandidatesTable({ sections, candidates: initialCandidates }: Pro
         ...prev,
         [sectionId]: prev[sectionId].map(c =>
           c.id === candidateId
-            ? { ...c, review_state: action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : action === 'defer' ? 'deferred' : action, payload: editedPayload ?? c.payload }
+            ? {
+                ...c,
+                review_state: action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : action === 'defer' ? 'deferred' : action,
+                payload: editedPayload ?? c.payload,
+              }
             : c
         ),
       }))
+      setSelectedId(null)
     } catch {
       setError('Review action failed.')
     }
-    setChallengingId(null)
     setEditingId(null)
   }
 
-  const totalCount = sections.reduce((n, s) => n + (candidates[s.id]?.length ?? 0), 0)
-
   return (
     <div>
-      <p style={{ fontSize: '0.8rem', color: '#888', marginBottom: '1rem' }}>
-        {totalCount} candidate{totalCount !== 1 ? 's' : ''} across {sections.length} section{sections.length !== 1 ? 's' : ''} · review each to approve, reject, or defer
-      </p>
+      <KindSummary candidates={candidates} />
 
-      {error && <p role="alert" style={{ color: 'red', fontSize: '0.85rem' }}>{error}</p>}
+      {error && <p role="alert" style={{ color: 'red', fontSize: '0.85rem', marginBottom: '0.5rem' }}>{error}</p>}
 
       {sections.map(section => {
         const rows = candidates[section.id] ?? []
@@ -105,38 +125,45 @@ export function CandidatesTable({ sections, candidates: initialCandidates }: Pro
             <h4 style={{ fontSize: '0.85rem', color: '#555', margin: '0 0 0.4rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
               {section.title ?? '(untitled)'}
               <span style={{ fontWeight: 400, marginLeft: '0.5rem', color: '#aaa' }}>
-                {rows.length} candidate{rows.length !== 1 ? 's' : ''}
+                {rows.length}
               </span>
             </h4>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
               <thead>
                 <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
                   <th style={thStyle}>Kind</th>
-                  <th style={{ ...thStyle, width: '45%' }}>Content</th>
-                  <th style={thStyle}>Source</th>
-                  <th style={thStyle}>Conf</th>
+                  <th style={{ ...thStyle, width: '50%' }}>Content</th>
+                  <th style={thStyle}>Src</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>Conf</th>
                   <th style={thStyle}></th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map(c => {
-                  const isChallenging = challengingId === c.id
+                  const isSelected = selectedId === c.id
                   const isEditing = editingId === c.id
                   const isTerminal = _TERMINAL_STATES.has(c.review_state)
+                  const hasSummary = !!(c.display_summary?.trim())
 
                   return (
                     <>
                       <tr
                         key={c.id}
+                        onClick={() => !isTerminal && setSelectedId(isSelected ? null : c.id)}
                         style={{
-                          borderBottom: isChallenging ? 'none' : '1px solid #f0f0f0',
+                          borderBottom: isSelected ? 'none' : '1px solid #f0f0f0',
                           opacity: isTerminal ? 0.45 : 1,
-                          background: isChallenging ? '#fffbeb' : undefined,
+                          background: isSelected ? '#fffbeb' : undefined,
+                          cursor: isTerminal ? 'default' : 'pointer',
                         }}
                       >
                         <td style={tdStyle}>{kindBadge(c.kind)}</td>
-                        <td style={{ ...tdStyle, fontWeight: c.kind === 'scene_anchor' ? 500 : 400 }}>
-                          {contentCell(c)}
+                        <td style={{ ...tdStyle, fontWeight: c.kind === 'entity' ? 500 : 400 }}>
+                          {hasSummary ? c.display_summary : (
+                            <span style={{ color: '#c00', fontSize: '0.72rem', fontStyle: 'italic' }}>
+                              ⚠ dev: missing display summary
+                            </span>
+                          )}
                         </td>
                         <td style={tdStyle}>
                           <span style={{
@@ -151,46 +178,52 @@ export function CandidatesTable({ sections, candidates: initialCandidates }: Pro
                         <td style={{ ...tdStyle, color: '#888', textAlign: 'right' }}>
                           {Math.round(c.confidence * 100)}%
                         </td>
-                        <td style={{ ...tdStyle, textAlign: 'right' }}>
+                        <td style={{ ...tdStyle, textAlign: 'right', color: '#bbb', fontSize: '0.7rem' }}>
                           {isTerminal ? (
                             <span style={{ fontSize: '0.7rem', color: '#999' }}>{c.review_state}</span>
-                          ) : !isChallenging ? (
-                            <button
-                              type="button"
-                              onClick={() => { setChallengingId(c.id); setEditingId(null) }}
-                              style={challengeBtn}
-                            >
-                              Challenge
-                            </button>
-                          ) : null}
+                          ) : (
+                            <span style={{ fontSize: '0.7rem', color: '#bbb' }}>{isSelected ? '▲' : '▼'}</span>
+                          )}
                         </td>
                       </tr>
 
-                      {isChallenging && (
-                        <tr key={`${c.id}-challenge`} style={{ background: '#fffbeb', borderBottom: '1px solid #f0f0f0' }}>
+                      {isSelected && (
+                        <tr key={`${c.id}-detail`} style={{ background: '#fffbeb', borderBottom: '1px solid #f0f0f0' }}>
                           <td colSpan={5} style={{ padding: '0.6rem 0.75rem 0.75rem' }}>
-                            <blockquote style={{ margin: '0 0 0.6rem', fontSize: '0.8rem', color: '#555', fontStyle: 'italic', borderLeft: '3px solid #f0c040', paddingLeft: '0.6rem' }}>
-                              {c.excerpt}
+                            <blockquote style={{
+                              margin: '0 0 0.4rem',
+                              fontSize: '0.8rem',
+                              color: '#555',
+                              fontStyle: 'italic',
+                              borderLeft: '3px solid #f0c040',
+                              paddingLeft: '0.6rem',
+                            }}>
+                              {c.excerpt || <span style={{ color: '#c00' }}>⚠ dev: no excerpt</span>}
                             </blockquote>
+                            {c.rationale && (
+                              <p style={{ margin: '0 0 0.6rem', fontSize: '0.75rem', color: '#888' }}>
+                                {c.rationale}
+                              </p>
+                            )}
                             {isEditing ? (
                               <ReviewForm
                                 candidate={c}
                                 onSubmit={(editedPayload) => handleReview(section.id, c.id, 'approve', editedPayload)}
-                                onCancel={() => { setEditingId(null); setChallengingId(null) }}
+                                onCancel={() => { setEditingId(null) }}
                               />
                             ) : (
                               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                <button type="button" onClick={() => handleReview(section.id, c.id, 'reject')} style={{ fontSize: '0.8rem' }}>
+                                <button type="button" onClick={(e) => { e.stopPropagation(); handleReview(section.id, c.id, 'reject') }} style={{ fontSize: '0.8rem' }}>
                                   Reject
                                 </button>
-                                <button type="button" onClick={() => setEditingId(c.id)} style={{ fontSize: '0.8rem' }}>
+                                <button type="button" onClick={(e) => { e.stopPropagation(); setEditingId(c.id) }} style={{ fontSize: '0.8rem' }}>
                                   Edit &amp; re-approve
                                 </button>
-                                <button type="button" onClick={() => handleReview(section.id, c.id, 'defer')} style={{ fontSize: '0.8rem' }}>
+                                <button type="button" onClick={(e) => { e.stopPropagation(); handleReview(section.id, c.id, 'defer') }} style={{ fontSize: '0.8rem' }}>
                                   Defer
                                 </button>
-                                <button type="button" onClick={() => setChallengingId(null)} style={{ fontSize: '0.8rem', color: '#888' }}>
-                                  Cancel
+                                <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedId(null) }} style={{ fontSize: '0.8rem', color: '#888' }}>
+                                  Close
                                 </button>
                               </div>
                             )}
@@ -222,15 +255,4 @@ const thStyle: React.CSSProperties = {
 const tdStyle: React.CSSProperties = {
   padding: '0.4rem 0.5rem',
   verticalAlign: 'top',
-}
-
-const challengeBtn: React.CSSProperties = {
-  fontSize: '0.72rem',
-  color: '#888',
-  background: 'none',
-  border: '1px solid #ddd',
-  borderRadius: '3px',
-  padding: '0.15rem 0.5rem',
-  cursor: 'pointer',
-  whiteSpace: 'nowrap',
 }

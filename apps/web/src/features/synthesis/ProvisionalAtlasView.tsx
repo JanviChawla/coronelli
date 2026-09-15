@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { SynthesisItem } from './synthesisApi'
-import { approveAllSynthesisEntities, reviewSynthesisItem } from './synthesisApi'
+import { acceptAllSynthesisItems, approveAllSynthesisEntities, reviewSynthesisItem } from './synthesisApi'
 
 interface Props {
   items: SynthesisItem[]
@@ -34,41 +34,29 @@ const STATE_BADGE: Record<string, { label: string; bg: string; color: string }> 
   approved: { label: '✓ approved', bg: '#dcfce7', color: '#166534' },
   rejected: { label: 'rejected', bg: '#fee2e2', color: '#991b1b' },
   deferred: { label: 'deferred', bg: '#f3f4f6', color: '#6b7280' },
+  challenged: { label: '⚑ challenged', bg: '#fef3c7', color: '#92400e' },
 }
 
 export function ProvisionalAtlasView({ items: initialItems, documentId, onResynthesize }: Props) {
   const [items, setItems] = useState<SynthesisItem[]>(initialItems)
   const [loadingId, setLoadingId] = useState<string | null>(null)
-  const [batchLoading, setBatchLoading] = useState(false)
+  const [bulkLoadingKind, setBulkLoadingKind] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  async function handleReview(itemId: string, action: 'approve' | 'reject' | 'defer') {
+  async function handleReview(itemId: string, action: 'approve' | 'challenge' | 'reject' | 'defer') {
     setLoadingId(itemId)
     setError(null)
     try {
       const res = await reviewSynthesisItem(itemId, { action })
-      setItems(prev => prev.map(it => it.id === itemId ? res.item : it))
+      if (action === 'challenge') {
+        setItems(prev => prev.map(it => it.id === itemId ? { ...it, review_state: 'challenged' } : it))
+      } else {
+        setItems(prev => prev.map(it => it.id === itemId ? res.item : it))
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Review failed.')
     } finally {
       setLoadingId(null)
-    }
-  }
-
-  async function handleApproveAllEntities() {
-    setBatchLoading(true)
-    setError(null)
-    try {
-      await approveAllSynthesisEntities(documentId)
-      setItems(prev => prev.map(it =>
-        it.kind === 'entity' && it.review_state === 'provisional'
-          ? { ...it, review_state: 'approved' }
-          : it
-      ))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Batch approve failed.')
-    } finally {
-      setBatchLoading(false)
     }
   }
 
@@ -95,7 +83,6 @@ export function ProvisionalAtlasView({ items: initialItems, documentId, onResynt
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
   })
 
-  const provisionalEntities = items.filter(it => it.kind === 'entity' && it.review_state === 'provisional')
   const approvedCount = items.filter(it => it.review_state === 'approved').length
 
   return (
@@ -105,7 +92,7 @@ export function ProvisionalAtlasView({ items: initialItems, documentId, onResynt
         <p style={{ fontSize: '0.8rem', color: '#888', margin: 0 }}>
           {items.length} synthesis item{items.length !== 1 ? 's' : ''}
           {approvedCount > 0 && <> · {approvedCount} approved</>}
-          {' · provisional — review required before atlas export'}
+          {' · provisional atlas observations — review required before atlas export'}
         </p>
         <button
           type="button"
@@ -116,22 +103,43 @@ export function ProvisionalAtlasView({ items: initialItems, documentId, onResynt
         </button>
       </div>
 
-      {/* Batch approve */}
-      {provisionalEntities.length > 0 && (
-        <div style={{ marginBottom: '1.25rem', padding: '0.6rem 0.75rem', background: '#f8faff', border: '1px solid #dbeafe', borderRadius: '4px', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '0.82rem', color: '#1e40af' }}>
-            {provisionalEntities.length} place{provisionalEntities.length !== 1 ? 's' : ''} awaiting review
-          </span>
-          <button
-            type="button"
-            onClick={handleApproveAllEntities}
-            disabled={batchLoading}
-            style={{ fontSize: '0.8rem', fontWeight: 500, padding: '0.25rem 0.65rem', cursor: batchLoading ? 'wait' : 'pointer' }}
-          >
-            {batchLoading ? 'Approving…' : `Approve all places (${provisionalEntities.length})`}
-          </button>
-        </div>
-      )}
+      {/* Per-kind bulk accept */}
+      {(['entity', 'claim', 'route', 'visual_claim', 'reveal_event'] as const).map(kind => {
+        const provisionalOfKind = items.filter(it => it.kind === kind && it.review_state === 'provisional')
+        if (provisionalOfKind.length === 0) return null
+        const kindLabel = KIND_LABELS[kind] ?? kind
+        const isKindLoading = bulkLoadingKind === kind
+        return (
+          <div key={kind} style={{ marginBottom: '0.4rem', padding: '0.3rem 0.75rem', background: '#f0f9ff', borderRadius: '4px', display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.8rem', flexWrap: 'wrap' }}>
+            <span style={{ color: '#0369a1' }}>
+              {provisionalOfKind.length} {kindLabel} observation{provisionalOfKind.length !== 1 ? 's' : ''} pending
+            </span>
+            <button
+              type="button"
+              onClick={async () => {
+                setBulkLoadingKind(kind)
+                setError(null)
+                try {
+                  await acceptAllSynthesisItems(documentId, kind)
+                  setItems(prev => prev.map(it =>
+                    it.kind === kind && it.review_state === 'provisional'
+                      ? { ...it, review_state: 'approved' }
+                      : it
+                  ))
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : 'Bulk accept failed.')
+                } finally {
+                  setBulkLoadingKind(null)
+                }
+              }}
+              disabled={bulkLoadingKind !== null}
+              style={{ fontSize: '0.8rem', fontWeight: 500, padding: '0.25rem 0.65rem', cursor: isKindLoading ? 'wait' : 'pointer' }}
+            >
+              {isKindLoading ? 'Accepting…' : `Accept all ${kindLabel.toLowerCase()}s (${provisionalOfKind.length})`}
+            </button>
+          </div>
+        )
+      })}
 
       {error && (
         <p role="alert" style={{ color: 'red', fontSize: '0.82rem', marginBottom: '0.75rem' }}>
@@ -229,7 +237,15 @@ export function ProvisionalAtlasView({ items: initialItems, documentId, onResynt
                             onClick={() => handleReview(item.id, 'approve')}
                             style={actionBtn('#166534', '#dcfce7', isLoading)}
                           >
-                            {isLoading ? '…' : 'Approve'}
+                            {isLoading ? '…' : 'Accept'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isLoading}
+                            onClick={() => handleReview(item.id, 'challenge')}
+                            style={actionBtn('#92400e', '#fef3c7', isLoading)}
+                          >
+                            Challenge
                           </button>
                           <button
                             type="button"

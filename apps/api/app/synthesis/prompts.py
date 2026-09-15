@@ -30,8 +30,8 @@ Produce synthesis_items — consolidated world facts derived from the full evide
 ### 1. entity
 A consolidated place entity, merged across all sections where it appears.
 Payload: {"name": str, "type": str, "aliases": [str], "notes": str|null}
-- type must be one of: world, region, settlement, landmark, building, room, hall, tunnel, shaft,
-  passage, portal, door, exterior, terrain_feature, body_of_water, site, court, barrier
+- type must be one of: world, region, island, settlement, landmark, building, room, hall, tunnel,
+  shaft, passage, portal, door, exterior, terrain_feature, body_of_water, site, court, barrier
 - Merge duplicate entity candidates from different sections into ONE entity item.
 - Include aliases if the place is named differently across sections.
 - A wall, hedge, fence, gate, or physical barrier that separates regions is a barrier.
@@ -39,8 +39,11 @@ Payload: {"name": str, "type": str, "aliases": [str], "notes": str|null}
 ### 2. claim
 A confirmed spatial relationship between two places.
 Payload: {"subject": str, "predicate": str, "object": str}
-- predicate must be one of: CONTAINS, LOCATED_IN, ADJACENT_TO, NORTH_OF, SOUTH_OF, EAST_OF,
-  WEST_OF, LEADS_TO, BORDERS, VISIBLE_FROM, OVERLOOKS
+- predicate must be one of: CONTAINS, LOCATED_IN, LEADS_TO, OPENS_TOWARD, ADJACENT_TO, NEAR,
+  UNDER, ABOVE, DESCENDS_TO, ENDS_AT, HAS_OPENING, REACHED_FROM, SAME_AS, IN_OR_ADJACENT_TO,
+  BLOCKS_ACCESS_TO, SURROUNDED_BY,
+  NORTH_OF, SOUTH_OF, EAST_OF, WEST_OF, NORTHEAST_OF, NORTHWEST_OF, SOUTHEAST_OF, SOUTHWEST_OF
+  (compass predicates only when source text explicitly states a direction)
 - Only emit claims supported by at least one explicit candidate or two corroborating inferred ones.
 
 ### 3. route
@@ -98,7 +101,7 @@ rationale: one sentence explaining what evidence supports this item.
 
 Before outputting, verify:
 A) Every entity item has a non-empty name and a valid type.
-B) Every claim item has subject, predicate (from allowed list), and object.
+B) Every claim item has subject, predicate (must be one of the 15 allowed predicates, same set as Stage 1 extraction), and object.
 C) Every route item has from and to fields.
 D) Every visual_claim has subject, visual_property, and value.
 E) Every same_as has a and b fields.

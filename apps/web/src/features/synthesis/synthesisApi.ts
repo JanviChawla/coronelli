@@ -56,7 +56,7 @@ export async function fetchProvisionalAtlas(documentId: string): Promise<Provisi
 }
 
 export type SynthesisReviewRequest = {
-  action: 'approve' | 'reject' | 'defer'
+  action: 'approve' | 'challenge' | 'reject' | 'defer'
 }
 
 export type SynthesisReviewResponse = {
@@ -87,5 +87,13 @@ export async function approveAllSynthesisEntities(documentId: string): Promise<{
     method: 'POST',
   })
   if (!res.ok) throw new Error('Batch approve failed')
+  return res.json()
+}
+
+export async function acceptAllSynthesisItems(documentId: string, kind: string): Promise<{ accepted: number; kind: string }> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/synthesis-items/accept-all?kind=${encodeURIComponent(kind)}`, {
+    method: 'POST',
+  })
+  if (!res.ok) throw new Error('Bulk accept failed')
   return res.json()
 }

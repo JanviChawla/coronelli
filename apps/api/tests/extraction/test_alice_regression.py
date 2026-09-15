@@ -509,3 +509,189 @@ def test_null_traveler_accepted(db):
     travel = [c for c in candidates if c.kind == "travel_rule"]
     assert travel, "travel_rule with null traveler must be accepted"
     assert travel[0].payload.get("traveler") is None
+
+
+# ── Chapter VI: Duchess's House contains Kitchen ───────────────────────────────
+
+def test_ch6_duchess_house_contains_kitchen(db):
+    """Duchess's House must have an interior Kitchen entity with a CONTAINS claim."""
+    section = _make_section(db, "VI — Pig and Pepper", ordinal=6)
+    candidates_in = [
+        _rc("scene_anchor", {"place": "Duchess's House", "scene_role": "opening"}),
+        _rc("entity", {"name": "Duchess's House", "type": "building"}),
+        _rc("entity", {"name": "Kitchen", "type": "room"}, excerpt="large kitchen"),
+        _rc("claim", {"subject": "Duchess's House", "predicate": "CONTAINS", "object": "Kitchen"},
+            excerpt="large kitchen which seemed full of smoke"),
+    ]
+    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    entity_names = {c.payload.get("name") for c in candidates if c.kind == "entity"}
+    assert "Duchess's House" in entity_names
+    assert "Kitchen" in entity_names
+    containment = [
+        c for c in candidates if c.kind == "claim"
+        and c.payload.get("subject") == "Duchess's House"
+        and c.payload.get("predicate") == "CONTAINS"
+        and c.payload.get("object") == "Kitchen"
+    ]
+    assert containment, "Duchess's House CONTAINS Kitchen claim missing"
+
+
+# ── Excluded entity validation ────────────────────────────────────────────────
+
+def test_excluded_portable_object_rejected(db):
+    """Entity candidate named 'Little Golden Key' must be rejected by validation."""
+    section = _make_section(db, "I — Down the Rabbit-Hole", ordinal=1)
+    candidates_in = [
+        _rc("scene_anchor", {"place": "Long Low Hall", "scene_role": "primary"}),
+        _rc("entity", {"name": "Little Golden Key", "type": "landmark"},
+            excerpt="a little golden key"),
+        _rc("entity", {"name": "Long Low Hall", "type": "hall"}, excerpt="long, low hall"),
+    ]
+    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    entity_names = {c.payload.get("name") for c in candidates if c.kind == "entity"}
+    assert "Little Golden Key" not in entity_names, (
+        "Little Golden Key is a portable object and must not be an atlas entity"
+    )
+    assert "Long Low Hall" in entity_names, "Valid entity after excluded one must survive"
+
+
+def test_excluded_magic_bottle_rejected(db):
+    """Entity named 'magic bottle' (a vessel prop) must be rejected by validation."""
+    section = _make_section(db, "I — Down the Rabbit-Hole", ordinal=1)
+    candidates_in = [
+        _rc("scene_anchor", {"place": "Long Low Hall", "scene_role": "primary"}),
+        _rc("entity", {"name": "magic bottle", "type": "landmark"},
+            excerpt="found a little bottle"),
+    ]
+    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    entity_names = {c.payload.get("name") for c in candidates if c.kind == "entity"}
+    assert "magic bottle" not in entity_names, "Bottle is a prop, not an atlas entity"
+
+
+def test_excluded_knave_of_hearts_rejected(db):
+    """Entity named 'Knave of Hearts' (a playing card character) must be rejected."""
+    section = _make_section(db, "IX — Who Stole the Tarts?", ordinal=9)
+    candidates_in = [
+        _rc("scene_anchor", {"place": "Trial Court", "scene_role": "primary"}),
+        _rc("entity", {"name": "Knave of Hearts", "type": "landmark"},
+            excerpt="the Knave of Hearts"),
+        _rc("entity", {"name": "Trial Court", "type": "court"}, excerpt="court of justice"),
+    ]
+    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    entity_names = {c.payload.get("name") for c in candidates if c.kind == "entity"}
+    assert "Knave of Hearts" not in entity_names, "Knave of Hearts is a character, not an atlas entity"
+    assert "Trial Court" in entity_names, "Valid entity after excluded one must survive"
+
+
+def test_excluded_table_of_tarts_rejected(db):
+    """Entity named 'Table of Tarts' (a prop/food surface) must be rejected."""
+    section = _make_section(db, "IX — Who Stole the Tarts?", ordinal=9)
+    candidates_in = [
+        _rc("scene_anchor", {"place": "Trial Court", "scene_role": "primary"}),
+        _rc("entity", {"name": "Table of Tarts", "type": "landmark"},
+            excerpt="tarts upon the table"),
+    ]
+    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    entity_names = {c.payload.get("name") for c in candidates if c.kind == "entity"}
+    assert "Table of Tarts" not in entity_names, "Table of Tarts is furniture/prop, not an atlas entity"
+
+
+# ── Non-spatial claim object validation ───────────────────────────────────────
+
+def test_claim_non_spatial_object_rejected(db):
+    """A claim with object 'absence of jurymen' must be rejected — not a place name."""
+    section = _make_section(db, "IX — Who Stole the Tarts?", ordinal=9)
+    candidates_in = [
+        _rc("scene_anchor", {"place": "Trial Court", "scene_role": "primary"}),
+        _rc("entity", {"name": "Trial Court", "type": "court"}, excerpt="court of justice"),
+        # Malformed claim: object is a non-spatial phrase
+        _rc("claim", {"subject": "Trial Court", "predicate": "LOCATED_IN",
+                      "object": "absence of jurymen"},
+            excerpt="absence of the jury"),
+        # Valid claim to ensure others survive
+        _rc("claim", {"subject": "Trial Court", "predicate": "CONTAINS", "object": "Jury Box"},
+            excerpt="jury-box"),
+    ]
+    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    bad_claims = [
+        c for c in candidates if c.kind == "claim"
+        and "absence" in (c.payload.get("object") or "").lower()
+    ]
+    assert not bad_claims, "Claim with 'absence of jurymen' as object must be rejected"
+    valid_claims = [
+        c for c in candidates if c.kind == "claim"
+        and c.payload.get("object") == "Jury Box"
+    ]
+    assert valid_claims, "Valid claim after rejected one must survive"
+
+
+def test_claim_disallowed_predicate_rejected(db):
+    """A claim using a wholly invented predicate must be rejected by validation."""
+    section = _make_section(db, "VI — Pig and Pepper", ordinal=6)
+    candidates_in = [
+        _rc("scene_anchor", {"place": "Duchess's House", "scene_role": "primary"}),
+        _rc("entity", {"name": "March Hare's House", "type": "building"}),
+        _rc("entity", {"name": "Duchess's House", "type": "building"}),
+        # Wholly invalid predicate — not in the allowed list
+        _rc("claim", {"subject": "March Hare's House", "predicate": "LOCATED_AMID",
+                      "object": "Duchess's House"},
+            excerpt="somewhere in the countryside"),
+        # Valid claim
+        _rc("claim", {"subject": "March Hare's House", "predicate": "NEAR",
+                      "object": "Duchess's House"},
+            excerpt="about two miles off"),
+    ]
+    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    bad_claims = [
+        c for c in candidates if c.kind == "claim"
+        and (c.payload.get("predicate") or "").upper() == "LOCATED_AMID"
+    ]
+    assert not bad_claims, "LOCATED_AMID is not an allowed predicate and must be rejected"
+    valid_claims = [
+        c for c in candidates if c.kind == "claim"
+        and (c.payload.get("predicate") or "").upper() == "NEAR"
+    ]
+    assert valid_claims, "Valid NEAR claim must survive after rejected LOCATED_AMID"
+
+
+def test_compass_predicate_accepted_when_explicit(db):
+    """A compass predicate is valid when the source text explicitly states a direction."""
+    section = _make_section(db, "VI — Pig and Pepper", ordinal=6)
+    candidates_in = [
+        _rc("scene_anchor", {"place": "Duchess's House", "scene_role": "primary"}),
+        _rc("entity", {"name": "March Hare's House", "type": "building"}),
+        _rc("entity", {"name": "Duchess's House", "type": "building"}),
+        _rc("claim", {"subject": "March Hare's House", "predicate": "NORTH_OF",
+                      "object": "Duchess's House"},
+            status="explicit", confidence=0.85,
+            excerpt="two miles to the north"),
+    ]
+    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    compass_claims = [
+        c for c in candidates if c.kind == "claim"
+        and (c.payload.get("predicate") or "").upper() == "NORTH_OF"
+    ]
+    assert compass_claims, "NORTH_OF is a valid predicate when source explicitly states a direction"
+
+
+# ── Chapter IV: no fabricated open-field anchor ───────────────────────────────
+
+def test_ch4_no_unsupported_open_field_anchor(db):
+    """Chapter IV opens at White Rabbit's House exterior, not a generic Open Field.
+    A scene_anchor of 'Open Field' with no entity support must not survive as an entity."""
+    section = _make_section(db, "IV — The Rabbit Sends in a Little Bill", ordinal=4)
+    candidates_in = [
+        # Fabricated scene anchor with no backing entity
+        _rc("scene_anchor", {"place": "Open Field", "scene_role": "opening"},
+            excerpt="outside the house"),
+        _rc("entity", {"name": "White Rabbit's House", "type": "building"},
+            excerpt="a little white house"),
+    ]
+    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    # The scene_anchor itself is allowed (it's a scene anchor, not an entity)
+    # But no entity named "Open Field" should be present (it wasn't proposed as one)
+    entity_names = {c.payload.get("name") for c in candidates if c.kind == "entity"}
+    assert "Open Field" not in entity_names, (
+        "Open Field was not proposed as an entity and must not appear in entity names"
+    )
+    assert "White Rabbit's House" in entity_names
