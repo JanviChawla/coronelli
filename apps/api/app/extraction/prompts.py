@@ -413,7 +413,7 @@ COMBINED_PROMPT_VERSION = "2.0"
 # Evidence pass: each section gets the full global entity list as context
 
 GLOBAL_CATALOG_VERSION = "3.0-catalog"
-GLOBAL_EVIDENCE_VERSION = "3.0-evidence"
+GLOBAL_EVIDENCE_VERSION = "3.2-evidence"
 
 # ── Pass 1: Place Catalog ─────────────────────────────────────────────────────
 
@@ -521,8 +521,16 @@ WHAT TO EXTRACT:
 
 2. VISUAL CLAIMS — physical description of a catalog place.
    category: architecture | terrain | light | weather | color | material | scale | atmosphere | other
-   Emit ONE visual_claim per distinct observation. Never merge. Be specific and concrete.
+   Emit ONE visual_claim per DISTINCT observation. Never merge multiple observations into one.
+   A place described with 6 different qualities yields 6 visual_claim items.
    Include the section_title in the payload.
+   This is the highest-volume output kind — be exhaustive, not selective.
+   Capture: color, smell, texture, sound, temperature, light quality, architectural detail,
+   vegetation, water, scale, atmosphere, decay, furnishings that are structural (fixed
+   wallpaper, bars on windows, built-in shelving, rings bolted to walls), any feature a
+   cartographer or illustrator would want to know. Attach every such observation as a
+   visual_claim on the catalog place it belongs to — do not skip them because they
+   describe a finish or fixture rather than a separate place.
 
 3. TRAVEL RULES — traversal between catalog places.
    Both "from" and "to" in the route must be catalog place names.
@@ -544,11 +552,35 @@ CERTAINTY:
   confidence: 0.90–1.00 verbatim/unambiguous; 0.65–0.89 clear but inferential;
               0.30–0.64 implied by action
 
+MANDATORY COMPLETENESS — verify each before writing output:
+
+M1. VISUAL CLAIMS: Go through every catalog place that appears in this section.
+    For each one: list every physical quality the text gives it — color, smell, texture,
+    light, sound, temperature, material, scale, architectural feature, vegetation, decay,
+    atmosphere. Emit one visual_claim per item on that list. If a place has 8 qualities,
+    emit 8 visual_claim items. A section with rich description and only 1–2 visual_claims
+    is an incomplete extraction.
+
+M2. ACCESS: If the text states that a person may or may not enter a catalog place, or
+    describes conditions governing a transition, emit at least one access candidate.
+
+M3. MOVEMENT: If the text narrates a journey between two or more catalog places — with
+    stops, mechanism, or traveler detail — emit at least one movement candidate.
+
+M4. TRAVEL RULE: If a character moves between two or more catalog places in sequence,
+    emit at least one travel_rule.
+
+M5. CLAIMS: If two or more catalog places appear with any stated or implied spatial
+    relationship, emit at least one claim. A section with multiple places and zero claims
+    is an incomplete extraction.
+
 FINAL CHECK before outputting:
 A. Does every claim have BOTH subject and object in the catalog? Remove any that don't.
+   HAS_OPENING is only valid when the opening (door, window) is itself a catalog place.
 B. Is the scene_anchor present? Add it if missing.
 C. Is every visual_claim attached to a catalog place? Remove any that aren't.
 D. Are confidence values individually calibrated? Do not use 0.95 uniformly.
+E. Did I emit all the visual observations the text supports? If not, add the missing ones.
 
 OUTPUT: valid JSON only. No markdown, no comments.
 {

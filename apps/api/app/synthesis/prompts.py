@@ -245,5 +245,29 @@ SELF-CHECK before outputting:
 5. For every movement: are both from_place and to_place in the entity list? Remove if either is not.
 
 OUTPUT: valid JSON only, no markdown.
-{"synthesis_items": [...]}
+Each item MUST have four top-level fields: kind, payload, confidence, rationale.
+Do NOT return flat payload dicts. Wrap every item correctly:
+
+{
+  "synthesis_items": [
+    {
+      "kind": "claim",
+      "payload": {"subject": "the nursery", "predicate": "LOCATED_IN", "object": "the house"},
+      "confidence": 0.90,
+      "rationale": "Nursery is at the top of the house."
+    },
+    {
+      "kind": "visual_claim",
+      "payload": {"subject": "the nursery", "category": "color", "observation": "smouldering unclean yellow walls", "section_title": "Section 1"},
+      "confidence": 0.95,
+      "rationale": "Direct quotation describing the wallpaper color."
+    },
+    {
+      "kind": "movement",
+      "payload": {"traveler": null, "from_place": "the nursery", "to_place": "the garden", "via": null, "mechanism": null, "stops": []},
+      "confidence": 0.85,
+      "rationale": "Narrator moves from nursery to garden."
+    }
+  ]
+}
 """

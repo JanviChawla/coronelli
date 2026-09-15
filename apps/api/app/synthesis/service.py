@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.db.models import SourceSection
 from app.domain.world import MapClaim, MapEntity, MapTravelRule
 from app.extraction.models import Candidate
+from app.extraction.prompts import GLOBAL_CATALOG_VERSION, GLOBAL_EVIDENCE_VERSION
 from app.synthesis.models import SynthesisItem, SynthesisRun
 from app.synthesis.provider import SynthesisProvider
 from app.synthesis.review import canonicalize_synthesis_run
@@ -32,23 +33,56 @@ def _build_evidence_ledger(session: Session, document_id: str) -> list[dict]:
     for section in sections:
         if section.section_kind != "narrative":
             continue
-        # Find the most recent completed run for this section.
-        latest_run = (
+        # Global two-pass: catalog run holds entities, evidence run holds everything else.
+        # Collect from both separately; fall back to most-recent single run for legacy data.
+        catalog_run = (
             session.query(ExtractionRun)
             .filter(
                 ExtractionRun.section_id == section.id,
                 ExtractionRun.status == "completed",
+                ExtractionRun.prompt_version == GLOBAL_CATALOG_VERSION,
             )
             .order_by(ExtractionRun.completed_at.desc())
             .first()
         )
-        if latest_run is None:
-            continue
+        evidence_run = (
+            session.query(ExtractionRun)
+            .filter(
+                ExtractionRun.section_id == section.id,
+                ExtractionRun.status == "completed",
+                ExtractionRun.prompt_version == GLOBAL_EVIDENCE_VERSION,
+            )
+            .order_by(ExtractionRun.completed_at.desc())
+            .first()
+        )
+
+        run_ids: list[str] = []
+        if catalog_run or evidence_run:
+            # New global two-pass — union entity + evidence candidates
+            if catalog_run:
+                run_ids.append(catalog_run.id)
+            if evidence_run:
+                run_ids.append(evidence_run.id)
+        else:
+            # Legacy single-run — use most recent completed run
+            legacy_run = (
+                session.query(ExtractionRun)
+                .filter(
+                    ExtractionRun.section_id == section.id,
+                    ExtractionRun.status == "completed",
+                )
+                .order_by(ExtractionRun.completed_at.desc())
+                .first()
+            )
+            if legacy_run is None:
+                continue
+            run_ids.append(legacy_run.id)
+
         candidates = (
             session.query(Candidate)
             .filter(
                 Candidate.section_id == section.id,
-                Candidate.extraction_run_id == latest_run.id,
+                Candidate.extraction_run_id.in_(run_ids),
             )
             .order_by(Candidate.ordinal)
             .all()

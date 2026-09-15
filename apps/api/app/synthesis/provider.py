@@ -186,12 +186,28 @@ class OpenAISynthesisProvider:
             if not isinstance(raw, dict):
                 continue
             kind = raw.get("kind", "")
+            payload = raw.get("payload", {})
+            # Fallback: model returned flat payload dict without the kind/payload wrapper.
+            # Infer kind from the payload's key signature.
+            if kind not in _VALID_KINDS and isinstance(payload, dict) and not payload:
+                if "predicate" in raw and "subject" in raw and "object" in raw:
+                    kind, payload = "claim", {k: raw[k] for k in ("subject", "predicate", "object")}
+                elif "category" in raw and "observation" in raw and "subject" in raw:
+                    kind, payload = "visual_claim", {k: raw.get(k) for k in ("subject", "category", "observation", "section_title")}
+                elif "from_place" in raw and "to_place" in raw:
+                    kind, payload = "movement", {k: raw.get(k) for k in ("traveler", "from_place", "to_place", "via", "mechanism", "stops")}
+                elif "from" in raw and "to" in raw and "can_traverse" in raw:
+                    kind, payload = "route", {k: raw.get(k) for k in ("traveler", "from", "to", "via", "can_traverse", "condition")}
+                elif "place_name" in raw and "access_type" in raw:
+                    kind, payload = "access", {k: raw.get(k) for k in ("place_name", "access_type", "condition", "traveler")}
+                if kind in _VALID_KINDS:
+                    _log.warning("Item %d: inferred kind=%s from flat payload (prompt format not followed)", i, kind)
             if kind not in _VALID_KINDS:
                 continue
             try:
                 items.append(RawSynthesisItem(
                     kind=kind,
-                    payload=raw.get("payload", {}),
+                    payload=payload,
                     confidence=float(raw.get("confidence", 0.7)),
                     rationale=str(raw.get("rationale", "")),
                 ))
