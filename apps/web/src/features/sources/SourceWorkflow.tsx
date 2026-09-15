@@ -43,7 +43,7 @@ function StepDone({ label, detail, action }: {
       <div style={{ flex: 1, paddingTop: '0.3rem' }}>
         <div style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--ink)' }}>{label}</div>
         <div style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', marginTop: '0.1rem' }}>{detail}</div>
-        {action && <div style={{ marginTop: '0.5rem' }}>{action}</div>}
+        {action && <div style={{ marginTop: '0.75rem' }}>{action}</div>}
       </div>
     </div>
   )
@@ -102,6 +102,48 @@ function Ornament() {
   )
 }
 
+// Shared cost card used by re-harvest and re-synthesize
+function RerunCard({ label, costLo, costHi, meta, action, onAction }: {
+  label: string
+  costLo: number
+  costHi: number
+  meta: string
+  action: string
+  onAction: () => void
+}) {
+  return (
+    <div style={{
+      border: '1px solid var(--border-warm)',
+      borderRadius: '6px',
+      background: 'var(--parchment-card)',
+      padding: '1.1rem 1.25rem',
+      minWidth: '180px',
+    }}>
+      <p style={{
+        fontSize: '0.58rem', color: 'var(--ink-muted)',
+        letterSpacing: '0.16em', textTransform: 'uppercase',
+        textAlign: 'center', marginBottom: '0.4rem',
+      }}>
+        {label}
+      </p>
+      <p style={{ textAlign: 'center', marginBottom: '0.35rem' }}>
+        <span style={{ fontSize: '1.4rem', color: 'var(--ink)', fontWeight: 400 }}>
+          ${costLo.toFixed(2)} – ${costHi.toFixed(2)}
+        </span>
+      </p>
+      <p style={{
+        fontSize: '0.68rem', color: 'var(--ink-faint)',
+        textAlign: 'center', fontFamily: 'monospace', marginBottom: '0.9rem',
+      }}>
+        {meta}
+      </p>
+      <button className="btn-cta" type="button" onClick={onAction}>
+        {action}
+      </button>
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function SourceWorkflow({ document, sections, onEditSections, onAtlasChanged, onViewAtlas }: Props) {
@@ -123,7 +165,6 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
   const [synthElapsedMs, setSynthElapsedMs] = useState(0)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Wait for sections to be available before initialising — parent loads them async
   useEffect(() => {
     if (!sections.length) return
     initWorkflow()
@@ -246,6 +287,17 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
   const step3Error = phase === 'error' && errorInStep === 3
   const step4Error = phase === 'error' && errorInStep === 4
 
+  // Cost estimates
+  const harvestCostBase = totalCost ?? sections.length * 0.0020
+  const harvestCostLo = harvestCostBase * 0.85
+  const harvestCostHi = harvestCostBase * 1.15
+
+  const synthInputTokens = totalCandidates * 350 + 1500
+  const synthOutputTokens = Math.min(totalCandidates * 100, 8000)
+  const synthCostBase = (synthInputTokens / 1_000_000) * 0.15 + (synthOutputTokens / 1_000_000) * 0.60
+  const synthCostLo = synthCostBase * 0.85
+  const synthCostHi = synthCostBase * 1.15
+
   return (
     <div>
       {/* Document header */}
@@ -311,24 +363,28 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
           label="Harvest evidence"
           detail={`${totalCandidates} candidate${totalCandidates !== 1 ? 's' : ''} across ${sections.length} sections${totalElapsedMs > 0 ? ` · ${(totalElapsedMs / 1000).toFixed(1)}s` : ''}`}
           action={
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-              <details>
-                <summary style={{
-                  fontSize: '0.78rem', color: 'var(--ink-muted)',
-                  cursor: 'pointer', listStyle: 'none',
-                }}>
-                  ▸ Inspect raw candidates ({totalCandidates})
-                </summary>
-                <div style={{ marginTop: '0.75rem' }}>
-                  <CandidatesTable
-                    sections={sections.map(s => ({ id: s.id, title: s.title }))}
-                    candidates={allCandidates}
-                  />
-                </div>
-              </details>
-              <button type="button" className="btn-outline-warm" style={{ alignSelf: 'flex-start' }} onClick={handleHarvest}>
-                Re-harvest
-              </button>
+            <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: '180px' }}>
+                <details>
+                  <summary style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+                    ▸ Inspect raw candidates ({totalCandidates})
+                  </summary>
+                  <div style={{ marginTop: '0.75rem' }}>
+                    <CandidatesTable
+                      sections={sections.map(s => ({ id: s.id, title: s.title }))}
+                      candidates={allCandidates}
+                    />
+                  </div>
+                </details>
+              </div>
+              <RerunCard
+                label="Re-harvest cost"
+                costLo={harvestCostLo}
+                costHi={harvestCostHi}
+                meta={`${sections.length} section${sections.length !== 1 ? 's' : ''} · cached runs free`}
+                action="Re-harvest evidence"
+                onAction={handleHarvest}
+              />
             </div>
           }
         />
@@ -411,38 +467,43 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
           label="Synthesize atlas"
           detail={`${canonicalEntityCount} place${canonicalEntityCount !== 1 ? 's' : ''} · ${canonicalClaimCount} relationship${canonicalClaimCount !== 1 ? 's' : ''} canonicalized`}
           action={
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-              <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap' }}>
-                <button type="button" className="btn-outline-warm" onClick={() => handleSynthesize(true)}>
-                  Re-synthesize
-                </button>
-              </div>
+            <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
               {atlasEntities.length > 0 && (
-                <details>
-                  <summary style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
-                    ▸ Inspect canonical places ({canonicalEntityCount})
-                  </summary>
-                  <div style={{
-                    marginTop: '0.65rem',
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-                    gap: '0.35rem 0.75rem',
-                  }}>
-                    {atlasEntities
-                      .slice()
-                      .sort((a, b) => a.name.localeCompare(b.name))
-                      .map(e => (
-                        <div key={e.id} style={{ fontSize: '0.78rem', color: 'var(--ink)', display: 'flex', gap: '0.3rem', alignItems: 'baseline' }}>
-                          <span style={{ flexShrink: 0, color: 'var(--gold)', fontSize: '0.6rem' }}>◉</span>
-                          <span>{e.name}</span>
-                          {e.place_kind && (
-                            <span style={{ color: 'var(--ink-faint)', fontSize: '0.62rem' }}>· {e.place_kind}</span>
-                          )}
-                        </div>
-                      ))}
-                  </div>
-                </details>
+                <div style={{ flex: 1, minWidth: '180px' }}>
+                  <details>
+                    <summary style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+                      ▸ Inspect canonical places ({canonicalEntityCount})
+                    </summary>
+                    <div style={{
+                      marginTop: '0.65rem',
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+                      gap: '0.35rem 0.75rem',
+                    }}>
+                      {atlasEntities
+                        .slice()
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map(e => (
+                          <div key={e.id} style={{ fontSize: '0.78rem', color: 'var(--ink)', display: 'flex', gap: '0.3rem', alignItems: 'baseline' }}>
+                            <span style={{ flexShrink: 0, color: 'var(--gold)', fontSize: '0.6rem' }}>◉</span>
+                            <span>{e.name}</span>
+                            {e.place_kind && (
+                              <span style={{ color: 'var(--ink-faint)', fontSize: '0.62rem' }}>· {e.place_kind}</span>
+                            )}
+                          </div>
+                        ))}
+                    </div>
+                  </details>
+                </div>
               )}
+              <RerunCard
+                label="Re-synthesize cost"
+                costLo={synthCostLo}
+                costHi={synthCostHi}
+                meta={`${totalCandidates} candidate${totalCandidates !== 1 ? 's' : ''} · gpt-4o-mini`}
+                action="Re-synthesize"
+                onAction={() => handleSynthesize(true)}
+              />
             </div>
           }
         />
@@ -471,9 +532,35 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
             and writes a canonical atlas — merging duplicates, resolving aliases,
             surfacing contradictions, and anchoring each place to its first revealed section.
           </p>
-          <button className="btn-cta" style={{ maxWidth: '240px' }} type="button" onClick={() => handleSynthesize(false)}>
-            Synthesize atlas
-          </button>
+          <div style={{
+            border: '1px solid var(--border-warm)',
+            borderRadius: '6px',
+            background: 'var(--parchment-card)',
+            padding: '1.25rem 1.5rem',
+            marginBottom: '0.6rem',
+          }}>
+            <p style={{
+              fontSize: '0.58rem', color: 'var(--ink-muted)',
+              letterSpacing: '0.16em', textTransform: 'uppercase',
+              textAlign: 'center', marginBottom: '0.5rem',
+            }}>
+              Estimated synthesis cost
+            </p>
+            <p style={{ textAlign: 'center', marginBottom: '0.5rem' }}>
+              <span style={{ fontSize: '1.75rem', color: 'var(--ink)', fontWeight: 400 }}>
+                ${synthCostLo.toFixed(2)} – ${synthCostHi.toFixed(2)}
+              </span>
+            </p>
+            <p style={{
+              fontSize: '0.7rem', color: 'var(--ink-faint)',
+              textAlign: 'center', fontFamily: 'monospace', marginBottom: '1.1rem',
+            }}>
+              {totalCandidates} candidate{totalCandidates !== 1 ? 's' : ''} · gpt-4o-mini · OpenAI provider
+            </p>
+            <button className="btn-cta" type="button" onClick={() => handleSynthesize(false)}>
+              Synthesize atlas
+            </button>
+          </div>
         </StepActive>
       ) : (
         <StepLocked n={4} label="Synthesize atlas" detail="Reads all harvested evidence in one pass and writes the canonical atlas automatically." />
@@ -484,10 +571,10 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
       {step4Done ? (
         <StepDone
           label="Atlas Explorer"
-          detail={`${canonicalEntityCount} place${canonicalEntityCount !== 1 ? 's' : ''} · interactive map`}
+          detail={`${canonicalEntityCount} place${canonicalEntityCount !== 1 ? 's' : ''} · no additional cost`}
           action={
             onViewAtlas ? (
-              <button type="button" className="btn-outline-warm" onClick={onViewAtlas}>
+              <button type="button" className="btn-cta" onClick={onViewAtlas}>
                 Open Atlas Explorer →
               </button>
             ) : undefined
