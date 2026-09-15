@@ -21,7 +21,7 @@ type View = 'workflow' | 'edit-sections' | 'atlas-explorer'
 const S = {
   shell:   { display: 'flex' as const, height: '100%' },
   sidebar: {
-    width: '272px', flexShrink: 0, background: 'var(--sidebar-bg)',
+    width: '288px', flexShrink: 0, backgroundColor: 'var(--sidebar-bg)',
     borderRight: '1px solid var(--sidebar-border)',
     overflowY: 'auto' as const, display: 'flex' as const, flexDirection: 'column' as const,
   },
@@ -148,8 +148,8 @@ export function SourceLibrary() {
   }
 
   const mainStyle = view === 'atlas-explorer'
-    ? { flex: 1, overflow: 'hidden' as const, background: 'var(--parchment)' }
-    : { flex: 1, overflowY: 'auto' as const, background: 'var(--parchment)', padding: '2.75rem 3.25rem' }
+    ? { flex: 1, overflow: 'hidden' as const, backgroundColor: 'var(--parchment)' }
+    : { flex: 1, overflowY: 'auto' as const, backgroundColor: 'var(--parchment)', padding: '3.5rem 4rem' }
 
   return (
     <div style={S.shell}>

@@ -21,14 +21,14 @@ type Phase = 'preflight' | 'ready' | 'extracting' | 'harvested' | 'synthesizing'
 // ── Step chrome ───────────────────────────────────────────────────────────────
 
 const CIRCLE: CSSProperties = {
-  width: '2rem',
-  height: '2rem',
+  width: '2.25rem',
+  height: '2.25rem',
   borderRadius: '50%',
   flexShrink: 0,
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  fontSize: '0.8rem',
+  fontSize: '0.88rem',
   fontWeight: 700,
 }
 
@@ -38,12 +38,12 @@ function StepDone({ label, detail, action }: {
   action?: React.ReactNode
 }) {
   return (
-    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
+    <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'flex-start' }}>
       <div className="wax-seal">✦</div>
-      <div style={{ flex: 1, paddingTop: '0.3rem' }}>
-        <div style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--ink)' }}>{label}</div>
-        <div style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', marginTop: '0.1rem' }}>{detail}</div>
-        {action && <div style={{ marginTop: '0.75rem' }}>{action}</div>}
+      <div style={{ flex: 1, paddingTop: '0.35rem' }}>
+        <div style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--ink)' }}>{label}</div>
+        <div style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', marginTop: '0.18rem' }}>{detail}</div>
+        {action && <div style={{ marginTop: '1rem' }}>{action}</div>}
       </div>
     </div>
   )
@@ -55,12 +55,12 @@ function StepActive({ n, label, children }: {
   children: ReactNode
 }) {
   return (
-    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
+    <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'flex-start' }}>
       <div style={{ ...CIRCLE, background: 'var(--step-active-circle)', color: '#fff' }}>{n}</div>
-      <div style={{ flex: 1, paddingTop: '0.25rem' }}>
+      <div style={{ flex: 1, paddingTop: '0.3rem' }}>
         <div style={{
-          fontWeight: 600, fontSize: '1.05rem',
-          color: 'var(--step-active-label)', marginBottom: '0.65rem',
+          fontWeight: 600, fontSize: '1.25rem',
+          color: 'var(--step-active-label)', marginBottom: '0.85rem',
         }}>
           {label}
         </div>
@@ -72,11 +72,11 @@ function StepActive({ n, label, children }: {
 
 function StepLocked({ n, label, detail }: { n: number; label: string; detail: string }) {
   return (
-    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start', opacity: 0.38 }}>
+    <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'flex-start', opacity: 0.38 }}>
       <div style={{ ...CIRCLE, border: '2px solid var(--step-locked)', color: 'var(--step-locked)' }}>{n}</div>
-      <div style={{ flex: 1, paddingTop: '0.3rem' }}>
-        <div style={{ fontWeight: 500, fontSize: '0.92rem', color: 'var(--ink-muted)' }}>{label}</div>
-        <div style={{ fontSize: '0.75rem', color: 'var(--ink-faint)', marginTop: '0.1rem' }}>{detail}</div>
+      <div style={{ flex: 1, paddingTop: '0.35rem' }}>
+        <div style={{ fontWeight: 500, fontSize: '1.05rem', color: 'var(--ink-muted)' }}>{label}</div>
+        <div style={{ fontSize: '0.85rem', color: 'var(--ink-faint)', marginTop: '0.15rem' }}>{detail}</div>
       </div>
     </div>
   )
@@ -84,8 +84,8 @@ function StepLocked({ n, label, detail }: { n: number; label: string; detail: st
 
 function StepConnector() {
   return (
-    <div style={{ display: 'flex', gap: '1rem', height: '2rem', margin: '0.1rem 0' }}>
-      <div style={{ width: '2rem', flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+    <div style={{ display: 'flex', gap: '1.25rem', height: '2.5rem', margin: '0.15rem 0' }}>
+      <div style={{ width: '2.25rem', flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
         <div style={{ width: '1px', flex: 1, background: 'var(--gold)', opacity: 0.3 }} />
         <span style={{ color: 'var(--gold)', opacity: 0.38, fontSize: '0.4rem', lineHeight: 1 }}>◆</span>
         <div style={{ width: '1px', flex: 1, background: 'var(--gold)', opacity: 0.3 }} />
@@ -96,7 +96,7 @@ function StepConnector() {
 
 function Ornament() {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', margin: '1rem 0 2rem' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', margin: '1.5rem 0 2.75rem' }}>
       <div style={{ flex: 1, height: '1px', background: 'var(--gold)', opacity: 0.3 }} />
       <span style={{ fontSize: '0.6rem', color: 'var(--gold)', opacity: 0.6 }}>◆</span>
       <div style={{ flex: 1, height: '1px', background: 'var(--gold)', opacity: 0.3 }} />
@@ -147,7 +147,7 @@ function RerunCard({ label, costLo, costHi, meta, action, onAction }: {
         className="btn-cta"
         type="button"
         onClick={onAction}
-        style={{ width: 'auto', flexShrink: 0, padding: '0.45rem 1rem', fontSize: '0.82rem' }}
+        style={{ width: 'auto', flexShrink: 0, padding: '0.55rem 1.2rem', fontSize: '0.92rem' }}
       >
         {action}
       </button>
@@ -199,6 +199,12 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
         }))
         setAllCandidates(bySection)
         setTotalCandidates(total)
+        // Fetch preflight to get per-book cost estimate (sum all sections, ignore cache_valid)
+        try {
+          const preflightResults = await Promise.all(sections.map((s) => fetchPreflight(s.id)))
+          const cost = preflightResults.reduce((sum, r) => sum + (r.estimated_cost_usd ?? 0), 0)
+          setTotalCost(cost)
+        } catch { /* preflight optional in done state */ }
         setPhase('done')
         return
       }
@@ -310,19 +316,19 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
   const synthCostHi = synthCostBase * 1.15
 
   return (
-    <div style={{ maxWidth: '680px', margin: '0 auto' }}>
+    <div style={{ maxWidth: '720px', margin: '0 auto' }}>
       {/* Document header */}
       <p style={{
-        fontSize: '0.62rem', color: 'var(--ink-muted)',
-        textTransform: 'uppercase', letterSpacing: '0.16em', marginBottom: '0.4rem',
+        fontSize: '0.72rem', color: 'var(--ink-muted)',
+        textTransform: 'uppercase', letterSpacing: '0.18em', marginBottom: '0.55rem',
       }}>
         Source work
       </p>
-      <h2 style={{ fontSize: '1.9rem', fontWeight: 400, color: 'var(--ink)', lineHeight: 1.2 }}>
+      <h2 style={{ fontSize: '2.4rem', fontWeight: 400, color: 'var(--ink)', lineHeight: 1.15 }}>
         {document.title}
       </h2>
       {document.author && (
-        <p style={{ fontSize: '0.85rem', color: 'var(--ink-muted)', marginTop: '0.25rem' }}>
+        <p style={{ fontSize: '1rem', color: 'var(--ink-muted)', marginTop: '0.35rem' }}>
           {document.author}{document.year ? `, ${document.year}` : ''}
         </p>
       )}
@@ -334,7 +340,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
         detail={document.original_filename}
         action={
           <details>
-            <summary style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+            <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
               ▸ Inspect metadata
             </summary>
             <div style={{ marginTop: '0.6rem', display: 'flex', flexDirection: 'column', gap: '0.18rem' }}>
@@ -343,7 +349,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
                 ['Author', document.author || '—'],
                 ['Year',   document.year != null ? String(document.year) : 'N/A'],
               ].map(([label, value]) => (
-                <div key={label} style={{ display: 'flex', gap: '0.5rem', fontSize: '0.78rem' }}>
+                <div key={label} style={{ display: 'flex', gap: '0.5rem', fontSize: '0.88rem' }}>
                   <span style={{ color: 'var(--ink-faint)', minWidth: '3.5rem' }}>{label}</span>
                   <span style={{ color: 'var(--ink)' }}>{value}</span>
                 </div>
@@ -360,12 +366,12 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
         detail={`${sections.length} section${sections.length !== 1 ? 's' : ''} ready`}
         action={
           <details>
-            <summary style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+            <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
               ▸ Inspect sections ({sections.length})
             </summary>
             <div style={{ marginTop: '0.65rem' }}>
               {sections.map((s, i) => (
-                <div key={s.id} style={{ display: 'flex', gap: '0.5rem', fontSize: '0.78rem', marginBottom: '0.2rem' }}>
+                <div key={s.id} style={{ display: 'flex', gap: '0.5rem', fontSize: '0.88rem', marginBottom: '0.3rem' }}>
                   <span style={{ color: 'var(--gold)', minWidth: '2rem', fontSize: '0.62rem', flexShrink: 0 }}>§{i + 1}</span>
                   <span style={{ color: 'var(--ink)' }}>{s.title}</span>
                 </div>
@@ -392,7 +398,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
                 onAction={() => handleHarvest(true)}
               />
               <details>
-                <summary style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+                <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
                   ▸ Inspect raw candidates ({totalCandidates})
                 </summary>
                 <div style={{ marginTop: '0.75rem' }}>
@@ -421,13 +427,13 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
             {currentTitle && <> · <em>{currentTitle}</em></>}
             {' · '}{(elapsedMs / 1000).toFixed(1)}s
           </p>
-          <p style={{ fontSize: '0.82rem', color: 'var(--ink-faint)' }}>
+          <p style={{ fontSize: '0.92rem', color: 'var(--ink-faint)' }}>
             {candidatesSoFar} candidate{candidatesSoFar !== 1 ? 's' : ''} so far
           </p>
         </StepActive>
       ) : phase === 'ready' ? (
         <StepActive n={3} label="Harvest evidence">
-          <p style={{ fontSize: '0.82rem', color: 'var(--ink-muted)', marginBottom: '1rem', lineHeight: 1.55 }}>
+          <p style={{ fontSize: '0.95rem', color: 'var(--ink-muted)', marginBottom: '1.25rem', lineHeight: 1.6 }}>
             Run the extraction model on each section to collect cartographic evidence —
             places, spatial claims, routes, and visual descriptions — before synthesis begins.
           </p>
@@ -441,16 +447,16 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
             justifyContent: 'space-between',
             gap: '1rem',
           }}>
-            <span style={{ fontSize: '0.58rem', color: 'var(--ink-muted)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
+            <span style={{ fontSize: '0.68rem', color: 'var(--ink-muted)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
               Est. extraction cost
             </span>
             <span>
               {totalCost !== null ? (
-                <span style={{ fontSize: '0.92rem', color: 'var(--ink)', fontFamily: 'monospace' }}>
+                <span style={{ fontSize: '1rem', color: 'var(--ink)', fontFamily: 'monospace' }}>
                   ${(totalCost * 0.85).toFixed(2)} – ${(totalCost * 1.15).toFixed(2)}
                 </span>
               ) : (
-                <span style={{ fontSize: '0.82rem', color: 'var(--ink-faint)', fontFamily: 'monospace' }}>Estimating…</span>
+                <span style={{ fontSize: '1rem', color: 'var(--ink-faint)', fontFamily: 'monospace' }}>Estimating…</span>
               )}
             </span>
           </div>
@@ -464,7 +470,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
         </StepActive>
       ) : (
         <StepActive n={3} label="Harvest evidence">
-          <p style={{ fontSize: '0.82rem', color: 'var(--ink-faint)' }}>
+          <p style={{ fontSize: '0.92rem', color: 'var(--ink-faint)' }}>
             Checking sections and estimating cost…
           </p>
         </StepActive>
@@ -488,7 +494,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
               />
               {atlasEntities.length > 0 && (
                 <details>
-                  <summary style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+                  <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
                     ▸ Inspect canonical places ({canonicalEntityCount})
                   </summary>
                   <div style={{ marginTop: '0.65rem', display: 'flex', flexDirection: 'column', gap: '0.22rem' }}>
@@ -496,7 +502,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
                       .slice()
                       .sort((a, b) => a.name.localeCompare(b.name))
                       .map(e => (
-                        <div key={e.id} style={{ fontSize: '0.78rem', color: 'var(--ink)', display: 'flex', gap: '0.35rem', alignItems: 'baseline' }}>
+                        <div key={e.id} style={{ fontSize: '0.88rem', color: 'var(--ink)', display: 'flex', gap: '0.35rem', alignItems: 'baseline' }}>
                           <span style={{ flexShrink: 0, color: 'var(--gold)', fontSize: '0.58rem' }}>◉</span>
                           <span>{e.name}</span>
                           {e.place_kind && (
@@ -524,13 +530,13 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
           <p style={{ fontSize: '0.85rem', color: 'var(--ink-muted)', marginBottom: '0.2rem' }}>
             Synthesizing {totalCandidates} evidence fragment{totalCandidates !== 1 ? 's' : ''} in one pass · {(synthElapsedMs / 1000).toFixed(1)}s
           </p>
-          <p style={{ fontSize: '0.78rem', color: 'var(--ink-faint)' }}>
+          <p style={{ fontSize: '0.92rem', color: 'var(--ink-faint)' }}>
             Merging entities, resolving aliases, anchoring provenance…
           </p>
         </StepActive>
       ) : phase === 'harvested' ? (
         <StepActive n={4} label="Synthesize atlas">
-          <p style={{ fontSize: '0.82rem', color: 'var(--ink-muted)', marginBottom: '1rem', lineHeight: 1.55 }}>
+          <p style={{ fontSize: '0.95rem', color: 'var(--ink-muted)', marginBottom: '1.25rem', lineHeight: 1.6 }}>
             Stage 2 reads all {totalCandidates} evidence fragment{totalCandidates !== 1 ? 's' : ''} in one pass
             and writes a canonical atlas — merging duplicates, resolving aliases,
             surfacing contradictions, and anchoring each place to its first revealed section.
@@ -545,10 +551,10 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
             justifyContent: 'space-between',
             gap: '1rem',
           }}>
-            <span style={{ fontSize: '0.58rem', color: 'var(--ink-muted)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
+            <span style={{ fontSize: '0.68rem', color: 'var(--ink-muted)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
               Est. synthesis cost
             </span>
-            <span style={{ fontSize: '0.92rem', color: 'var(--ink)', fontFamily: 'monospace' }}>
+            <span style={{ fontSize: '1rem', color: 'var(--ink)', fontFamily: 'monospace' }}>
               ${synthCostLo.toFixed(2)} – ${synthCostHi.toFixed(2)}
             </span>
           </div>
