@@ -17,12 +17,26 @@ export type ExtractionRunResult = {
 
 export async function fetchPreflight(sectionId: string): Promise<PreflightResult> {
   const res = await fetch(`${BASE}/api/sections/${sectionId}/extract/preflight`)
-  if (!res.ok) throw new Error('Preflight failed')
+  if (!res.ok) {
+    let detail = `Preflight failed (HTTP ${res.status})`
+    try {
+      const body = await res.json()
+      if (body?.detail) detail = body.detail
+    } catch { /* ignore parse errors */ }
+    throw new Error(detail)
+  }
   return res.json()
 }
 
 export async function triggerExtraction(sectionId: string): Promise<ExtractionRunResult> {
   const res = await fetch(`${BASE}/api/sections/${sectionId}/extract`, { method: 'POST' })
-  if (!res.ok) throw new Error(`Extraction failed for section ${sectionId}`)
+  if (!res.ok) {
+    let detail = `Extraction failed (HTTP ${res.status})`
+    try {
+      const body = await res.json()
+      if (body?.detail) detail = body.detail
+    } catch { /* ignore parse errors */ }
+    throw new Error(detail)
+  }
   return res.json()
 }
