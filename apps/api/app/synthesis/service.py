@@ -6,9 +6,11 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.db.models import SourceSection
+from app.domain.world import MapClaim, MapEntity, MapTravelRule
 from app.extraction.models import Candidate
 from app.synthesis.models import SynthesisItem, SynthesisRun
 from app.synthesis.provider import SynthesisProvider
+from app.synthesis.review import canonicalize_synthesis_run
 
 _log = logging.getLogger(__name__)
 
@@ -25,6 +27,8 @@ def _build_evidence_ledger(session: Session, document_id: str) -> list[dict]:
 
     ledger: list[dict] = []
     for section in sections:
+        if section.section_kind != "narrative":
+            continue
         candidates = (
             session.query(Candidate)
             .filter(Candidate.section_id == section.id)
@@ -49,6 +53,25 @@ def _build_evidence_ledger(session: Session, document_id: str) -> list[dict]:
 def _evidence_hash(ledger: list[dict]) -> str:
     serialized = json.dumps(ledger, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(serialized.encode()).hexdigest()
+
+
+def _has_canonical_records(session: Session, document_id: str) -> bool:
+    return (
+        session.query(MapEntity)
+        .filter(
+            MapEntity.provenance_document_id == document_id,
+            MapEntity.state == "active",
+        )
+        .first()
+    ) is not None
+
+
+def _supersede_canonical_records(session: Session, document_id: str) -> None:
+    for model in (MapEntity, MapClaim, MapTravelRule):
+        session.query(model).filter(
+            model.provenance_document_id == document_id,
+            model.state == "active",
+        ).update({"state": "superseded"}, synchronize_session=False)
 
 
 def run_synthesis(
@@ -78,7 +101,14 @@ def run_synthesis(
                 .all()
             )
             _log.info("Synthesis cache hit for document %s (hash %s)", document_id, ledger_hash[:12])
+            # Canonicalize if records were lost (e.g. fresh DB restored from backup)
+            if not _has_canonical_records(session, document_id):
+                canonicalize_synthesis_run(session, items, document_id)
+                session.commit()
             return existing, items
+
+    # Fresh run: supersede any existing canonical records first
+    _supersede_canonical_records(session, document_id)
 
     run = SynthesisRun(
         document_id=document_id,
@@ -119,10 +149,12 @@ def run_synthesis(
             session.add(item)
             items.append(item)
 
+        session.flush()
+        canonical_count = canonicalize_synthesis_run(session, items, document_id)
         session.commit()
         _log.info(
-            "Synthesis completed for document %s: %d items (prompt v%s)",
-            document_id, len(items), result.synthesis_prompt_version,
+            "Synthesis completed for document %s: %d items, %d canonical records (prompt v%s)",
+            document_id, len(items), canonical_count, result.synthesis_prompt_version,
         )
         return run, items
 

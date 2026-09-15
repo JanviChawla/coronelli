@@ -17,6 +17,7 @@ class ProposedSection:
     page_start: int | None = None
     page_end: int | None = None
     user_corrected: bool = False
+    section_kind: str = "narrative"
 
 
 def create_document(
@@ -28,6 +29,10 @@ def create_document(
     content_hash: str,
     parser_version: str,
     category: Literal["demo", "private"],
+    raw_text: str | None = None,
+    narrative_body_start: int | None = None,
+    narrative_body_end: int | None = None,
+    normalization_diagnostics: list | None = None,
 ) -> SourceDocument:
     doc = SourceDocument(
         id=str(uuid.uuid4()),
@@ -38,6 +43,10 @@ def create_document(
         imported_at=datetime.now(timezone.utc),
         parser_version=parser_version,
         category=category,
+        raw_text=raw_text,
+        narrative_body_start=narrative_body_start,
+        narrative_body_end=narrative_body_end,
+        normalization_diagnostics=normalization_diagnostics or None,
     )
     session.add(doc)
     session.commit()
@@ -68,6 +77,7 @@ def replace_sections(
             page_start=prop.page_start,
             page_end=prop.page_end,
             user_corrected=prop.user_corrected,
+            section_kind=prop.section_kind,
         )
         session.add(row)
         new_rows.append(row)

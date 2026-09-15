@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import JSON
 
 from .base import Base
 
@@ -31,6 +32,10 @@ class SourceDocument(Base):
         String, ForeignKey("series.id", ondelete="SET NULL"), nullable=True
     )
     series_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    narrative_body_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    narrative_body_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    normalization_diagnostics: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     sections: Mapped[list["SourceSection"]] = relationship(
         "SourceSection",
@@ -53,5 +58,8 @@ class SourceSection(Base):
     page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
     user_corrected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    section_kind: Mapped[str] = mapped_column(
+        String, nullable=False, default="narrative", server_default="narrative"
+    )
 
     document: Mapped["SourceDocument"] = relationship("SourceDocument", back_populates="sections")

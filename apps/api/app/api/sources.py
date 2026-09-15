@@ -23,6 +23,7 @@ class SectionResponse(BaseModel):
     page_start: int | None
     page_end: int | None
     user_corrected: bool
+    section_kind: str = "narrative"
 
     model_config = {"from_attributes": True}
 
