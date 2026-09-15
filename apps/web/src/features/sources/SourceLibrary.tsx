@@ -12,102 +12,72 @@ import {
   type Section,
   type SectionUpdate,
 } from './sourceApi'
+import { fetchAtlas } from '../atlas/atlasApi'
+import { AtlasExplorer, InspectorContent } from '../atlas/AtlasExplorer'
+import type { InspectorTarget } from '../atlas/atlasGraph'
 
-type View = 'workflow' | 'edit-sections'
+type View = 'workflow' | 'edit-sections' | 'atlas-explorer'
 
 const S = {
-  shell: {
-    display: 'flex' as const,
-    flexDirection: 'column' as const,
-    height: '100%',
-  },
+  shell: { display: 'flex' as const, flexDirection: 'column' as const, height: '100%' },
   header: {
-    background: 'var(--sidebar-bg)',
-    borderBottom: '1px solid var(--sidebar-border)',
-    display: 'flex' as const,
-    alignItems: 'center' as const,
-    justifyContent: 'space-between' as const,
-    padding: '0 1.75rem',
-    height: '52px',
-    flexShrink: 0,
+    background: 'var(--sidebar-bg)', borderBottom: '1px solid var(--sidebar-border)',
+    display: 'flex' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const,
+    padding: '0 1.75rem', height: '52px', flexShrink: 0,
   },
-  brand: {
-    fontSize: '1.55rem',
-    color: 'var(--gold)',
-    letterSpacing: '0.04em',
-    fontWeight: 400,
-  },
-  tagline: {
-    fontSize: '0.6rem',
-    color: 'var(--sidebar-muted)',
-    letterSpacing: '0.22em',
-    textTransform: 'uppercase' as const,
-  },
-  body: {
-    flex: 1,
-    display: 'flex' as const,
-    overflow: 'hidden' as const,
-  },
+  brand:   { fontSize: '1.55rem', color: 'var(--gold)', letterSpacing: '0.04em', fontWeight: 400 },
+  tagline: { fontSize: '0.6rem', color: 'var(--sidebar-muted)', letterSpacing: '0.22em', textTransform: 'uppercase' as const },
+  body:    { flex: 1, display: 'flex' as const, overflow: 'hidden' as const },
   sidebar: {
-    width: '272px',
-    flexShrink: 0,
-    background: 'var(--sidebar-bg)',
+    width: '272px', flexShrink: 0, background: 'var(--sidebar-bg)',
     borderRight: '1px solid var(--sidebar-border)',
-    overflowY: 'auto' as const,
-    display: 'flex' as const,
-    flexDirection: 'column' as const,
-  },
-  main: {
-    flex: 1,
-    overflowY: 'auto' as const,
-    background: 'var(--parchment)',
-    padding: '2.75rem 3.25rem',
+    overflowY: 'auto' as const, display: 'flex' as const, flexDirection: 'column' as const,
   },
   inspector: {
-    width: '288px',
-    flexShrink: 0,
-    background: 'var(--parchment-alt)',
-    borderLeft: '1px solid var(--border-warm)',
-    overflowY: 'auto' as const,
-    padding: '1.75rem 1.5rem',
+    width: '288px', flexShrink: 0, background: 'var(--parchment-alt)',
+    borderLeft: '1px solid var(--border-warm)', overflowY: 'auto' as const, padding: '1.75rem 1.5rem',
   },
   footer: {
-    background: 'var(--sidebar-bg)',
-    borderTop: '1px solid var(--sidebar-border)',
-    height: '40px',
-    display: 'flex' as const,
-    alignItems: 'center' as const,
-    justifyContent: 'space-between' as const,
-    padding: '0 1.75rem',
-    flexShrink: 0,
+    background: 'var(--sidebar-bg)', borderTop: '1px solid var(--sidebar-border)',
+    height: '40px', display: 'flex' as const, alignItems: 'center' as const,
+    justifyContent: 'space-between' as const, padding: '0 1.75rem', flexShrink: 0,
   },
-  footerText: {
-    fontSize: '0.68rem',
-    color: 'var(--sidebar-muted)',
-    letterSpacing: '0.1em',
-    textTransform: 'uppercase' as const,
-  },
+  footerText: { fontSize: '0.68rem', color: 'var(--sidebar-muted)', letterSpacing: '0.1em', textTransform: 'uppercase' as const },
 }
 
 export function SourceLibrary() {
-  const [documents, setDocuments] = useState<Document[]>([])
-  const [selected, setSelected] = useState<Document | null>(null)
-  const [sections, setSections] = useState<Section[]>([])
-  const [view, setView] = useState<View>('workflow')
-  const [error, setError] = useState<string | null>(null)
-  const [importing, setImporting] = useState(false)
+  const [documents, setDocuments]               = useState<Document[]>([])
+  const [selected, setSelected]                 = useState<Document | null>(null)
+  const [sections, setSections]                 = useState<Section[]>([])
+  const [view, setView]                         = useState<View>('workflow')
+  const [error, setError]                       = useState<string | null>(null)
+  const [importing, setImporting]               = useState(false)
+  const [hasApprovedAtlas, setHasApprovedAtlas] = useState(false)
+  const [inspectorTarget, setInspectorTarget]   = useState<InspectorTarget>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    fetchDocuments().then(setDocuments).catch(() => {})
-  }, [])
+  const sectionTitles = new Map(sections.map(s => [s.id, s.title]))
+
+  useEffect(() => { fetchDocuments().then(setDocuments).catch(() => {}) }, [])
+
+  async function checkAtlas(docId: string) {
+    try {
+      const atlas = await fetchAtlas(docId)
+      setHasApprovedAtlas(atlas.entity_count > 0)
+    } catch {
+      setHasApprovedAtlas(false)
+    }
+  }
 
   async function handleSelect(doc: Document) {
     setSelected(doc)
     setView('workflow')
     setError(null)
+    setInspectorTarget(null)
+    setHasApprovedAtlas(false)
     try {
       setSections(await fetchSections(doc.id))
+      await checkAtlas(doc.id)
     } catch {
       setError('Could not load sections.')
     }
@@ -120,10 +90,11 @@ export function SourceLibrary() {
     setError(null)
     try {
       const result = await importDocument(file, 'demo')
-      setDocuments((prev) => [...prev, result.document])
+      setDocuments(prev => [...prev, result.document])
       setSelected(result.document)
       setSections(result.sections)
       setView('workflow')
+      setHasApprovedAtlas(false)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Import failed.')
     } finally {
@@ -135,10 +106,13 @@ export function SourceLibrary() {
   async function handleDelete(doc: Document) {
     try {
       await deleteDocument(doc.id)
-      setDocuments((prev) => prev.filter((d) => d.id !== doc.id))
+      setDocuments(prev => prev.filter(d => d.id !== doc.id))
       if (selected?.id === doc.id) {
         setSelected(null)
         setSections([])
+        setHasApprovedAtlas(false)
+        setInspectorTarget(null)
+        setView('workflow')
       }
     } catch {
       setError('Could not delete document.')
@@ -156,47 +130,40 @@ export function SourceLibrary() {
     }
   }
 
+  function handleAtlasLoaded(entityCount: number) {
+    setHasApprovedAtlas(entityCount > 0)
+  }
+
+  // Main panel style differs in explorer mode (no padding, no scroll)
+  const mainStyle = view === 'atlas-explorer'
+    ? { flex: 1, overflow: 'hidden' as const, background: 'var(--parchment)' }
+    : { flex: 1, overflowY: 'auto' as const, background: 'var(--parchment)', padding: '2.75rem 3.25rem' }
+
   return (
     <div style={S.shell}>
-      {/* ── Header ────────────────────────────────────────────────── */}
+      {/* ── Header ──────────────────────────────────────────────────── */}
       <header style={S.header}>
         <span style={S.brand}>Coronelli</span>
         <span style={S.tagline}>Texts for places · a richer world</span>
       </header>
 
-      {/* ── Body ──────────────────────────────────────────────────── */}
+      {/* ── Body ────────────────────────────────────────────────────── */}
       <div style={S.body}>
 
         {/* Sidebar */}
         <nav style={S.sidebar}>
-          {/* Library heading */}
           <div style={{ padding: '1.5rem 1.25rem 0.75rem' }}>
-            <p style={{
-              fontSize: '1.2rem', fontWeight: 400,
-              color: 'var(--sidebar-text)', marginBottom: '0.85rem',
-            }}>
+            <p style={{ fontSize: '1.2rem', fontWeight: 400, color: 'var(--sidebar-text)', marginBottom: '0.85rem' }}>
               Library
             </p>
-
-            {/* Add to Library */}
             <label style={{ display: 'block', cursor: importing ? 'wait' : 'pointer' }}>
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".txt,.md,.pdf"
-                style={{ display: 'none' }}
-                onChange={handleImportFile}
-                disabled={importing}
-              />
+              <input ref={fileRef} type="file" accept=".txt,.md,.pdf"
+                style={{ display: 'none' }} onChange={handleImportFile} disabled={importing} />
               <span style={{
                 display: 'flex', alignItems: 'center', gap: '0.4rem',
-                border: '1px solid var(--sidebar-border)',
-                borderRadius: '4px',
-                padding: '0.4rem 0.85rem',
-                color: 'var(--sidebar-text)',
-                fontSize: '0.8rem',
-                opacity: importing ? 0.55 : 1,
-                userSelect: 'none' as const,
+                border: '1px solid var(--sidebar-border)', borderRadius: '4px',
+                padding: '0.4rem 0.85rem', color: 'var(--sidebar-text)',
+                fontSize: '0.8rem', opacity: importing ? 0.55 : 1, userSelect: 'none' as const,
               }}>
                 + {importing ? 'Importing…' : 'Add to Library'}
               </span>
@@ -204,23 +171,13 @@ export function SourceLibrary() {
           </div>
 
           {error && (
-            <p style={{
-              padding: '0 1.25rem 0.5rem',
-              fontSize: '0.73rem',
-              color: '#e87070',
-            }}>
+            <p style={{ padding: '0 1.25rem 0.5rem', fontSize: '0.73rem', color: '#e87070' }}>
               {error}
             </p>
           )}
 
-          {/* Standalone works */}
           <div style={{ padding: '0.5rem 1.25rem 0.3rem' }}>
-            <p style={{
-              fontSize: '0.58rem',
-              color: 'var(--sidebar-muted)',
-              letterSpacing: '0.13em',
-              textTransform: 'uppercase',
-            }}>
+            <p style={{ fontSize: '0.58rem', color: 'var(--sidebar-muted)', letterSpacing: '0.13em', textTransform: 'uppercase' }}>
               Standalone works
             </p>
           </div>
@@ -231,136 +188,112 @@ export function SourceLibrary() {
                 No works yet
               </li>
             )}
-            {documents.map((doc) => (
+            {documents.map(doc => (
               <li key={doc.id} style={{ display: 'flex', alignItems: 'center' }}>
                 <button
                   className={`sidebar-item${selected?.id === doc.id ? ' active' : ''}`}
                   onClick={() => handleSelect(doc)}
                 >
                   <span style={{ fontSize: '0.75rem', opacity: 0.5, flexShrink: 0 }}>◻</span>
-                  <span style={{
-                    flex: 1, overflow: 'hidden',
-                    textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {doc.title}
                   </span>
                   {selected?.id === doc.id && (
                     <span style={{ fontSize: '0.7rem', opacity: 0.6, flexShrink: 0 }}>›</span>
                   )}
                 </button>
-                <button
-                  className="sidebar-delete-btn"
-                  onClick={() => handleDelete(doc)}
-                  title={`Remove ${doc.title}`}
-                >
+                <button className="sidebar-delete-btn" onClick={() => handleDelete(doc)} title={`Remove ${doc.title}`}>
                   ×
                 </button>
               </li>
             ))}
           </ul>
 
-          {/* Series */}
           <div style={{
             borderTop: '1px solid var(--sidebar-border)',
             padding: '0.75rem 1.25rem 0.35rem',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           }}>
-            <p style={{
-              fontSize: '0.58rem',
-              color: 'var(--sidebar-muted)',
-              letterSpacing: '0.13em',
-              textTransform: 'uppercase',
-            }}>
+            <p style={{ fontSize: '0.58rem', color: 'var(--sidebar-muted)', letterSpacing: '0.13em', textTransform: 'uppercase' }}>
               Series
             </p>
             <button style={{
-              fontSize: '0.68rem',
-              color: 'var(--sidebar-muted)',
-              background: 'none',
-              border: '1px solid var(--sidebar-border)',
-              borderRadius: '3px',
-              padding: '0.1rem 0.4rem',
-              cursor: 'not-allowed',
-              opacity: 0.6,
+              fontSize: '0.68rem', color: 'var(--sidebar-muted)', background: 'none',
+              border: '1px solid var(--sidebar-border)', borderRadius: '3px',
+              padding: '0.1rem 0.4rem', cursor: 'not-allowed', opacity: 0.6,
             }}>
               + New series
             </button>
           </div>
-          <p style={{
-            padding: '0.2rem 1.25rem 1rem',
-            fontSize: '0.75rem',
-            color: 'var(--sidebar-muted)',
-            fontStyle: 'italic',
-          }}>
+          <p style={{ padding: '0.2rem 1.25rem 1rem', fontSize: '0.75rem', color: 'var(--sidebar-muted)', fontStyle: 'italic' }}>
             Coming soon
           </p>
         </nav>
 
         {/* Main content */}
-        <main style={S.main}>
+        <main style={mainStyle}>
           {!selected ? (
             <div style={{ textAlign: 'center', paddingTop: '5rem', color: 'var(--ink-faint)' }}>
               <p style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>Select a work from the library</p>
               <p style={{ fontSize: '0.82rem' }}>or add one with + Add to Library</p>
             </div>
+          ) : view === 'atlas-explorer' ? (
+            <AtlasExplorer
+              documentId={selected.id}
+              onSelect={setInspectorTarget}
+              onAtlasLoaded={handleAtlasLoaded}
+            />
           ) : view === 'edit-sections' ? (
             <>
-              <button
-                type="button"
-                onClick={() => setView('workflow')}
-                style={{
-                  fontSize: '0.8rem', marginBottom: '1.25rem',
-                  color: 'var(--ink-muted)', background: 'none',
-                  border: 'none', cursor: 'pointer', padding: 0,
-                }}
-              >
+              <button type="button" onClick={() => setView('workflow')}
+                style={{ fontSize: '0.8rem', marginBottom: '1.25rem', color: 'var(--ink-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
                 ← Back to workflow
               </button>
-              <SectionEditor
-                documentId={selected.id}
-                sections={sections}
-                onSave={handleSave}
-              />
+              <SectionEditor documentId={selected.id} sections={sections} onSave={handleSave} />
             </>
           ) : (
             <SourceWorkflow
               document={selected}
               sections={sections}
               onEditSections={() => setView('edit-sections')}
+              onAtlasChanged={() => selected && checkAtlas(selected.id)}
             />
           )}
         </main>
 
         {/* Inspector */}
         <aside style={S.inspector}>
-          <h3 style={{
-            fontSize: '1.2rem', fontWeight: 400,
-            color: 'var(--ink)', marginBottom: '0.35rem',
-          }}>
+          <h3 style={{ fontSize: '1.2rem', fontWeight: 400, color: 'var(--ink)', marginBottom: '0.35rem' }}>
             Inspector
           </h3>
-          <div style={{
-            width: '40px', height: '1px',
-            background: 'var(--gold)', marginBottom: '2rem',
-          }} />
-          <div style={{ textAlign: 'center', paddingTop: '2rem', color: 'var(--ink-faint)' }}>
-            <div style={{ fontSize: '2.25rem', marginBottom: '0.85rem', opacity: 0.25 }}>⊙</div>
-            <p style={{ fontSize: '0.8rem', lineHeight: 1.55 }}>
-              Select a place, route, or source detail to inspect it.
-            </p>
-          </div>
+          <div style={{ width: '40px', height: '1px', background: 'var(--gold)', marginBottom: '2rem' }} />
+          <InspectorContent target={inspectorTarget} sectionTitles={sectionTitles} />
         </aside>
       </div>
 
-      {/* ── Footer ────────────────────────────────────────────────── */}
+      {/* ── Footer ──────────────────────────────────────────────────── */}
       <footer style={S.footer}>
-        <span style={S.footerText}>◻ Atlas Explorer</span>
+        {view === 'atlas-explorer' ? (
+          <button
+            type="button"
+            onClick={() => { setView('workflow'); setInspectorTarget(null) }}
+            style={{ ...S.footerText, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--gold)' }}
+          >
+            ← Workflow
+          </button>
+        ) : hasApprovedAtlas && selected ? (
+          <button
+            type="button"
+            onClick={() => { setView('atlas-explorer'); setInspectorTarget(null) }}
+            style={{ ...S.footerText, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--gold)' }}
+          >
+            ◻ Atlas Explorer →
+          </button>
+        ) : (
+          <span style={S.footerText}>◻ Atlas Explorer</span>
+        )}
         <span style={S.footerText}>
-          {selected && sections.length > 0
-            ? '● Atlas available'
-            : '⊘ Available after extraction is complete'}
+          {hasApprovedAtlas && selected ? '● Atlas ready' : '⊘ Available after atlas is approved'}
         </span>
       </footer>
     </div>

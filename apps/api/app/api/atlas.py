@@ -20,6 +20,8 @@ class ClaimOut(BaseModel):
     object_refs: list | None
     payload: dict
     confidence: float | None
+    excerpt: str | None = None
+    status: str = "explicit"
 
     model_config = {"from_attributes": True}
 
@@ -30,6 +32,7 @@ class AtlasEntityOut(BaseModel):
     place_kind: str | None
     aliases: list | None
     state: str
+    status: str
     provenance_section_id: str | None
     payload: dict
     claims: list[ClaimOut]
@@ -97,6 +100,7 @@ def get_atlas(document_id: str, db: Session = Depends(get_db)) -> AtlasResponse:
             place_kind=e.place_kind,
             aliases=e.aliases,
             state=e.state,
+            status=e.status,
             provenance_section_id=e.provenance_section_id,
             payload=e.payload,
             claims=[ClaimOut.model_validate(c) for c in claims_by_entity.get(e.id, [])],

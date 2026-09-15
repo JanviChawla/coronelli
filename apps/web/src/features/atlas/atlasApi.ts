@@ -8,6 +8,8 @@ export type AtlasClaim = {
   object_refs: string[] | null
   payload: Record<string, unknown>
   confidence: number | null
+  excerpt: string | null
+  status: string
 }
 
 export type AtlasEntity = {
@@ -16,6 +18,7 @@ export type AtlasEntity = {
   place_kind: string | null
   aliases: string[] | null
   state: string
+  status: string
   provenance_section_id: string | null
   payload: Record<string, unknown>
   claims: AtlasClaim[]

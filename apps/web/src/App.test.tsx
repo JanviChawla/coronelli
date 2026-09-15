@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import App from './App'
 
-test('renders coronelli heading', () => {
+test('renders coronelli brand', () => {
   render(<App />)
-  expect(screen.getByRole('heading', { name: /coronelli/i })).toBeInTheDocument()
+  expect(screen.getByText(/coronelli/i)).toBeInTheDocument()
 })

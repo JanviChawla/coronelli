@@ -12,6 +12,7 @@ interface Props {
   document: Document
   sections: Section[]
   onEditSections: () => void
+  onAtlasChanged?: () => void
 }
 
 type Phase = 'preflight' | 'ready' | 'extracting' | 'harvested' | 'synthesizing' | 'done' | 'error'
@@ -102,7 +103,7 @@ function Ornament() {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function SourceWorkflow({ document, sections, onEditSections }: Props) {
+export function SourceWorkflow({ document, sections, onEditSections, onAtlasChanged }: Props) {
   const [phase, setPhase] = useState<Phase>('preflight')
   const [errorInStep, setErrorInStep] = useState<3 | 4>(3)
   const [totalCost, setTotalCost] = useState<number | null>(null)
@@ -409,7 +410,7 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
             items={synthesisItems}
             documentId={document.id}
             onResynthesize={() => handleSynthesize(true)}
-            onReviewed={() => setAtlasRefreshKey(k => k + 1)}
+            onReviewed={() => { setAtlasRefreshKey(k => k + 1); onAtlasChanged?.() }}
           />
         </StepActive>
       ) : (
