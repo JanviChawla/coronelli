@@ -14,6 +14,8 @@ interface Props {
   onEditSections: () => void
   onAtlasChanged?: () => void
   onViewAtlas?: () => void
+  onEdit?: () => void
+  onDelete?: () => void
 }
 
 type Phase = 'preflight' | 'ready' | 'extracting' | 'harvested' | 'synthesizing' | 'done' | 'error'
@@ -158,7 +160,7 @@ function RerunCard({ label, costLo, costHi, meta, action, onAction }: {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function SourceWorkflow({ document, sections, onEditSections, onAtlasChanged, onViewAtlas }: Props) {
+export function SourceWorkflow({ document, sections, onEditSections, onAtlasChanged, onViewAtlas, onEdit, onDelete }: Props) {
   const [phase, setPhase] = useState<Phase>('preflight')
   const [errorInStep, setErrorInStep] = useState<3 | 4>(3)
   const [totalCost, setTotalCost] = useState<number | null>(null)
@@ -175,6 +177,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
   const [canonicalClaimCount, setCanonicalClaimCount] = useState(0)
   const [atlasEntities, setAtlasEntities] = useState<AtlasEntity[]>([])
   const [synthElapsedMs, setSynthElapsedMs] = useState(0)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
@@ -325,9 +328,34 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
       }}>
         Source work
       </p>
-      <h2 style={{ fontSize: '2.4rem', fontWeight: 400, color: 'var(--ink)', lineHeight: 1.15 }}>
-        {document.title}
-      </h2>
+      {confirmingDelete ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', padding: '0.6rem 0', marginBottom: '0.2rem' }}>
+          <span style={{ fontSize: '0.92rem', color: 'var(--ink-muted)' }}>Remove from library?</span>
+          <button type="button" onClick={() => setConfirmingDelete(false)} style={{
+            background: 'none', border: '1px solid var(--border-warm)', borderRadius: '3px',
+            padding: '0.25rem 0.75rem', fontSize: '0.8rem', color: 'var(--ink-muted)', cursor: 'pointer',
+          }}>Cancel</button>
+          <button type="button" onClick={() => onDelete?.()} style={{
+            background: 'none', border: '1px solid rgba(180,60,60,0.45)', borderRadius: '3px',
+            padding: '0.25rem 0.75rem', fontSize: '0.8rem', color: 'var(--error-text)', cursor: 'pointer',
+          }}>Remove</button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+          <h2 style={{ flex: 1, fontSize: '2.4rem', fontWeight: 400, color: 'var(--ink)', lineHeight: 1.15, margin: 0 }}>
+            {document.title}
+          </h2>
+          {onDelete && (
+            <button type="button" onClick={() => setConfirmingDelete(true)} title="Remove from library"
+              style={{
+                marginTop: '0.4rem', background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--ink-faint)', fontSize: '1.1rem', lineHeight: 1, padding: '0 0.1rem',
+                opacity: 0.45, transition: 'opacity 0.15s',
+              }}
+            >×</button>
+          )}
+        </div>
+      )}
       {document.author && (
         <p style={{ fontSize: '1rem', color: 'var(--ink-muted)', marginTop: '0.35rem' }}>
           {document.author}{document.year ? `, ${document.year}` : ''}
@@ -355,6 +383,17 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
                   <span style={{ color: 'var(--ink)' }}>{value}</span>
                 </div>
               ))}
+              {onEdit && (
+                <button type="button" onClick={onEdit} style={{
+                  marginTop: '0.55rem', alignSelf: 'flex-start',
+                  background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                  fontSize: '0.78rem', color: 'var(--ink-muted)',
+                  textDecoration: 'underline', textDecorationColor: 'rgba(140,120,80,0.35)',
+                  textUnderlineOffset: '3px',
+                }}>
+                  ✎ Edit metadata
+                </button>
+              )}
             </div>
           </details>
         }

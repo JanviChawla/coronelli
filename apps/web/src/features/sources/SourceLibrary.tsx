@@ -335,47 +335,15 @@ export function SourceLibrary() {
               <SectionEditor documentId={selected.id} sections={sections} onSave={handleSave} />
             </>
           ) : (
-            <>
-              <SourceWorkflow
-                document={selected}
-                sections={sections}
-                onEditSections={() => setView('edit-sections')}
-                onAtlasChanged={() => {}}
-                onViewAtlas={() => setView('atlas-explorer')}
-              />
-              {/* Document actions — edit metadata or remove */}
-              <div style={{
-                maxWidth: '720px', margin: '3rem auto 0',
-                paddingTop: '1.5rem',
-                borderTop: '1px solid rgba(212,188,138,0.2)',
-                display: 'flex', gap: '1.5rem', alignItems: 'center',
-              }}>
-                <button
-                  type="button"
-                  onClick={() => openEdit(selected)}
-                  style={{
-                    background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-                    fontSize: '0.8rem', color: 'var(--ink-muted)',
-                    letterSpacing: '0.06em', textDecoration: 'underline',
-                    textDecorationColor: 'rgba(140,120,80,0.3)',
-                    textUnderlineOffset: '3px',
-                  }}
-                >
-                  Edit metadata
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDelete(selected)}
-                  style={{
-                    background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-                    fontSize: '0.8rem', color: 'var(--error-text)', opacity: 0.55,
-                    letterSpacing: '0.06em',
-                  }}
-                >
-                  Remove document
-                </button>
-              </div>
-            </>
+            <SourceWorkflow
+              document={selected}
+              sections={sections}
+              onEditSections={() => setView('edit-sections')}
+              onAtlasChanged={() => {}}
+              onViewAtlas={() => setView('atlas-explorer')}
+              onEdit={() => openEdit(selected)}
+              onDelete={() => handleDelete(selected)}
+            />
           )}
         </main>
 
