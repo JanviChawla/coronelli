@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { CandidateQueue } from '../candidates/CandidateQueue'
 import { SectionEditor } from './SectionEditor'
+import { SourceWorkflow } from './SourceWorkflow'
 import {
   deleteDocument,
   fetchDocuments,
@@ -12,14 +12,16 @@ import {
   type SectionUpdate,
 } from './sourceApi'
 
+type View = 'workflow' | 'edit-sections'
+
 export function SourceLibrary() {
   const [documents, setDocuments] = useState<Document[]>([])
   const [selected, setSelected] = useState<Document | null>(null)
   const [sections, setSections] = useState<Section[]>([])
+  const [view, setView] = useState<View>('workflow')
   const [category, setCategory] = useState<'demo' | 'private'>('demo')
   const [error, setError] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
-  const [reviewSection, setReviewSection] = useState<Section | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -30,8 +32,8 @@ export function SourceLibrary() {
 
   async function handleSelect(doc: Document) {
     setSelected(doc)
+    setView('workflow')
     setError(null)
-    setReviewSection(null)
     try {
       setSections(await fetchSections(doc.id))
     } catch {
@@ -50,6 +52,7 @@ export function SourceLibrary() {
       setDocuments((prev) => [...prev, result.document])
       setSelected(result.document)
       setSections(result.sections)
+      setView('workflow')
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Import failed.')
     } finally {
@@ -74,7 +77,9 @@ export function SourceLibrary() {
   async function handleSave(updates: SectionUpdate[]) {
     if (!selected) return
     try {
-      setSections(await updateSections(selected.id, updates))
+      const updated = await updateSections(selected.id, updates)
+      setSections(updated)
+      setView('workflow')
     } catch {
       setError('Could not save sections.')
     }
@@ -130,28 +135,30 @@ export function SourceLibrary() {
         )}
       </section>
 
-      {selected && sections.length > 0 && (
-        <section aria-label={`Sections for ${selected.title}`}>
-          <h2>{selected.title}</h2>
-          <SectionEditor
-            documentId={selected.id}
+      {selected && sections.length > 0 && view === 'workflow' && (
+        <section aria-label={`Workflow for ${selected.title}`} style={{ marginTop: '1.5rem' }}>
+          <SourceWorkflow
+            document={selected}
             sections={sections}
-            onSave={handleSave}
-            onSelectSection={setReviewSection}
+            onEditSections={() => setView('edit-sections')}
           />
         </section>
       )}
 
-      {reviewSection && (
-        <section aria-label="Candidate review" style={{ marginTop: '2rem' }}>
+      {selected && sections.length > 0 && view === 'edit-sections' && (
+        <section aria-label={`Edit sections for ${selected.title}`} style={{ marginTop: '1.5rem' }}>
           <button
             type="button"
-            onClick={() => setReviewSection(null)}
+            onClick={() => setView('workflow')}
             style={{ fontSize: '0.8rem', marginBottom: '0.75rem' }}
           >
-            ← Back to sections
+            ← Back to workflow
           </button>
-          <CandidateQueue sectionId={reviewSection.id} sectionTitle={reviewSection.title} />
+          <SectionEditor
+            documentId={selected.id}
+            sections={sections}
+            onSave={handleSave}
+          />
         </section>
       )}
     </div>
