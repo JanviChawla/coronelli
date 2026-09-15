@@ -12,22 +12,16 @@ interface Props {
   candidates: Record<string, Candidate[]>
 }
 
-function formatContent(c: Candidate): string {
-  const p = c.payload
-  switch (c.kind) {
-    case 'entity':
-      return `${p.name ?? ''}${p.type ? ` (${p.type})` : ''}`
-    case 'claim':
-      return [p.subject, p.predicate, p.object].filter(Boolean).join(' → ')
-    case 'visual_claim':
-      return `${p.subject ?? ''}: ${p.visual_property ?? ''} = ${p.value ?? ''}`
-    case 'travel_rule':
-      return String(p.route ?? '')
-    case 'scene_anchor':
-      return `${p.place ?? ''}${p.scene_role ? ` (${p.scene_role})` : ''}`
-    default:
-      return JSON.stringify(p)
+function contentCell(c: Candidate) {
+  const summary = c.display_summary
+  if (!summary || !summary.trim()) {
+    return (
+      <span style={{ color: '#c00', fontSize: '0.75rem', fontStyle: 'italic' }}>
+        ⚠ missing display summary
+      </span>
+    )
   }
+  return summary
 }
 
 function kindBadge(kind: string) {
@@ -142,7 +136,7 @@ export function CandidatesTable({ sections, candidates: initialCandidates }: Pro
                       >
                         <td style={tdStyle}>{kindBadge(c.kind)}</td>
                         <td style={{ ...tdStyle, fontWeight: c.kind === 'scene_anchor' ? 500 : 400 }}>
-                          {formatContent(c)}
+                          {contentCell(c)}
                         </td>
                         <td style={tdStyle}>
                           <span style={{

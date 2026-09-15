@@ -10,6 +10,7 @@ from app.db.models import SourceSection
 from app.extraction.models import Candidate, ExtractionRun
 from app.extraction.prompts import PROMPT_VERSION as _CURRENT_PROMPT_VERSION
 from app.extraction.provider import ExtractionProvider
+from app.extraction.validation import validate_candidate_payload
 
 _COST_PER_TOKEN: dict[str, dict[str, float]] = {
     "gpt-4o-mini": {"input": 0.150 / 1_000_000, "output": 0.600 / 1_000_000},
@@ -109,6 +110,15 @@ def run_extraction(
                 "Candidate %d skipped: relation_kind and relation_target_id must both be set or both null "
                 "(kind=%r, target=%r)",
                 i, rc.relation_kind, rc.relation_target_id,
+            )
+            continue
+
+        try:
+            validate_candidate_payload(rc.kind, rc.payload)
+        except ValueError as exc:
+            _log.warning(
+                "Candidate %d skipped: invalid %s payload — %s. Raw payload: %s",
+                i, rc.kind, exc, rc.payload,
             )
             continue
 

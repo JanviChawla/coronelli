@@ -30,6 +30,7 @@ class CandidateOut(BaseModel):
     first_revealed_at_section_id: str | None
     relation_kind: str | None
     relation_target_id: str | None
+    display_summary: str
 
     model_config = {"from_attributes": True}
 

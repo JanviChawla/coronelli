@@ -6,6 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
 
 from app.db.base import Base
+from app.extraction.display import candidate_display_summary
 
 
 class ExtractionRun(Base):
@@ -57,3 +58,7 @@ class Candidate(Base):
     relation_target_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True
     )
+
+    @property
+    def display_summary(self) -> str:
+        return candidate_display_summary(self.kind, self.payload)

@@ -16,6 +16,7 @@ export type Candidate = {
   first_revealed_at_section_id: string | null
   relation_kind: string | null
   relation_target_id: string | null
+  display_summary: string
 }
 
 export type ReviewRequest = {

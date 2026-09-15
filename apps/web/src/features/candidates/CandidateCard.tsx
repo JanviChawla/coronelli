@@ -13,21 +13,9 @@ function kindLabel(kind: string): string {
     case 'claim': return 'Spatial claim'
     case 'visual_claim': return 'Visual claim'
     case 'travel_rule': return 'Travel rule'
+    case 'scene_anchor': return 'Scene anchor'
     default: return kind
   }
-}
-
-function payloadSummary(candidate: Candidate): string {
-  const p = candidate.payload
-  if (candidate.kind === 'entity') return `${p.name ?? ''}${p.type ? ` (${p.type})` : ''}`
-  if (candidate.kind === 'claim' || candidate.kind === 'visual_claim') {
-    return [p.subject, p.predicate, p.object].filter(Boolean).join(' → ')
-  }
-  if (candidate.kind === 'travel_rule') {
-    const traverse = p.can_traverse ? 'can traverse' : 'cannot traverse'
-    return `${p.traveler ?? 'traveler'} ${traverse} ${p.route ?? ''}`
-  }
-  return ''
 }
 
 // Candidates in these states have been explicitly resolved — no further challenge offered.
@@ -67,7 +55,11 @@ export function CandidateCard({ candidate, onReviewed }: Props) {
         >
           {candidate.status}
         </span>
-        <span style={{ flex: 1, fontSize: '0.9rem' }}>{payloadSummary(candidate)}</span>
+        <span style={{ flex: 1, fontSize: '0.9rem' }}>
+          {candidate.display_summary || (
+            <span style={{ color: '#c00', fontSize: '0.75rem', fontStyle: 'italic' }}>⚠ missing summary</span>
+          )}
+        </span>
         <span style={{ fontSize: '0.75rem', color: '#888', whiteSpace: 'nowrap' }}>
           {Math.round(candidate.confidence * 100)}%
         </span>

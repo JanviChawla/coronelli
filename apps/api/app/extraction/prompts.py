@@ -150,13 +150,14 @@ ALLOWED ENTITY TYPES
 
 Use only: world, region, settlement, landmark, building, room, hall, tunnel, \
 shaft, passage, portal, door, exterior, terrain_feature, body_of_water, site, \
-court.
+court, barrier.
 
 Use the narrowest supported type. A large garden is a site or exterior, not a \
 region. A hall is a hall, not a room. A named house with internal rooms is a \
 building. A room is a room. A rabbit hole acting as an entrance is a portal or \
 tunnel based on the source wording; do not create both unless the text clearly \
-distinguishes the hole from the tunnel.
+distinguishes the hole from the tunnel. A wall, hedge, fence, gate, or physical \
+barrier that separates regions is a barrier, not a settlement or landmark.
 
 ALLOWED PREDICATES AND ORIENTATION
 

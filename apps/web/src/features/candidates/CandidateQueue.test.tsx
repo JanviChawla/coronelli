@@ -19,6 +19,7 @@ const entityCandidate: Candidate = {
   first_revealed_at_section_id: null,
   relation_kind: null,
   relation_target_id: null,
+  display_summary: 'Casterbridge (settlement)',
 }
 
 const claimCandidate: Candidate = {
@@ -37,6 +38,7 @@ const claimCandidate: Candidate = {
   first_revealed_at_section_id: null,
   relation_kind: null,
   relation_target_id: null,
+  display_summary: 'Casterbridge NORTH_OF Forest',
 }
 
 const reviewOk = {
