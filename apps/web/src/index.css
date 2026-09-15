@@ -67,6 +67,48 @@ button, input, select, textarea { font-family: inherit; }
   border-radius: 2px;
 }
 
+/* ── Keyframe animations ─────────────────────────────────────────────────── */
+
+/* btn-cta: gold light sweeps across, then pauses (60% of the cycle is still) */
+@keyframes goldShimmer {
+  0%, 58%   { transform: translateX(-160%) skewX(-15deg); }
+  80%, 100% { transform: translateX(420%)  skewX(-15deg); }
+}
+
+/* Active sidebar book spine: slow gold-edge breath */
+@keyframes spineBreath {
+  0%, 100% { box-shadow: 3px 0 12px -4px rgba(201,168,76,0.0); }
+  50%       { box-shadow: 3px 0 16px rgba(201,168,76,0.30); }
+}
+
+/* Processing step circle: expanding gold halo */
+@keyframes goldHalo {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(201,168,76,0.0),  0 0 0px  rgba(201,168,76,0.0); }
+  50%       { box-shadow: 0 0 0 6px rgba(201,168,76,0.22), 0 0 22px rgba(201,168,76,0.14); }
+}
+
+/* Processing connector: gold light descends the vertical line */
+@keyframes connectorFlow {
+  0%   { background-position: 0 200%; }
+  100% { background-position: 0 -100%; }
+}
+
+.step-processing {
+  animation: goldHalo 2s ease-in-out infinite;
+  border-radius: 50%;
+}
+
+.connector-flow-line {
+  background: linear-gradient(to bottom,
+    transparent 0%,
+    rgba(201,168,76,0.65) 50%,
+    transparent 100%
+  ) !important;
+  background-size: 1px 200% !important;
+  animation: connectorFlow 1.6s linear infinite !important;
+  opacity: 1 !important;
+}
+
 /* ── Reduced-motion ──────────────────────────────────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {
@@ -171,6 +213,7 @@ button, input, select, textarea { font-family: inherit; }
   background: var(--sidebar-selected);
   border-left-color: var(--gold);
   opacity: 1;
+  animation: spineBreath 3.2s ease-in-out infinite;
 }
 
 /* ── Wax-seal medallion — replaces green check on completed steps ─────────── */
@@ -216,10 +259,24 @@ button, input, select, textarea { font-family: inherit; }
   cursor: pointer;
   letter-spacing: 0.02em;
   transition: opacity 0.15s, box-shadow 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-cta::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 45%;
+  background: linear-gradient(90deg, transparent 0%, rgba(212,188,138,0.36) 50%, transparent 100%);
+  transform: translateX(-160%) skewX(-15deg);
+  animation: goldShimmer 4.2s ease-in-out infinite;
+  pointer-events: none;
 }
 
 .btn-cta:hover  { opacity: 0.92; box-shadow: 0 0 14px rgba(201, 168, 76, 0.13); }
 .btn-cta:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+.btn-cta:disabled::after { display: none; }
 
 /* ── Cartouche — decorative text frame used for legend / inspector headers ── */
 /* Hand-authored CSS box with double-rule effect; no generated art.            */

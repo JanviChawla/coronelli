@@ -49,14 +49,15 @@ function StepDone({ label, detail, action }: {
   )
 }
 
-function StepActive({ n, label, children }: {
+function StepActive({ n, label, children, processing = false }: {
   n: number
   label: string
   children: ReactNode
+  processing?: boolean
 }) {
   return (
     <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'flex-start' }}>
-      <div style={{ ...CIRCLE, background: 'var(--step-active-circle)', color: '#fff' }}>{n}</div>
+      <div style={{ ...CIRCLE, background: 'var(--step-active-circle)', color: '#fff' }} className={processing ? 'step-processing' : ''}>{n}</div>
       <div style={{ flex: 1, paddingTop: '0.3rem' }}>
         <div style={{
           fontWeight: 600, fontSize: '1.25rem',
@@ -82,13 +83,13 @@ function StepLocked({ n, label, detail }: { n: number; label: string; detail: st
   )
 }
 
-function StepConnector() {
+function StepConnector({ processing = false }: { processing?: boolean }) {
   return (
     <div style={{ display: 'flex', gap: '1.25rem', height: '2.5rem', margin: '0.15rem 0' }}>
       <div style={{ width: '2.25rem', flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-        <div style={{ width: '1px', flex: 1, background: 'var(--gold)', opacity: 0.3 }} />
-        <span style={{ color: 'var(--gold)', opacity: 0.38, fontSize: '0.4rem', lineHeight: 1 }}>◆</span>
-        <div style={{ width: '1px', flex: 1, background: 'var(--gold)', opacity: 0.3 }} />
+        <div style={{ width: '1px', flex: 1, background: 'var(--gold)', opacity: 0.3 }} className={processing ? 'connector-flow-line' : ''} />
+        <span style={{ color: 'var(--gold)', opacity: processing ? 0.7 : 0.38, fontSize: '0.4rem', lineHeight: 1 }}>◆</span>
+        <div style={{ width: '1px', flex: 1, background: 'var(--gold)', opacity: 0.3 }} className={processing ? 'connector-flow-line' : ''} />
       </div>
     </div>
   )
@@ -380,7 +381,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
           </details>
         }
       />
-      <StepConnector />
+      <StepConnector processing={phase === 'extracting'} />
 
       {/* ── Step 3: Harvest evidence ─────────────────────────────────── */}
       {step3Done ? (
@@ -421,7 +422,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
           </button>
         </StepActive>
       ) : phase === 'extracting' ? (
-        <StepActive n={3} label="Harvest evidence">
+        <StepActive n={3} label="Harvest evidence" processing>
           <p style={{ fontSize: '0.85rem', color: 'var(--ink-muted)', marginBottom: '0.2rem' }}>
             Section {currentIdx} of {sections.length}
             {currentTitle && <> · <em>{currentTitle}</em></>}
@@ -475,7 +476,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
           </p>
         </StepActive>
       )}
-      <StepConnector />
+      <StepConnector processing={phase === 'synthesizing'} />
 
       {/* ── Step 4: Synthesize atlas ─────────────────────────────────── */}
       {step4Done ? (
@@ -526,7 +527,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
           </button>
         </StepActive>
       ) : phase === 'synthesizing' ? (
-        <StepActive n={4} label="Synthesize atlas">
+        <StepActive n={4} label="Synthesize atlas" processing>
           <p style={{ fontSize: '0.85rem', color: 'var(--ink-muted)', marginBottom: '0.2rem' }}>
             Synthesizing {totalCandidates} evidence fragment{totalCandidates !== 1 ? 's' : ''} in one pass · {(synthElapsedMs / 1000).toFixed(1)}s
           </p>
