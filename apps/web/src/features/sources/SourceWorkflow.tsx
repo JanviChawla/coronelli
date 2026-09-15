@@ -102,7 +102,7 @@ export function SourceWorkflow({ document, sections, onEditSections }: Props) {
     setCandidatesSoFar(0)
     setSectionResults([])
     setExtractionError(null)
-    setReviewSectionId(null)
+    setAllCandidates({})
 
     const startTime = Date.now()
     timerRef.current = setInterval(() => setElapsedMs(Date.now() - startTime), 100)
