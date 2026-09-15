@@ -207,11 +207,11 @@ export function SourceLibrary() {
                   onClick={() => handleSelect(doc)}
                   className={`sidebar-doc-btn${selected?.id === doc.id ? ' active' : ''}`}
                 >
-                  <div style={{ fontWeight: 400, fontSize: '0.82rem', color: selected?.id === doc.id ? 'var(--sidebar-text)' : 'var(--sidebar-muted)', lineHeight: 1.35, marginBottom: doc.author || doc.year ? '0.4rem' : 0 }}>
+                  <div style={{ fontWeight: 400, fontSize: '0.92rem', color: selected?.id === doc.id ? 'var(--sidebar-text)' : 'var(--sidebar-muted)', lineHeight: 1.35, marginBottom: doc.author || doc.year ? '0.4rem' : 0 }}>
                     {doc.title}
                   </div>
                   {doc.author && (
-                    <div style={{ fontSize: '0.7rem', color: 'var(--sidebar-muted)', opacity: selected?.id === doc.id ? 0.8 : 0.6 }}>{doc.author}</div>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--sidebar-muted)', opacity: selected?.id === doc.id ? 0.8 : 0.6 }}>{doc.author}</div>
                   )}
                   {doc.year && (
                     <div style={{ fontSize: '0.65rem', color: 'var(--sidebar-muted)', opacity: 0.5, marginTop: '0.15rem' }}>{doc.year}</div>
