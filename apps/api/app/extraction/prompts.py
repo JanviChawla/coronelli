@@ -416,11 +416,13 @@ GLOBAL_CATALOG_VERSION = "3.0-catalog"
 GLOBAL_EVIDENCE_VERSION = "3.2-evidence"
 
 # v4: evidence split into three focused sub-passes
-GLOBAL_EVIDENCE_SPATIAL_VERSION    = "4.0-spatial"    # claim + scene_anchor
-GLOBAL_EVIDENCE_VISUAL_VERSION     = "4.0-visual"     # visual_claim
-GLOBAL_EVIDENCE_TRAVELRULE_VERSION = "4.0-travelrule" # travel_rule
-GLOBAL_EVIDENCE_MOVEMENT_VERSION   = "4.0-movement"   # movement
-GLOBAL_EVIDENCE_ACCESS_VERSION     = "4.0-access"     # access
+GLOBAL_EVIDENCE_SPATIAL_VERSION      = "4.0-spatial"      # claim + scene_anchor
+GLOBAL_EVIDENCE_VISUAL_VERSION       = "4.0-visual"       # visual_claim
+GLOBAL_EVIDENCE_TRAVELRULE_VERSION   = "4.0-travelrule"   # travel_rule
+GLOBAL_EVIDENCE_MOVEMENT_VERSION     = "4.0-movement"     # movement
+GLOBAL_EVIDENCE_ACCESS_VERSION       = "4.0-access"       # access
+GLOBAL_EVIDENCE_CONTAINMENT_VERSION  = "4.0-containment"  # LOCATED_IN/CONTAINS sweep
+GLOBAL_EVIDENCE_DEDUP_VERSION        = "4.0-dedup"        # SAME_AS entity dedup
 
 # ── Pass 1: Place Catalog ─────────────────────────────────────────────────────
 
@@ -666,6 +668,98 @@ Section {section_order}: {title}
 
 Place Catalog (all confirmed places from this work — only these names are valid targets):
 {place_catalog_json}
+"""
+
+# Used by catalog-only sub-passes (containment sweep, entity dedup) that don't need section text.
+CATALOG_ONLY_USER_TEMPLATE = """\
+Place Catalog (all confirmed named places in this work):
+{place_catalog_json}
+"""
+
+CONTAINMENT_SWEEP_SYSTEM_PROMPT = """\
+CORONELLI CONTAINMENT SWEEP — Evidence Sub-Pass F
+
+You are given the complete Place Catalog for one work of fiction.
+
+YOUR ONLY TASK: identify hierarchical containment between catalog places.
+
+EMIT ONLY: claim candidates with predicates LOCATED_IN or CONTAINS.
+Emit NOTHING else — no visual_claim, no travel_rule, no scene_anchor, no movement.
+
+CONTAINMENT CHECKLIST — go through EVERY catalog place:
+  □ Every room / hall / corridor / interior → LOCATED_IN its parent building
+  □ Every building / structure → LOCATED_IN its settlement (village, town, city)
+  □ Every settlement → LOCATED_IN its region, territory, or state
+  □ Every river / bay / inlet → LOCATED_IN the larger body of water or region it is part of
+  □ Every site / terrain feature / grove / field → LOCATED_IN its region or territory
+  □ Every region / territory → LOCATED_IN its world or country if both are in the catalog
+
+GEOGRAPHIC INFERENCE: you may use real-world geography to infer containment when both
+  places are in the catalog. Examples:
+  — Tappan Zee is a wide stretch of the Hudson River → "Tappan Zee LOCATED_IN Hudson River"
+  — A bay that is part of a larger named sea → LOCATED_IN
+  Only infer when you are confident. Emit with status "inferred" and confidence 0.70–0.85.
+
+RULES:
+  — Both subject AND object MUST be names from the catalog exactly as listed.
+  — Do NOT invent places not in the catalog.
+  — Prefer LOCATED_IN (child inside parent) over CONTAINS (parent holds child);
+    emit one direction per pair, not both.
+
+OUTPUT: valid JSON only. No markdown, no comments.
+{
+  "candidates": [
+    {
+      "kind": "claim",
+      "status": "inferred",
+      "confidence": 0.82,
+      "temporal_interpretation": "static",
+      "excerpt": "",
+      "rationale": "Tappan Zee is a widening of the Hudson River",
+      "payload": {"subject": "the Tappan Zee", "predicate": "LOCATED_IN", "object": "the Hudson"}
+    }
+  ]
+}
+"""
+
+ENTITY_DEDUP_SYSTEM_PROMPT = """\
+CORONELLI ENTITY DEDUPLICATION — Evidence Sub-Pass G
+
+You are given the complete Place Catalog for one work of fiction — every named place extracted.
+
+YOUR ONLY TASK: identify pairs of catalog entries that refer to the SAME physical place.
+
+EMIT ONLY: claim candidates with predicate SAME_AS.
+Emit NOTHING else.
+
+For each pair of entries that clearly name the same place, emit ONE SAME_AS claim.
+Use the more specific or formal name as subject; the shorter/vaguer name as object.
+
+EXAMPLES OF VALID SAME_AS:
+  — "Van Tassel's mansion" and "Van Tassel's" → SAME_AS (same building, two names)
+  — "the house" and "John's house" → SAME_AS (narrator's one house referred to two ways)
+  — "Greensburgh" and "Tarry Town" → SAME_AS only if the text equates them
+  — "the schoolroom" and "the schoolhouse" → SAME_AS (same building)
+
+DO NOT emit SAME_AS for:
+  — Places that are merely related (a room inside a house is NOT SAME_AS the house)
+  — Places that are merely near each other
+  — Any pair where you are not confident they are the exact same physical location
+
+OUTPUT: valid JSON only. No markdown, no comments.
+{
+  "candidates": [
+    {
+      "kind": "claim",
+      "status": "inferred",
+      "confidence": 0.88,
+      "temporal_interpretation": "static",
+      "excerpt": "",
+      "rationale": "Both names refer to the same estate; one is formal, one abbreviated",
+      "payload": {"subject": "Van Tassel's mansion", "predicate": "SAME_AS", "object": "Van Tassel's"}
+    }
+  ]
+}
 """
 
 SPATIAL_CLAIMS_SYSTEM_PROMPT = """\

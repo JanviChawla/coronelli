@@ -6,6 +6,8 @@ from typing import Any
 _log = logging.getLogger(__name__)
 
 from app.db.models import SourceSection
+import re
+
 from app.extraction.prompts import (
     PROMPT_VERSION, SYSTEM_PROMPT, USER_TEMPLATE,
     COMBINED_PROMPT_VERSION,
@@ -13,17 +15,26 @@ from app.extraction.prompts import (
     EVIDENCE_SYSTEM_PROMPT, EVIDENCE_USER_TEMPLATE,
     GLOBAL_CATALOG_VERSION, GLOBAL_EVIDENCE_VERSION,
     EVIDENCE_SUBPASS_USER_TEMPLATE,
+    CATALOG_ONLY_USER_TEMPLATE,
     SPATIAL_CLAIMS_SYSTEM_PROMPT,
     VISUAL_CLAIMS_SYSTEM_PROMPT,
     TRAVELRULE_SYSTEM_PROMPT,
     MOVEMENT_SYSTEM_PROMPT,
     ACCESS_SYSTEM_PROMPT,
+    CONTAINMENT_SWEEP_SYSTEM_PROMPT,
+    ENTITY_DEDUP_SYSTEM_PROMPT,
     GLOBAL_EVIDENCE_SPATIAL_VERSION,
     GLOBAL_EVIDENCE_VISUAL_VERSION,
     GLOBAL_EVIDENCE_TRAVELRULE_VERSION,
     GLOBAL_EVIDENCE_MOVEMENT_VERSION,
     GLOBAL_EVIDENCE_ACCESS_VERSION,
+    GLOBAL_EVIDENCE_CONTAINMENT_VERSION,
+    GLOBAL_EVIDENCE_DEDUP_VERSION,
 )
+
+# Bare possessive: ends with "'s" with no following place noun.
+# "Hans Van Ripper's" → reject. "Van Tassel's mansion" → keep (doesn't end with "'s").
+_BARE_POSSESSIVE_RE = re.compile(r"'s\s*$", re.IGNORECASE)
 from app.extraction.provider import ExtractionResult, RawCandidate
 from app.extraction.validation import _ALLOWED_ENTITY_TYPES
 
@@ -185,8 +196,13 @@ class OpenAIExtractionProvider:
             ptype = (p.get("type") or "").strip().lower()
             if not name or ptype not in _ALLOWED_ENTITY_TYPES:
                 continue
+            # Reject bare possessives: "Hans Van Ripper's" is a person, not a place.
+            # "Van Tassel's mansion" is fine — it doesn't end with "'s".
+            if _BARE_POSSESSIVE_RE.search(name):
+                _log.info("Catalog filter: dropped bare possessive %r", name)
+                continue
             payload: dict[str, Any] = {"name": name, "type": ptype}
-            aliases = p.get("aliases") or []
+            aliases = [a for a in (p.get("aliases") or []) if not _BARE_POSSESSIVE_RE.search(a or "")]
             if aliases:
                 payload["aliases"] = aliases
             entity_candidates.append(RawCandidate(
@@ -240,33 +256,34 @@ class OpenAIExtractionProvider:
             place_catalog_json=catalog_json,
         )
 
-        _SUBPASS_ALLOWED: dict[str, set[str]] = {
-            GLOBAL_EVIDENCE_SPATIAL_VERSION:    {"claim", "scene_anchor"},
-            GLOBAL_EVIDENCE_VISUAL_VERSION:     {"visual_claim"},
-            GLOBAL_EVIDENCE_TRAVELRULE_VERSION: {"travel_rule"},
-            GLOBAL_EVIDENCE_MOVEMENT_VERSION:   {"movement"},
-            GLOBAL_EVIDENCE_ACCESS_VERSION:     {"access"},
-        }
-        _SUBPASS_PROMPTS: dict[str, str] = {
-            GLOBAL_EVIDENCE_SPATIAL_VERSION:    SPATIAL_CLAIMS_SYSTEM_PROMPT,
-            GLOBAL_EVIDENCE_VISUAL_VERSION:     VISUAL_CLAIMS_SYSTEM_PROMPT,
-            GLOBAL_EVIDENCE_TRAVELRULE_VERSION: TRAVELRULE_SYSTEM_PROMPT,
-            GLOBAL_EVIDENCE_MOVEMENT_VERSION:   MOVEMENT_SYSTEM_PROMPT,
-            GLOBAL_EVIDENCE_ACCESS_VERSION:     ACCESS_SYSTEM_PROMPT,
-        }
+        catalog_only_content = CATALOG_ONLY_USER_TEMPLATE.format(
+            place_catalog_json=catalog_json,
+        )
+
+        # (version, system_prompt, user_content, allowed_kinds)
+        _SUBPASSES: list[tuple[str, str, str, set[str]]] = [
+            # Text + catalog passes
+            (GLOBAL_EVIDENCE_SPATIAL_VERSION,    SPATIAL_CLAIMS_SYSTEM_PROMPT,   user_content,         {"claim", "scene_anchor"}),
+            (GLOBAL_EVIDENCE_VISUAL_VERSION,     VISUAL_CLAIMS_SYSTEM_PROMPT,    user_content,         {"visual_claim"}),
+            (GLOBAL_EVIDENCE_TRAVELRULE_VERSION, TRAVELRULE_SYSTEM_PROMPT,       user_content,         {"travel_rule"}),
+            (GLOBAL_EVIDENCE_MOVEMENT_VERSION,   MOVEMENT_SYSTEM_PROMPT,         user_content,         {"movement"}),
+            (GLOBAL_EVIDENCE_ACCESS_VERSION,     ACCESS_SYSTEM_PROMPT,           user_content,         {"access"}),
+            # Catalog-only passes (no section text needed)
+            (GLOBAL_EVIDENCE_CONTAINMENT_VERSION, CONTAINMENT_SWEEP_SYSTEM_PROMPT, catalog_only_content, {"claim"}),
+            (GLOBAL_EVIDENCE_DEDUP_VERSION,       ENTITY_DEDUP_SYSTEM_PROMPT,      catalog_only_content, {"claim"}),
+        ]
 
         all_candidates: list[RawCandidate] = []
         total_in = 0
         total_out = 0
 
-        for version, system_prompt in _SUBPASS_PROMPTS.items():
-            allowed_kinds = _SUBPASS_ALLOWED[version]
+        for version, system_prompt, subpass_user, allowed_kinds in _SUBPASSES:
             try:
                 resp = self._client.chat.completions.create(
                     model=self._model,
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_content},
+                        {"role": "user", "content": subpass_user},
                     ],
                     response_format={"type": "json_object"},
                     max_tokens=4096,
@@ -356,8 +373,11 @@ class OpenAIExtractionProvider:
             ptype = (p.get("type") or "").strip().lower()
             if not name or ptype not in _ALLOWED_ENTITY_TYPES:
                 continue
+            if _BARE_POSSESSIVE_RE.search(name):
+                _log.info("Catalog filter: dropped bare possessive %r", name)
+                continue
             payload: dict[str, Any] = {"name": name, "type": ptype}
-            aliases = p.get("aliases") or []
+            aliases = [a for a in (p.get("aliases") or []) if not _BARE_POSSESSIVE_RE.search(a or "")]
             if aliases:
                 payload["aliases"] = aliases
             entity_candidates.append(RawCandidate(
