@@ -8,8 +8,14 @@ from app.synthesis.prompts import (
     SYNTHESIS_PROMPT_VERSION,
     SYNTHESIS_SYSTEM_PROMPT,
     TWO_PASS_SYNTHESIS_VERSION,
+    THREE_PASS_SYNTHESIS_VERSION,
     ENTITY_CONSOLIDATION_SYSTEM_PROMPT,
     CLAIMS_SYNTHESIS_SYSTEM_PROMPT,
+    SPATIAL_CLAIMS_SYNTHESIS_PROMPT,
+    VISUAL_CLAIMS_SYNTHESIS_PROMPT,
+    ROUTES_SYNTHESIS_PROMPT,
+    ACCESS_SYNTHESIS_PROMPT,
+    MOVEMENT_SYNTHESIS_PROMPT,
 )
 
 _log = logging.getLogger(__name__)
@@ -109,15 +115,30 @@ class OpenAISynthesisProvider:
         entity_ledger: list[dict],
         evidence_ledger: list[dict],
     ) -> SynthesisResult:
-        """Pass 1: entity consolidation. Pass 2: claims/visual/routes against confirmed entities."""
+        """Pass 1: entity consolidation (with SAME_AS hints). Pass 2: 5 focused evidence sub-passes."""
 
-        # ── Pass 1: entities ──────────────────────────────────────────────────
+        # ── Extract SAME_AS hints from evidence to feed Pass 1 ───────────────
+        same_as_hints = [
+            {
+                "a": (item.get("payload") or {}).get("subject", ""),
+                "b": (item.get("payload") or {}).get("object", ""),
+            }
+            for item in evidence_ledger
+            if item.get("kind") == "claim"
+            and (item.get("payload") or {}).get("predicate") == "SAME_AS"
+        ]
+
+        # ── Pass 1: entity consolidation ─────────────────────────────────────
         entity_json = json.dumps(entity_ledger, indent=2, ensure_ascii=False)
-        entity_user = (
-            f"Entity candidates ({len(entity_ledger)} unique places):\n"
-            f"{entity_json}\n\n"
-            "Consolidate into canonical entities and reveal_events."
-        )
+        entity_user = f"Entity candidates ({len(entity_ledger)} unique places):\n{entity_json}\n\n"
+        if same_as_hints:
+            entity_user += (
+                f"SAME_AS hints from evidence ({len(same_as_hints)} pairs) — "
+                f"treat each pair as the same place and pick the most specific name as canonical:\n"
+                f"{json.dumps(same_as_hints, indent=2, ensure_ascii=False)}\n\n"
+            )
+        entity_user += "Consolidate into canonical entities and reveal_events."
+
         entity_resp = self._client.chat.completions.create(
             model=self._model,
             messages=[
@@ -134,7 +155,7 @@ class OpenAISynthesisProvider:
             _log.warning("Entity consolidation pass failed to parse JSON: %s", exc)
         entity_raw = entity_parsed.get("synthesis_items", [])
 
-        # Extract canonical names + aliases for the golden rule in pass 2
+        # Build canonical names + aliases list for Golden Rule enforcement in sub-passes
         canonical_names: list[str] = []
         for item in entity_raw:
             if item.get("kind") == "entity":
@@ -145,63 +166,67 @@ class OpenAISynthesisProvider:
                         if alias:
                             canonical_names.append(alias)
 
-        # ── Pass 2: evidence against confirmed entity list ────────────────────
-        claims_parsed: dict = {}
-        claims_raw: list = []
-        if evidence_ledger:
-            evidence_json = json.dumps(evidence_ledger, indent=2, ensure_ascii=False)
-            claims_user = (
+        # ── Pass 2: 5 focused evidence sub-passes ────────────────────────────
+        _SUBPASSES: list[tuple[str, str, set[str], set[str]]] = [
+            ("spatial",  SPATIAL_CLAIMS_SYNTHESIS_PROMPT,  {"claim", "scene_anchor"}, {"claim"}),
+            ("visual",   VISUAL_CLAIMS_SYNTHESIS_PROMPT,   {"visual_claim"},           {"visual_claim"}),
+            ("routes",   ROUTES_SYNTHESIS_PROMPT,           {"travel_rule"},            {"route"}),
+            ("access",   ACCESS_SYNTHESIS_PROMPT,           {"access"},                 {"access"}),
+            ("movement", MOVEMENT_SYNTHESIS_PROMPT,         {"movement"},               {"movement"}),
+        ]
+
+        entity_names_json = json.dumps(canonical_names, ensure_ascii=False)
+        all_claims_raw: list[dict] = []
+        subpass_responses: dict[str, dict] = {}
+
+        for subpass_name, system_prompt, input_kinds, allowed_output_kinds in _SUBPASSES:
+            filtered = [item for item in evidence_ledger if item.get("kind") in input_kinds]
+            if not filtered:
+                _log.debug("Synthesis sub-pass %s: no candidates, skipping", subpass_name)
+                continue
+
+            sub_user = (
                 f"Canonical entity list ({len(canonical_names)} names):\n"
-                f"{json.dumps(canonical_names, ensure_ascii=False)}\n\n"
-                f"Evidence candidates ({len(evidence_ledger)} items):\n"
-                f"{evidence_json}\n\n"
-                "Synthesize the evidence. Remember: discard any claim where subject or object is not in the entity list."
-            )
-            claims_resp = self._client.chat.completions.create(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": CLAIMS_SYNTHESIS_SYSTEM_PROMPT},
-                    {"role": "user", "content": claims_user},
-                ],
-                response_format={"type": "json_object"},
-                max_tokens=16384,
+                f"{entity_names_json}\n\n"
+                f"Evidence candidates ({len(filtered)} items):\n"
+                f"{json.dumps(filtered, indent=2, ensure_ascii=False)}\n\n"
+                f"Produce synthesis items of kind {sorted(allowed_output_kinds)} only."
             )
             try:
-                claims_parsed = json.loads(claims_resp.choices[0].message.content)
-                claims_raw = claims_parsed.get("synthesis_items", [])
-                if not claims_raw:
-                    _log.warning(
-                        "Claims synthesis pass returned 0 items (entity list had %d names). "
-                        "Raw response (first 500 chars): %s",
-                        len(canonical_names),
-                        claims_resp.choices[0].message.content[:500],
-                    )
-            except json.JSONDecodeError as exc:
-                _log.warning("Claims synthesis pass failed to parse JSON: %s", exc)
+                sub_resp = self._client.chat.completions.create(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": sub_user},
+                    ],
+                    response_format={"type": "json_object"},
+                    max_tokens=8192,
+                )
+                sub_text = sub_resp.choices[0].message.content
+                sub_parsed = json.loads(sub_text)
+                sub_items = sub_parsed.get("synthesis_items", [])
+                # Filter to only the expected output kinds
+                accepted = [r for r in sub_items if isinstance(r, dict) and r.get("kind") in allowed_output_kinds]
+                dropped = len(sub_items) - len(accepted)
+                if dropped:
+                    _log.warning("Synthesis sub-pass %s: dropped %d items with wrong kind", subpass_name, dropped)
+                _log.info(
+                    "Synthesis sub-pass %s: %d input → %d output items",
+                    subpass_name, len(filtered), len(accepted),
+                )
+                all_claims_raw.extend(accepted)
+                subpass_responses[subpass_name] = sub_parsed
+            except (json.JSONDecodeError, Exception) as exc:
+                _log.warning("Synthesis sub-pass %s failed: %s", subpass_name, exc)
 
-        # ── Combine and parse ─────────────────────────────────────────────────
-        all_raw = entity_raw + claims_raw
+        # ── Combine and parse all raw items ───────────────────────────────────
+        all_raw = entity_raw + all_claims_raw
         items: list[RawSynthesisItem] = []
         for i, raw in enumerate(all_raw):
             if not isinstance(raw, dict):
                 continue
             kind = raw.get("kind", "")
             payload = raw.get("payload", {})
-            # Fallback: model returned flat payload dict without the kind/payload wrapper.
-            # Infer kind from the payload's key signature.
-            if kind not in _VALID_KINDS and isinstance(payload, dict) and not payload:
-                if "predicate" in raw and "subject" in raw and "object" in raw:
-                    kind, payload = "claim", {k: raw[k] for k in ("subject", "predicate", "object")}
-                elif "category" in raw and "observation" in raw and "subject" in raw:
-                    kind, payload = "visual_claim", {k: raw.get(k) for k in ("subject", "category", "observation", "section_title")}
-                elif "from_place" in raw and "to_place" in raw:
-                    kind, payload = "movement", {k: raw.get(k) for k in ("traveler", "from_place", "to_place", "via", "mechanism", "stops")}
-                elif "from" in raw and "to" in raw and "can_traverse" in raw:
-                    kind, payload = "route", {k: raw.get(k) for k in ("traveler", "from", "to", "via", "can_traverse", "condition")}
-                elif "place_name" in raw and "access_type" in raw:
-                    kind, payload = "access", {k: raw.get(k) for k in ("place_name", "access_type", "condition", "traveler")}
-                if kind in _VALID_KINDS:
-                    _log.warning("Item %d: inferred kind=%s from flat payload (prompt format not followed)", i, kind)
             if kind not in _VALID_KINDS:
                 continue
             try:
@@ -212,14 +237,14 @@ class OpenAISynthesisProvider:
                     rationale=str(raw.get("rationale", "")),
                 ))
             except (KeyError, ValueError, TypeError) as exc:
-                _log.warning("Two-pass synthesis item %d skipped: %s", i, exc)
+                _log.warning("Three-pass synthesis item %d skipped: %s", i, exc)
 
         return SynthesisResult(
             items=items,
-            raw_response={"entity_pass": entity_parsed, "claims_pass": claims_parsed},
+            raw_response={"entity_pass": entity_parsed, **{f"pass2_{k}": v for k, v in subpass_responses.items()}},
             provider="openai",
             model=self._model,
-            synthesis_prompt_version=TWO_PASS_SYNTHESIS_VERSION,
+            synthesis_prompt_version=THREE_PASS_SYNTHESIS_VERSION,
         )
 
 

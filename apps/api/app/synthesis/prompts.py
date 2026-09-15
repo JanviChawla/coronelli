@@ -1,5 +1,6 @@
 SYNTHESIS_PROMPT_VERSION = "1.2"  # kept for single-pass fallback
 TWO_PASS_SYNTHESIS_VERSION = "2.1"
+THREE_PASS_SYNTHESIS_VERSION = "3.0"  # Pass 1 entity consolidation + 5 focused evidence sub-passes
 
 SYNTHESIS_SYSTEM_PROMPT = """\
 CORONELLI ATLAS SYNTHESIS — Stage 2
@@ -189,6 +190,100 @@ OUTPUT: valid JSON only, no markdown.
     }
   ]
 }
+"""
+
+# ── Pass 2 focused sub-pass prompts (v3.0) ───────────────────────────────────
+
+_SYNTH_PASS2_HEADER = """\
+CORONELLI ATLAS SYNTHESIS — Pass 2 (focused sub-pass)
+
+You receive:
+1. A canonical entity list — every confirmed named place from this work (output of Pass 1).
+2. Evidence candidates for ONE specific claim type extracted section-by-section.
+
+THE GOLDEN RULE for spatial claims:
+Both the subject AND object of every "claim" item must appear in the canonical entity list
+(exact match or close variant). Discard any claim where either side is not a named place in the list.
+
+OUTPUT: valid JSON only, no markdown.
+Each item MUST have four top-level fields: kind, payload, confidence, rationale.
+{
+  "synthesis_items": [...]
+}
+confidence: float 0.0–1.0.
+rationale: one sentence explaining the supporting evidence.
+"""
+
+SPATIAL_CLAIMS_SYNTHESIS_PROMPT = _SYNTH_PASS2_HEADER + """\
+YOUR TASK: Produce ONLY items of kind "claim" — spatial relationships between canonical named places.
+
+Payload: {"subject": "canonical place", "predicate": "PREDICATE", "object": "canonical place"}
+
+Predicates: CONTAINS, LOCATED_IN, LEADS_TO, OPENS_TOWARD, ADJACENT_TO, NEAR, UNDER, ABOVE,
+DESCENDS_TO, ENDS_AT, HAS_OPENING, REACHED_FROM, SAME_AS, IN_OR_ADJACENT_TO, BLOCKS_ACCESS_TO,
+SURROUNDED_BY, NORTH_OF, SOUTH_OF, EAST_OF, WEST_OF, NORTHEAST_OF, NORTHWEST_OF, SOUTHEAST_OF, SOUTHWEST_OF
+
+Rules:
+- Both subject AND object must be in the canonical entity list. Discard the claim if either is absent.
+- Include inferred claims with confidence ≥ 0.55.
+- Include containment hierarchy: rooms inside buildings, buildings inside settlements, settlements inside regions.
+- Include proximity (NEAR, ADJACENT_TO, REACHED_FROM) when the text supports it.
+- Emit SAME_AS when two canonical names clearly refer to the same place.
+
+SELF-CHECK: For every claim, verify subject AND object are in the entity list. Remove any that fail.
+"""
+
+VISUAL_CLAIMS_SYNTHESIS_PROMPT = _SYNTH_PASS2_HEADER + """\
+YOUR TASK: Produce ONLY items of kind "visual_claim" — appearance and description facts about places.
+
+Payload: {"subject": "canonical place", "category": "...", "observation": "...", "section_title": "..."}
+category: architecture | terrain | light | weather | color | material | scale | atmosphere | other
+
+Rules:
+- "subject" must be in the canonical entity list.
+- Emit ONE visual_claim per distinct observation — never merge.
+- Different sections showing the same place in different conditions get separate items.
+- Include the section_title of the source candidate.
+
+SELF-CHECK: For every visual_claim, verify subject is in the entity list. Remove if not.
+"""
+
+ROUTES_SYNTHESIS_PROMPT = _SYNTH_PASS2_HEADER + """\
+YOUR TASK: Produce ONLY items of kind "route" — traversal paths between canonical places.
+
+Payload: {"traveler": null|str, "from": "canonical place", "to": "canonical place", "via": null|str, "can_traverse": bool, "condition": null|str}
+
+Rules:
+- Both "from" and "to" must be in the canonical entity list.
+- Consolidate travel_rule candidates into route items.
+- can_traverse: true unless a travel rule explicitly forbids it.
+
+SELF-CHECK: For every route, verify both from and to are in the entity list. Remove if either fails.
+"""
+
+ACCESS_SYNTHESIS_PROMPT = _SYNTH_PASS2_HEADER + """\
+YOUR TASK: Produce ONLY items of kind "access" — structural access constraints on canonical places.
+
+Payload: {"place_name": "canonical place", "access_type": "permitted|prohibited|conditional", "condition": null|str, "traveler": null|str}
+
+Rules:
+- "place_name" must be in the canonical entity list.
+- access_type: permitted (anyone can enter), prohibited (entry denied), conditional (conditions apply).
+
+SELF-CHECK: For every access item, verify place_name is in the entity list. Remove if not.
+"""
+
+MOVEMENT_SYNTHESIS_PROMPT = _SYNTH_PASS2_HEADER + """\
+YOUR TASK: Produce ONLY items of kind "movement" — narrated journeys between canonical places.
+
+Payload: {"traveler": null|str, "from_place": "canonical place", "to_place": "canonical place", "via": null|str, "mechanism": null|str, "stops": []}
+
+Rules:
+- Both "from_place" and "to_place" must be in the canonical entity list.
+- "mechanism" captures how they traveled (on horseback, by foot, etc.) when stated.
+- "stops" lists any intermediate canonical places visited along the way.
+
+SELF-CHECK: For every movement item, verify both from_place and to_place are in the entity list. Remove if either fails.
 """
 
 CLAIMS_SYNTHESIS_SYSTEM_PROMPT = """\

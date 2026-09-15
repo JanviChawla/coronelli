@@ -116,7 +116,13 @@ def _resolve_entity_id(session: Session, document_id: str, name: str | None) -> 
     return None
 
 
-def _approve_claim(session: Session, document_id: str, payload: dict, claim_type: str) -> MapClaim:
+def _approve_claim(
+    session: Session,
+    document_id: str,
+    payload: dict,
+    claim_type: str,
+    confidence: float | None = None,
+) -> MapClaim:
     subject_ref = _resolve_entity_id(session, document_id, payload.get("subject"))
     object_id = _resolve_entity_id(session, document_id, payload.get("object"))
     claim = MapClaim(
@@ -125,7 +131,7 @@ def _approve_claim(session: Session, document_id: str, payload: dict, claim_type
         predicate=payload.get("predicate"),
         object_refs=[object_id] if object_id else None,
         status="explicit",
-        confidence=None,
+        confidence=confidence,
         state="active",
         provenance_document_id=document_id,
         provenance_section_id=None,
@@ -307,16 +313,16 @@ def canonicalize_synthesis_run(
                 _approve_entity(session, document_id, payload)
                 canonical_count += 1
             elif item.kind == "claim":
-                _approve_claim(session, document_id, payload, "spatial")
+                _approve_claim(session, document_id, payload, "spatial", item.confidence)
                 canonical_count += 1
             elif item.kind == "route":
                 _approve_route(session, document_id, payload)
                 canonical_count += 1
             elif item.kind == "visual_claim":
-                _approve_claim(session, document_id, payload, "visual")
+                _approve_claim(session, document_id, payload, "visual", item.confidence)
                 canonical_count += 1
             elif item.kind == "access":
-                _approve_claim(session, document_id, payload, "access")
+                _approve_claim(session, document_id, payload, "access", item.confidence)
                 canonical_count += 1
             elif item.kind == "movement":
                 _approve_route(session, document_id, payload)
