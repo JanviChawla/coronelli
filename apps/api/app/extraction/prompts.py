@@ -424,23 +424,25 @@ You are reading one section of written fiction. Your ONLY task: identify every
 named place that appears in this section, at EVERY geographic scale.
 
 SCALE HIERARCHY — work top-down, never skip a level that the text supports:
-  world      — the entire world or continent ("Prythian", "Middle-earth")
-  region     — named region, court, kingdom, territory ("Spring Court", "The Shire")
+  world      — the entire world or continent ("the Known World", "Middle-earth")
+  region     — named region, court, kingdom, territory ("the Northern Reaches", "The Shire")
   terrain    — named landscape feature ("Enchanted Forest", "The Bog")
-  settlement — named village, town, city ("Ramshackle Village")
-  building   — named structure or estate ("Tamlin's Manor", "The Cottage")
-  interior   — named room, hall, corridor ("Throne Room", "Long Hall", "Dining Room")
+  settlement — named village, town, city ("Millbrook", "the village")
+  building   — named structure or estate ("the old mill", "The Cottage")
+  interior   — named room, hall, corridor ("the parlour", "Long Hall", "Dining Room")
   site       — named outdoor site, body of water, landmark, portal, barrier
 
 START BIG. Always ask: "What is the largest-scale named place context for this section?"
-If the narrative is set within a named court, kingdom, or region, output that region
+If the narrative is set within a named region or settlement, output that context
 FIRST, even if it is only mentioned in passing. Then output every smaller-scale place.
 
 RULES:
 - Include EVERY scale level that the text names or clearly implies.
-- A place mentioned briefly ("they rode toward Prythian") still qualifies.
+- A place mentioned briefly ("they rode toward Millbrook") still qualifies.
 - Use the most specific name the source text provides.
-- If the same place is called by multiple names, list both in aliases.
+- If the same place is called by MULTIPLE DIFFERENT NAMES IN THIS TEXT, list them in
+  aliases. aliases MUST contain ONLY names that literally appear in the current text —
+  do NOT add names from your training knowledge of other books or other works.
 - Do NOT include: characters, creatures, furniture, food, portable objects, animals,
   abstract concepts, emotions, non-spatial events.
 - Do NOT invent. Extract only what the text names or clearly describes.
@@ -448,24 +450,25 @@ RULES:
 
 Previously known places are provided for reference. Do not re-list them as new
 discoveries. If a previously known place is referenced in this section, you may
-include it with is_new: false.
+include it with is_new: false. Do NOT invent new aliases for known places unless
+those aliases appear explicitly in the current section text.
 
 OUTPUT: valid JSON only. No markdown, no comments.
 {
   "places": [
     {
-      "name": "Spring Court",
-      "type": "region",
-      "aliases": ["the Court"],
-      "excerpt": "the Spring Court's lands",
+      "name": "Millbrook",
+      "type": "settlement",
+      "aliases": ["the village"],
+      "excerpt": "the quiet village of Millbrook",
       "confidence": 0.92,
       "is_new": true
     },
     {
-      "name": "Tamlin's Manor",
+      "name": "the old mill",
       "type": "building",
-      "aliases": ["the Estate", "the Manor"],
-      "excerpt": "the sprawling manor house",
+      "aliases": [],
+      "excerpt": "the waterwheel of the old mill",
       "confidence": 0.88,
       "is_new": true
     }
