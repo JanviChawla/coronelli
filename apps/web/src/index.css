@@ -254,6 +254,38 @@ button, input, select, textarea { font-family: inherit; }
 .btn-cta:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
 .btn-cta:disabled::after { display: none; }
 
+/* Secondary action — re-harvest / re-synthesize. Demoted: no fill, no shimmer */
+.btn-rerun {
+  padding: 0.42rem 0.85rem;
+  background: transparent;
+  border: 1px solid var(--border-warm);
+  border-radius: 4px;
+  color: var(--ink-muted);
+  font-family: inherit;
+  font-size: 0.82rem;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s, color 0.18s, border-color 0.18s;
+}
+.btn-rerun:hover {
+  background: rgba(180, 150, 80, 0.09);
+  color: var(--ink);
+  border-color: rgba(201, 168, 76, 0.55);
+}
+.btn-rerun:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Details / summary disclosure triangles ──────────────────────────────── */
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 0.35em;
+  transition: transform 0.15s ease;
+}
+details[open] > summary::before { content: '▾'; }
+
 /* ── Cartouche — decorative text frame used for legend / inspector headers ── */
 /* Hand-authored CSS box with double-rule effect; no generated art.            */
 

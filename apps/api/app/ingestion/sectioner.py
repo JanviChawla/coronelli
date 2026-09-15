@@ -96,25 +96,51 @@ _CHAPTER_ISOLATED_RE = re.compile(
 
 def _normalize_chapter_heading(raw: str) -> str:
     s = raw.strip().rstrip(".,;")
-    return re.sub(r"^(chapter|part|book)", lambda m: m.group(0).title(), s, flags=re.IGNORECASE)
+    s = re.sub(r"^(chapter|part|book)", lambda m: m.group(0).title(), s, flags=re.IGNORECASE)
+    # Spelled-out ordinals (ONE, TWO, …) are not Roman numerals — title-case them.
+    m = re.match(r"^(Chapter|Part|Book)\s+([A-Z]+)(\.?)$", s)
+    if m and _roman_to_int(m.group(2)) is None:
+        s = f"{m.group(1)} {m.group(2).capitalize()}{m.group(3)}"
+    return s
 
 
 def _pop_subtitle(body: str) -> tuple[str | None, str]:
-    """Subtitle is on the very next line (exactly one \n), followed by a blank line."""
-    if not body.startswith("\n") or body.startswith("\n\n"):
+    """Subtitle is on the very next line (one \\n) or after one blank line (\\n\\n), followed by a blank line."""
+    if not body.startswith("\n"):
         return None, body
-    after_newline = body[1:]
-    nl = after_newline.find("\n")
-    if nl == -1:
-        return None, body
-    first_line = after_newline[:nl].rstrip("\r").strip()
-    rest = after_newline[nl + 1:]
-    if (
-        0 < len(first_line) <= 60
-        and not re.match(r"^(?:chapter|part|book)\s+\w+", first_line, re.IGNORECASE)
-        and bool(rest) and rest[0] == "\n"
-    ):
-        return first_line, rest
+
+    if not body.startswith("\n\n"):
+        # Case 1: subtitle immediately follows (Peter Pan style)
+        after_newline = body[1:]
+        nl = after_newline.find("\n")
+        if nl == -1:
+            return None, body
+        first_line = after_newline[:nl].rstrip("\r").strip()
+        rest = after_newline[nl + 1:]
+        if (
+            0 < len(first_line) <= 60
+            and not re.match(r"^(?:chapter|part|book)\s+\w+", first_line, re.IGNORECASE)
+            and bool(rest) and rest[0] == "\n"
+        ):
+            return first_line, rest
+    else:
+        # Case 2: subtitle after one blank line (HP style: CHAPTER ONE\n\nTHE BOY WHO LIVED)
+        # Guard: line must be ALL-CAPS to distinguish from prose.
+        after_blank = body[2:]
+        nl = after_blank.find("\n")
+        if nl == -1:
+            return None, body
+        first_line = after_blank[:nl].rstrip("\r").strip()
+        rest = after_blank[nl + 1:]
+        if (
+            0 < len(first_line) <= 70
+            and first_line == first_line.upper()
+            and re.search(r"[A-Z]", first_line)
+            and not re.match(r"^(?:chapter|part|book)\s+\w+", first_line, re.IGNORECASE)
+            and bool(rest) and rest[0] == "\n"
+        ):
+            return _smart_title(first_line), rest
+
     return None, body
 
 

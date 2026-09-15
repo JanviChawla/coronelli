@@ -267,6 +267,26 @@ def run_catalog_extraction(
     if section is None:
         raise ExtractionError(f"Section '{section_id}' not found.")
 
+    # Build known_names from prior sections so the LLM marks them is_new: false
+    # instead of re-proposing every entity it already saw in an earlier chapter.
+    prior_sec_ids = [
+        s.id for s in session.query(SourceSection).filter(
+            SourceSection.document_id == section.document_id,
+            SourceSection.ordinal < section.ordinal,
+        ).all()
+    ]
+    known_names: list[dict] = []
+    if prior_sec_ids:
+        seen: set[str] = set()
+        for c in session.query(Candidate).filter(
+            Candidate.section_id.in_(prior_sec_ids),
+            Candidate.kind == "entity",
+        ).all():
+            name = (c.payload.get("name") or "").strip()
+            if name and name not in seen:
+                seen.add(name)
+                known_names.append({"name": name, "type": c.payload.get("type", "")})
+
     content_hash = _section_content_hash(section)
 
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=_STALE_RUN_MINUTES)
@@ -317,7 +337,7 @@ def run_catalog_extraction(
     run = _make_run(session, section_id, content_hash)
 
     try:
-        result = provider.extract_catalog_only(section, known_names=[])
+        result = provider.extract_catalog_only(section, known_names=known_names)
     except Exception as exc:
         run.status = "failed"
         run.error = str(exc)

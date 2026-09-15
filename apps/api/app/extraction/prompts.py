@@ -412,8 +412,8 @@ COMBINED_PROMPT_VERSION = "2.0"
 # Pre-pass: catalog all sections first → aggregate global entity list
 # Evidence pass: each section gets the full global entity list as context
 
-GLOBAL_CATALOG_VERSION = "3.0"
-GLOBAL_EVIDENCE_VERSION = "3.0"
+GLOBAL_CATALOG_VERSION = "3.0-catalog"
+GLOBAL_EVIDENCE_VERSION = "3.0-evidence"
 
 # ── Pass 1: Place Catalog ─────────────────────────────────────────────────────
 

@@ -402,7 +402,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
         action={
           <details>
             <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
-              ▸ Inspect metadata
+              Inspect metadata
             </summary>
             <div style={{ marginTop: '0.6rem', display: 'flex', flexDirection: 'column', gap: '0.18rem' }}>
               {[
@@ -439,7 +439,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
         action={
           <details>
             <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
-              ▸ Inspect sections ({sections.length})
+              Inspect sections ({sections.length})
             </summary>
             <div style={{ marginTop: '0.65rem' }}>
               {sections.map((s, i) => (
@@ -471,7 +471,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
               />
               <details>
                 <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
-                  ▸ Inspect raw candidates ({totalCandidates})
+                  Inspect raw candidates ({totalCandidates})
                 </summary>
                 <div style={{ marginTop: '0.75rem' }}>
                   <CandidatesTable
@@ -608,7 +608,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
               {atlasEntities.length > 0 && (
                 <details>
                   <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
-                    ▸ Inspect canonical places ({canonicalEntityCount})
+                    Inspect canonical places ({canonicalEntityCount})
                   </summary>
                   <div style={{ marginTop: '0.65rem', display: 'flex', flexDirection: 'column', gap: '0.22rem' }}>
                     {atlasEntities
