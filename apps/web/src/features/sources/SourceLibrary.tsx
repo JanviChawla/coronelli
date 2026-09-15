@@ -7,6 +7,7 @@ import {
   fetchDocuments,
   fetchSections,
   importDocument,
+  patchDocument,
   resetLibrary,
   updateSections,
   type Document,
@@ -44,6 +45,11 @@ export function SourceLibrary() {
   const [showReset, setShowReset]               = useState(false)
   const [resetInput, setResetInput]             = useState('')
   const [resetting, setResetting]               = useState(false)
+  const [editingDoc, setEditingDoc]             = useState<Document | null>(null)
+  const [editTitle, setEditTitle]               = useState('')
+  const [editAuthor, setEditAuthor]             = useState('')
+  const [editYear, setEditYear]                 = useState('')
+  const [editSaving, setEditSaving]             = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { fetchDocuments().then(setDocuments).catch(() => {}) }, [])
@@ -101,6 +107,33 @@ export function SourceLibrary() {
       setView('workflow')
     } catch {
       setError('Could not save sections.')
+    }
+  }
+
+  function openEdit(doc: Document) {
+    setEditingDoc(doc)
+    setEditTitle(doc.title)
+    setEditAuthor(doc.author ?? '')
+    setEditYear(doc.year ? String(doc.year) : '')
+  }
+
+  async function saveEdit() {
+    if (!editingDoc) return
+    setEditSaving(true)
+    try {
+      const year = editYear.trim() ? parseInt(editYear, 10) : null
+      const updated = await patchDocument(editingDoc.id, {
+        title: editTitle.trim() || editingDoc.title,
+        author: editAuthor.trim() || undefined,
+        year: year ?? undefined,
+      })
+      setDocuments(prev => prev.map(d => d.id === updated.id ? updated : d))
+      if (selected?.id === updated.id) setSelected(updated)
+      setEditingDoc(null)
+    } catch {
+      setError('Could not update document metadata.')
+    } finally {
+      setEditSaving(false)
     }
   }
 
@@ -197,9 +230,14 @@ export function SourceLibrary() {
                     <div style={{ fontSize: '0.65rem', color: 'var(--ink-faint)', marginTop: '0.15rem' }}>{doc.year}</div>
                   )}
                 </button>
-                <button className="sidebar-delete-btn" onClick={() => handleDelete(doc)} title={`Remove ${doc.title}`}>
-                  ×
-                </button>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  <button className="sidebar-delete-btn" onClick={() => openEdit(doc)} title="Edit metadata" style={{ fontSize: '0.65rem' }}>
+                    ✎
+                  </button>
+                  <button className="sidebar-delete-btn" onClick={() => handleDelete(doc)} title={`Remove ${doc.title}`}>
+                    ×
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
@@ -273,6 +311,56 @@ export function SourceLibrary() {
       </div>
 
       {/* ── Reset confirmation overlay ───────────────────────────────── */}
+      {/* ── Edit metadata overlay ───────────────────────────────────── */}
+      {editingDoc && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
+        }}>
+          <div style={{
+            background: 'var(--parchment)', border: '1px solid var(--border-warm)',
+            borderRadius: '6px', padding: '2rem 2.25rem', width: '380px', maxWidth: '90vw',
+          }}>
+            <p style={{ fontSize: '1rem', fontWeight: 400, color: 'var(--ink)', marginBottom: '1.25rem' }}>
+              Edit metadata
+            </p>
+            {[
+              { label: 'Title', value: editTitle, set: setEditTitle, type: 'text' },
+              { label: 'Author', value: editAuthor, set: setEditAuthor, type: 'text' },
+              { label: 'Year', value: editYear, set: setEditYear, type: 'number' },
+            ].map(({ label, value, set, type }) => (
+              <div key={label} style={{ marginBottom: '0.9rem' }}>
+                <label style={{ display: 'block', fontSize: '0.72rem', color: 'var(--ink-muted)', marginBottom: '0.25rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                  {label}
+                </label>
+                <input
+                  type={type}
+                  value={value}
+                  onChange={e => set(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') saveEdit() }}
+                  style={{
+                    width: '100%', boxSizing: 'border-box' as const,
+                    padding: '0.45rem 0.75rem', fontSize: '0.85rem',
+                    border: '1px solid var(--border-warm)', borderRadius: '4px',
+                    background: 'var(--parchment-alt)', color: 'var(--ink)', outline: 'none',
+                  }}
+                />
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
+              <button type="button" onClick={() => setEditingDoc(null)} disabled={editSaving}
+                style={{ fontSize: '0.8rem', padding: '0.45rem 1rem', background: 'none', border: '1px solid var(--border-warm)', borderRadius: '4px', cursor: 'pointer', color: 'var(--ink-muted)' }}>
+                Cancel
+              </button>
+              <button type="button" onClick={saveEdit} disabled={editSaving}
+                style={{ fontSize: '0.8rem', padding: '0.45rem 1.1rem', background: 'var(--gold)', border: 'none', borderRadius: '4px', cursor: 'pointer', color: '#1a1008', opacity: editSaving ? 0.6 : 1 }}>
+                {editSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showReset && (
         <div style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',

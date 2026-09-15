@@ -107,6 +107,32 @@ def update_sections(
     return [SectionResponse.model_validate(s) for s in sections]
 
 
+class DocumentUpdateRequest(BaseModel):
+    title: str | None = None
+    author: str | None = None
+    year: int | None = None
+
+
+@router.patch("/{document_id}", response_model=DocumentResponse)
+def update_document_metadata(
+    document_id: str,
+    body: DocumentUpdateRequest,
+    db: Session = Depends(get_db),
+) -> DocumentResponse:
+    doc = db.get(SourceDocument, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document '{document_id}' not found.")
+    if body.title is not None:
+        doc.title = body.title.strip() or doc.title
+    if body.author is not None:
+        doc.author = body.author.strip() or None
+    if body.year is not None:
+        doc.year = body.year
+    db.commit()
+    db.refresh(doc)
+    return DocumentResponse.model_validate(doc)
+
+
 @router.delete("/{document_id}", status_code=204)
 def delete_document_endpoint(document_id: str, db: Session = Depends(get_db)) -> None:
     try:

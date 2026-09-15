@@ -60,6 +60,19 @@ export async function importDocument(
   return res.json()
 }
 
+export async function patchDocument(
+  documentId: string,
+  updates: { title?: string; author?: string; year?: number | null },
+): Promise<Document> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  })
+  if (!res.ok) throw new Error('Failed to update document')
+  return res.json()
+}
+
 export async function deleteDocument(documentId: string): Promise<void> {
   const res = await fetch(`${BASE}/api/documents/${documentId}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Failed to delete document')
