@@ -1,7 +1,7 @@
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -14,7 +14,8 @@ from app.synthesis.review import canonicalize_synthesis_run
 
 _log = logging.getLogger(__name__)
 
-_ALLOWED_KINDS = {"entity", "claim", "route", "visual_claim", "same_as", "unresolved", "reveal_event"}
+_ALLOWED_KINDS = {"entity", "claim", "route", "visual_claim", "access", "movement", "same_as", "unresolved", "reveal_event"}
+_STALE_RUN_MINUTES = 15
 
 
 def _build_evidence_ledger(session: Session, document_id: str) -> list[dict]:
@@ -82,6 +83,24 @@ def run_synthesis(
 ) -> tuple[SynthesisRun, list[SynthesisItem]]:
     ledger = _build_evidence_ledger(session, document_id)
     ledger_hash = _evidence_hash(ledger)
+
+    # Clean up stale "running" runs so they never permanently block re-synthesis.
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=_STALE_RUN_MINUTES)
+    stale_count = (
+        session.query(SynthesisRun)
+        .filter(
+            SynthesisRun.document_id == document_id,
+            SynthesisRun.status == "running",
+            SynthesisRun.started_at < cutoff,
+        )
+        .update(
+            {"status": "failed", "error": "Stale run cleaned up on next synthesis attempt"},
+            synchronize_session=False,
+        )
+    )
+    if stale_count:
+        session.flush()
+        _log.info("Marked %d stale synthesis run(s) as failed for document %s", stale_count, document_id)
 
     if not force:
         existing = (

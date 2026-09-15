@@ -1,6 +1,6 @@
 import hashlib
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 _log = logging.getLogger(__name__)
 
@@ -11,6 +11,8 @@ from app.extraction.models import Candidate, ExtractionRun
 from app.extraction.prompts import PROMPT_VERSION as _CURRENT_PROMPT_VERSION
 from app.extraction.provider import ExtractionProvider
 from app.extraction.validation import validate_candidate_payload
+
+_STALE_RUN_MINUTES = 15
 
 _COST_PER_TOKEN: dict[str, dict[str, float]] = {
     "gpt-4o-mini": {"input": 0.150 / 1_000_000, "output": 0.600 / 1_000_000},
@@ -49,6 +51,23 @@ def run_extraction(
         raise ExtractionError(f"Section '{section_id}' not found.")
 
     content_hash = _section_content_hash(section)
+
+    # Clean up stale "running" runs so they never permanently block re-extraction.
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=_STALE_RUN_MINUTES)
+    stale = (
+        session.query(ExtractionRun)
+        .filter(
+            ExtractionRun.section_id == section_id,
+            ExtractionRun.status == "running",
+            ExtractionRun.started_at < cutoff,
+        )
+        .all()
+    )
+    for sr in stale:
+        sr.status = "failed"
+        sr.error = "Stale run cleaned up on next extraction attempt"
+    if stale:
+        session.flush()
 
     if not force:
         existing = (

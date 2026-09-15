@@ -1,35 +1,28 @@
-from dataclasses import dataclass, field
+import logging
 
 from sqlalchemy.orm import Session
 
 from app.db.models import SourceSection
-from app.domain.world import MapClaim, MapEntity, MapTravelRule
+from app.domain.world import EntityMention, MapClaim, MapEntity, MapTravelRule
 from app.extraction.models import Candidate
 from app.synthesis.models import SynthesisItem
 
-_VALID_ACTIONS = {"approve", "reject", "defer", "challenge"}
+_log = logging.getLogger(__name__)
 
-_ACTION_TO_STATE = {
-    "approve": "approved",
-    "reject": "rejected",
-    "defer": "deferred",
-    "challenge": "challenged",
+_CANONICALIZE_PRIORITY = {
+    "entity": 0,
+    "claim": 1,
+    "route": 1,
+    "visual_claim": 1,
+    "access": 1,
+    "movement": 1,
+    "same_as": 2,
+    "reveal_event": 3,
+    "unresolved": 99,
 }
 
 
-class SynthesisReviewError(Exception):
-    pass
-
-
-@dataclass
-class SynthesisReviewResult:
-    item: SynthesisItem
-    created_entity: MapEntity | None = field(default=None)
-    created_claim: MapClaim | None = field(default=None)
-    created_travel_rule: MapTravelRule | None = field(default=None)
-
-
-# ── Per-kind approval helpers ─────────────────────────────────────────────────
+# ── Provenance helpers ────────────────────────────────────────────────────────
 
 def _find_provenance_section(session: Session, document_id: str, name: str) -> str | None:
     """Return the id of the earliest section containing a candidate that names this entity."""
@@ -53,6 +46,8 @@ def _find_provenance_section(session: Session, document_id: str, name: str) -> s
                 return section.id
     return None
 
+
+# ── Per-kind canonicalization helpers ─────────────────────────────────────────
 
 def _find_or_create_entity(session: Session, document_id: str, name: str, place_kind: str | None, payload: dict) -> MapEntity:
     existing = (
@@ -87,7 +82,7 @@ def _find_or_create_entity(session: Session, document_id: str, name: str, place_
 def _approve_entity(session: Session, document_id: str, payload: dict) -> MapEntity:
     name = (payload.get("name") or "").strip()
     if not name:
-        raise SynthesisReviewError("entity payload missing 'name'.")
+        raise ValueError("entity payload missing 'name'.")
     return _find_or_create_entity(session, document_id, name, payload.get("type"), payload)
 
 
@@ -154,7 +149,7 @@ def _approve_same_as(session: Session, document_id: str, payload: dict) -> MapEn
     a_name = (payload.get("a") or "").strip()
     b_name = (payload.get("b") or "").strip()
     if not a_name:
-        raise SynthesisReviewError("same_as payload missing 'a'.")
+        raise ValueError("same_as payload missing 'a'.")
 
     canonical = _find_or_create_entity(session, document_id, a_name, None, payload)
 
@@ -212,115 +207,114 @@ def _approve_reveal_event(session: Session, document_id: str, payload: dict) -> 
             session.flush()
 
 
-# ── Public service function ───────────────────────────────────────────────────
+# ── Entity mentions ───────────────────────────────────────────────────────────
 
-def review_synthesis_item(
-    session: Session,
-    item_id: str,
-    action: str,
-) -> SynthesisReviewResult:
-    if action not in _VALID_ACTIONS:
-        raise SynthesisReviewError(f"Invalid action '{action}'. Must be one of: {sorted(_VALID_ACTIONS)}.")
+def _write_entity_mentions(session: Session, document_id: str) -> None:
+    """Write one EntityMention per (entity, section) pair that references the entity.
 
-    item = session.get(SynthesisItem, item_id)
-    if item is None:
-        raise SynthesisReviewError(f"SynthesisItem '{item_id}' not found.")
-
-    entity: MapEntity | None = None
-    claim: MapClaim | None = None
-    travel_rule: MapTravelRule | None = None
-
-    if action == "approve":
-        document_id = item.document_id
-        payload = item.payload
-
-        if item.kind == "entity":
-            entity = _approve_entity(session, document_id, payload)
-        elif item.kind == "claim":
-            claim = _approve_claim(session, document_id, payload, "spatial")
-        elif item.kind == "route":
-            travel_rule = _approve_route(session, document_id, payload)
-        elif item.kind == "visual_claim":
-            claim = _approve_claim(session, document_id, payload, "visual")
-        elif item.kind == "same_as":
-            entity = _approve_same_as(session, document_id, payload)
-        elif item.kind == "reveal_event":
-            _approve_reveal_event(session, document_id, payload)
-        # unresolved: no domain write
-
-    elif action == "challenge":
-        document_id = item.document_id
-        payload = item.payload
-
-        if item.kind == "entity":
-            entity = _approve_entity(session, document_id, payload)
-        elif item.kind == "claim":
-            claim = _approve_claim(session, document_id, payload, "spatial")
-        elif item.kind == "route":
-            travel_rule = _approve_route(session, document_id, payload)
-        elif item.kind == "visual_claim":
-            claim = _approve_claim(session, document_id, payload, "visual")
-        elif item.kind == "same_as":
-            entity = _approve_same_as(session, document_id, payload)
-        elif item.kind == "reveal_event":
-            _approve_reveal_event(session, document_id, payload)
-        # unresolved: no domain write
-
-    item.review_state = _ACTION_TO_STATE[action]
-    session.commit()
-
-    return SynthesisReviewResult(
-        item=item,
-        created_entity=entity,
-        created_claim=claim,
-        created_travel_rule=travel_rule,
-    )
-
-
-def approve_all_synthesis_entities(
-    session: Session,
-    document_id: str,
-) -> int:
-    items = (
-        session.query(SynthesisItem)
-        .filter(
-            SynthesisItem.document_id == document_id,
-            SynthesisItem.kind == "entity",
-            SynthesisItem.review_state == "provisional",
-        )
-        .order_by(SynthesisItem.ordinal)
+    Scans per-section candidates to find which sections reference each canonical entity
+    by name or alias. Replaces any existing mentions for the document.
+    """
+    entities = (
+        session.query(MapEntity)
+        .filter(MapEntity.provenance_document_id == document_id, MapEntity.state == "active")
         .all()
     )
-    approved = 0
-    for item in items:
-        try:
-            review_synthesis_item(session, item.id, "approve")
-            approved += 1
-        except SynthesisReviewError:
-            pass
-    return approved
+    if not entities:
+        return
 
+    entity_by_name: dict[str, MapEntity] = {}
+    for e in entities:
+        entity_by_name[e.name.lower()] = e
+        for alias in (e.aliases or []):
+            if alias and alias.lower() not in entity_by_name:
+                entity_by_name[alias.lower()] = e
 
-def accept_all_synthesis_items(
-    session: Session,
-    document_id: str,
-    kind: str,
-) -> int:
-    items = (
-        session.query(SynthesisItem)
-        .filter(
-            SynthesisItem.document_id == document_id,
-            SynthesisItem.kind == kind,
-            SynthesisItem.review_state == "provisional",
-        )
-        .order_by(SynthesisItem.ordinal)
+    sections = (
+        session.query(SourceSection)
+        .filter(SourceSection.document_id == document_id)
+        .order_by(SourceSection.ordinal)
         .all()
     )
-    accepted = 0
-    for item in items:
+
+    session.query(EntityMention).filter(
+        EntityMention.document_id == document_id
+    ).delete(synchronize_session=False)
+
+    for section in sections:
+        candidates = (
+            session.query(Candidate)
+            .filter(Candidate.section_id == section.id)
+            .all()
+        )
+        seen: dict[str, str] = {}  # entity_id → mention_kind
+        for c in candidates:
+            p = c.payload or {}
+            for raw_name in [p.get("name"), p.get("subject"), p.get("object")]:
+                if not raw_name:
+                    continue
+                entity = entity_by_name.get(str(raw_name).lower())
+                if entity and entity.id not in seen:
+                    kind = "origin" if entity.provenance_section_id == section.id else "referenced"
+                    seen[entity.id] = kind
+
+        for entity_id, kind in seen.items():
+            session.add(EntityMention(
+                entity_id=entity_id,
+                document_id=document_id,
+                section_id=section.id,
+                section_ordinal=section.ordinal,
+                mention_kind=kind,
+                payload={},
+            ))
+
+    session.flush()
+
+
+# ── Public canonicalization function ─────────────────────────────────────────
+
+def canonicalize_synthesis_run(
+    session: Session,
+    items: list[SynthesisItem],
+    document_id: str,
+) -> int:
+    """Auto-canonicalize all synthesis items in dependency order.
+
+    Processes: entity → claim/route/visual_claim → same_as → reveal_event.
+    Returns the count of canonical records written.
+    """
+    sorted_items = sorted(items, key=lambda i: _CANONICALIZE_PRIORITY.get(i.kind, 50))
+    canonical_count = 0
+    for item in sorted_items:
+        payload = item.payload or {}
         try:
-            review_synthesis_item(session, item.id, "approve")
-            accepted += 1
-        except SynthesisReviewError:
-            pass
-    return accepted
+            if item.kind == "entity":
+                _approve_entity(session, document_id, payload)
+                canonical_count += 1
+            elif item.kind == "claim":
+                _approve_claim(session, document_id, payload, "spatial")
+                canonical_count += 1
+            elif item.kind == "route":
+                _approve_route(session, document_id, payload)
+                canonical_count += 1
+            elif item.kind == "visual_claim":
+                _approve_claim(session, document_id, payload, "visual")
+                canonical_count += 1
+            elif item.kind == "access":
+                _approve_claim(session, document_id, payload, "access")
+                canonical_count += 1
+            elif item.kind == "movement":
+                _approve_route(session, document_id, payload)
+                canonical_count += 1
+            elif item.kind == "same_as":
+                _approve_same_as(session, document_id, payload)
+            elif item.kind == "reveal_event":
+                _approve_reveal_event(session, document_id, payload)
+            # unresolved: no canonical write
+            item.review_state = "approved"
+        except Exception:
+            _log.warning(
+                "Auto-canonicalize failed for %s item (id=%s)", item.kind, item.id, exc_info=True,
+            )
+    _write_entity_mentions(session, document_id)
+    return canonical_count

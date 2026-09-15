@@ -8,7 +8,7 @@ from app.synthesis.prompts import SYNTHESIS_PROMPT_VERSION, SYNTHESIS_SYSTEM_PRO
 
 _log = logging.getLogger(__name__)
 
-_VALID_KINDS = {"entity", "claim", "route", "visual_claim", "same_as", "unresolved", "reveal_event"}
+_VALID_KINDS = {"entity", "claim", "route", "visual_claim", "access", "movement", "same_as", "unresolved", "reveal_event"}
 
 
 @dataclass

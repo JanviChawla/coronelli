@@ -66,15 +66,20 @@ class TestTravelRuleSummary:
 
 class TestVisualClaimSummary:
     def test_full(self):
-        p = {"subject": "Long Low Hall", "visual_property": "lighting", "value": "row of lamps hanging from the roof"}
-        assert candidate_display_summary("visual_claim", p) == "Long Low Hall · lighting: row of lamps hanging from the roof"
+        p = {"subject": "Long Low Hall", "category": "light", "observation": "row of lamps hanging from the roof"}
+        assert candidate_display_summary("visual_claim", p) == "Long Low Hall · light: row of lamps hanging from the roof"
 
     def test_croquet_ground_example(self):
-        p = {"subject": "Croquet Ground", "visual_property": "terrain", "value": "ridges and furrows"}
+        p = {"subject": "Croquet Ground", "category": "terrain", "observation": "ridges and furrows"}
         assert candidate_display_summary("visual_claim", p) == "Croquet Ground · terrain: ridges and furrows"
 
-    def test_missing_value_shows_what_exists(self):
-        p = {"subject": "Hall", "visual_property": "lighting"}
+    def test_legacy_visual_property_still_renders(self):
+        p = {"subject": "Hall", "visual_property": "lighting", "value": "dark torches"}
+        result = candidate_display_summary("visual_claim", p)
+        assert "Hall" in result and "lighting" in result and "dark torches" in result
+
+    def test_missing_observation_shows_what_exists(self):
+        p = {"subject": "Hall", "category": "light"}
         result = candidate_display_summary("visual_claim", p)
         assert "Hall" in result
         assert result  # non-empty; not ": ="
@@ -169,19 +174,27 @@ class TestTravelRuleValidation:
 
 class TestVisualClaimValidation:
     def test_valid(self):
-        validate_candidate_payload("visual_claim", {"subject": "Hall", "visual_property": "lighting", "value": "dark"})
+        validate_candidate_payload("visual_claim", {"subject": "Hall", "category": "light", "observation": "dark torches"})
 
-    def test_missing_value(self):
-        with pytest.raises(ValueError, match="value"):
-            validate_candidate_payload("visual_claim", {"subject": "Hall", "visual_property": "lighting"})
+    def test_missing_observation(self):
+        with pytest.raises(ValueError, match="observation"):
+            validate_candidate_payload("visual_claim", {"subject": "Hall", "category": "light"})
 
-    def test_blank_value(self):
-        with pytest.raises(ValueError, match="value"):
-            validate_candidate_payload("visual_claim", {"subject": "Hall", "visual_property": "lighting", "value": ""})
+    def test_blank_observation(self):
+        with pytest.raises(ValueError, match="observation"):
+            validate_candidate_payload("visual_claim", {"subject": "Hall", "category": "light", "observation": ""})
 
-    def test_missing_visual_property(self):
-        with pytest.raises(ValueError, match="visual_property"):
-            validate_candidate_payload("visual_claim", {"subject": "Hall", "value": "dark"})
+    def test_missing_category(self):
+        with pytest.raises(ValueError, match="category"):
+            validate_candidate_payload("visual_claim", {"subject": "Hall", "observation": "dark"})
+
+    def test_invalid_category(self):
+        with pytest.raises(ValueError, match="category"):
+            validate_candidate_payload("visual_claim", {"subject": "Hall", "category": "emotion", "observation": "spooky"})
+
+    def test_all_valid_categories(self):
+        for cat in ("architecture", "terrain", "light", "weather", "color", "material", "scale", "atmosphere", "other"):
+            validate_candidate_payload("visual_claim", {"subject": "Hall", "category": cat, "observation": "some detail"})
 
 
 class TestSceneAnchorValidation:

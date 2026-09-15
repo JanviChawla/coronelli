@@ -22,12 +22,33 @@ def synthesis_item_display_summary(kind: str, payload: dict) -> str:
         return f"{traveler}: {route_str}" if traveler else route_str
     if kind == "visual_claim":
         subject = _s("subject")
-        prop = _s("visual_property")
-        value = _s("value")
+        # Support both new (category/observation) and legacy (visual_property/value) fields
+        prop = _s("category") or _s("visual_property")
+        value = _s("observation") or _s("value")
         if subject and prop and value:
             return f"{subject} · {prop}: {value}"
         parts = [x for x in [subject, prop, value] if x]
         return " · ".join(parts) if parts else "(incomplete visual claim)"
+    if kind == "access":
+        place = _s("place_name")
+        access_type = _s("access_type")
+        traveler = _s("traveler")
+        condition = _s("condition")
+        base = f"{place}: {access_type}" if (place and access_type) else place or access_type or "(access)"
+        if traveler:
+            base = f"{traveler} → {base}"
+        if condition:
+            base = f"{base} ({condition})"
+        return base
+    if kind == "movement":
+        traveler = _s("traveler")
+        frm = _s("from_place")
+        to = _s("to_place")
+        via = _s("via")
+        route = f"{frm} → {to}" if (frm and to) else frm or to or "(unknown route)"
+        if via:
+            route = f"{frm} → {via} → {to}"
+        return f"{traveler}: {route}" if traveler else route
     if kind == "same_as":
         a = _s("a")
         b = _s("b")

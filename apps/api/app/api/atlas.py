@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
@@ -6,11 +7,31 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db.engine import get_db
-from app.domain.world import MapClaim, MapEntity, MapTravelRule
+from app.db.models import SourceDocument, SourceSection
+from app.domain.world import EntityMention, MapClaim, MapEntity, MapTravelRule
 from app.evaluation.oracle import evaluate_atlas
 
 router = APIRouter(tags=["atlas"])
 
+
+# ── Shared provenance helper ───────────────────────────────────────────────────
+
+def _provenance(document_id: str | None, section_id: str | None) -> dict:
+    return {"document_id": document_id, "section_id": section_id}
+
+
+def _discovery(entity: MapEntity) -> dict | None:
+    if not entity.provenance_section_id:
+        return None
+    return {
+        "becomes_visible_at": _provenance(
+            entity.provenance_document_id, entity.provenance_section_id
+        ),
+        "visibility_policy": "not-rendered-before-discovery",
+    }
+
+
+# ── Internal atlas API ─────────────────────────────────────────────────────────
 
 class ClaimOut(BaseModel):
     id: str
@@ -22,6 +43,7 @@ class ClaimOut(BaseModel):
     confidence: float | None
     excerpt: str | None = None
     status: str = "explicit"
+    provenance: dict
 
     model_config = {"from_attributes": True}
 
@@ -33,7 +55,10 @@ class AtlasEntityOut(BaseModel):
     aliases: list | None
     state: str
     status: str
+    provenance_document_id: str | None
     provenance_section_id: str | None
+    provenance: dict
+    discovery: dict | None
     payload: dict
     claims: list[ClaimOut]
 
@@ -101,9 +126,26 @@ def get_atlas(document_id: str, db: Session = Depends(get_db)) -> AtlasResponse:
             aliases=e.aliases,
             state=e.state,
             status=e.status,
+            provenance_document_id=e.provenance_document_id,
             provenance_section_id=e.provenance_section_id,
+            provenance=_provenance(e.provenance_document_id, e.provenance_section_id),
+            discovery=_discovery(e),
             payload=e.payload,
-            claims=[ClaimOut.model_validate(c) for c in claims_by_entity.get(e.id, [])],
+            claims=[
+                ClaimOut(
+                    id=c.id,
+                    claim_type=c.claim_type,
+                    predicate=c.predicate,
+                    subject_ref=c.subject_ref,
+                    object_refs=c.object_refs,
+                    payload=c.payload,
+                    confidence=c.confidence,
+                    excerpt=c.excerpt,
+                    status=c.status,
+                    provenance=_provenance(c.provenance_document_id, c.provenance_section_id),
+                )
+                for c in claims_by_entity.get(e.id, [])
+            ],
         )
         for e in entities
     ]
@@ -118,12 +160,42 @@ def get_atlas(document_id: str, db: Session = Depends(get_db)) -> AtlasResponse:
     )
 
 
-# ── Atlas Package export ───────────────────────────────────────────────────────
+# ── Entity mentions ───────────────────────────────────────────────────────────
+
+class EntityMentionOut(BaseModel):
+    id: str
+    entity_id: str
+    document_id: str
+    section_id: str
+    section_ordinal: int
+    mention_kind: str
+
+    model_config = {"from_attributes": True}
+
+
+@router.get("/api/documents/{document_id}/entity-mentions", response_model=list[EntityMentionOut])
+def get_entity_mentions(document_id: str, db: Session = Depends(get_db)) -> list[EntityMentionOut]:
+    mentions = (
+        db.query(EntityMention)
+        .filter(EntityMention.document_id == document_id)
+        .order_by(EntityMention.section_ordinal)
+        .all()
+    )
+    return [EntityMentionOut.model_validate(m) for m in mentions]
+
+
+# ── Atlas Package v0.1 export ──────────────────────────────────────────────────
 
 @router.get("/api/documents/{document_id}/atlas-package")
 def export_atlas_package(document_id: str, db: Session = Depends(get_db)) -> JSONResponse:
-    from app.db.models import SourceDocument  # noqa: PLC0415
     doc = db.get(SourceDocument, document_id)
+
+    sections = (
+        db.query(SourceSection)
+        .filter(SourceSection.document_id == document_id)
+        .order_by(SourceSection.ordinal)
+        .all()
+    )
 
     entities = (
         db.query(MapEntity)
@@ -142,73 +214,128 @@ def export_atlas_package(document_id: str, db: Session = Depends(get_db)) -> JSO
         .all()
     )
 
-    entity_names = {e.id: e.name for e in entities}
+    # Build lookup tables
+    entity_by_id: dict[str, MapEntity] = {e.id: e for e in entities}
+    entity_id_by_name: dict[str, str] = {e.name.lower(): e.id for e in entities}
+    for e in entities:
+        for alias in (e.aliases or []):
+            if alias.lower() not in entity_id_by_name:
+                entity_id_by_name[alias.lower()] = e.id
 
-    def _resolve(ref_id: str | None, payload_key: str, payload: dict) -> str:
-        return payload.get(payload_key) or (entity_names.get(ref_id) if ref_id else "") or ""
+    def _name_to_id(name: str | None) -> str | None:
+        return entity_id_by_name.get(name.lower()) if name else None
 
-    spatial_claims = [
+    def _id_to_name(entity_id: str | None) -> str | None:
+        return entity_by_id[entity_id].name if entity_id and entity_id in entity_by_id else None
+
+    # ── Manifest ────────────────────────────────────────────────────────────────
+    manifest = {
+        "package_id": str(uuid.uuid4()),
+        "format_version": "atlas-package-v0.1",
+        "profile": "single-file-json",
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "generator": "coronelli",
+        "entity_count": len(entities),
+        "claim_count": len(all_claims),
+        "route_count": len(travel_rules),
+        "source_count": 1,
+    }
+
+    # ── Sources ─────────────────────────────────────────────────────────────────
+    sources = [
         {
-            "id": c.id,
-            "subject": _resolve(c.subject_ref, "subject", c.payload),
-            "predicate": c.predicate or c.payload.get("predicate", ""),
-            "object": _resolve(
-                c.object_refs[0] if c.object_refs else None, "object", c.payload
-            ),
-            "confidence": c.confidence,
+            "document_id": document_id,
+            "title": doc.title if doc else document_id,
+            "sections": [
+                {
+                    "section_id": s.id,
+                    "ordinal": s.ordinal,
+                    "title": s.title,
+                }
+                for s in sections
+            ],
         }
-        for c in all_claims if c.claim_type == "spatial"
     ]
 
-    visual_claims = [
-        {
-            "id": c.id,
-            "subject": _resolve(c.subject_ref, "subject", c.payload),
-            "visual_property": c.payload.get("visual_property", ""),
-            "value": c.payload.get("value", ""),
-        }
-        for c in all_claims if c.claim_type == "visual"
-    ]
+    # ── World — entities ────────────────────────────────────────────────────────
+    world_entities = []
+    for e in entities:
+        world_entities.append({
+            "id": e.id,
+            "name": e.name,
+            "type": e.place_kind,
+            "aliases": list(e.aliases or []),
+            "status": e.status,
+            "provenance": _provenance(e.provenance_document_id, e.provenance_section_id),
+            "discovery": _discovery(e),
+            "notes": e.payload.get("notes"),
+        })
+
+    # ── World — claims ──────────────────────────────────────────────────────────
+    spatial_claims = []
+    visual_claims = []
+    for c in all_claims:
+        object_id = c.object_refs[0] if c.object_refs else None
+        prov = _provenance(c.provenance_document_id, c.provenance_section_id)
+
+        if c.claim_type == "spatial":
+            spatial_claims.append({
+                "id": c.id,
+                "subject_id": c.subject_ref,
+                "subject_name": _id_to_name(c.subject_ref) or c.payload.get("subject"),
+                "predicate": c.predicate or c.payload.get("predicate"),
+                "object_id": object_id,
+                "object_name": _id_to_name(object_id) or c.payload.get("object"),
+                "status": c.status,
+                "confidence": c.confidence,
+                "provenance": prov,
+                "excerpt": c.excerpt,
+            })
+        elif c.claim_type == "visual":
+            visual_claims.append({
+                "id": c.id,
+                "subject_id": c.subject_ref,
+                "subject_name": _id_to_name(c.subject_ref) or c.payload.get("subject"),
+                "visual_property": c.payload.get("visual_property") or c.payload.get("category", ""),
+                "value": c.payload.get("value") or c.payload.get("observation", ""),
+                "status": c.status,
+                "provenance": prov,
+            })
+
+    # ── World — routes ──────────────────────────────────────────────────────────
+    world_routes = []
+    for r in travel_rules:
+        from_name = r.payload.get("from")
+        to_name = r.payload.get("to")
+        via_name = r.payload.get("via")
+        world_routes.append({
+            "id": r.id,
+            "traveler": r.traveler,
+            "from_id": _name_to_id(from_name),
+            "from_name": from_name,
+            "to_id": _name_to_id(to_name),
+            "to_name": to_name,
+            "via_id": _name_to_id(via_name),
+            "via_name": via_name,
+            "can_traverse": r.can_traverse,
+            "condition": r.condition,
+            "provenance": _provenance(r.provenance_document_id, r.provenance_section_id),
+        })
 
     package = {
-        "version": "1.0",
-        "document_id": document_id,
-        "document_title": doc.title if doc else document_id,
-        "exported_at": datetime.now(timezone.utc).isoformat(),
-        "entities": [
-            {
-                "id": e.id,
-                "name": e.name,
-                "type": e.place_kind,
-                "aliases": list(e.aliases or []),
-                "notes": e.payload.get("notes"),
-            }
-            for e in entities
-        ],
-        "spatial_claims": spatial_claims,
-        "visual_claims": visual_claims,
-        "routes": [
-            {
-                "id": r.id,
-                "traveler": r.traveler,
-                "from": r.payload.get("from") or "",
-                "to": r.payload.get("to") or "",
-                "route": r.route,
-                "can_traverse": r.can_traverse,
-                "condition": r.condition,
-            }
-            for r in travel_rules
-        ],
-        "statistics": {
-            "entity_count": len(entities),
-            "spatial_claim_count": len(spatial_claims),
-            "visual_claim_count": len(visual_claims),
-            "route_count": len(travel_rules),
+        "format": "atlas-package-v0.1-single",
+        "manifest": manifest,
+        "sources": sources,
+        "world": {
+            "entities": world_entities,
+            "spatial_claims": spatial_claims,
+            "visual_claims": visual_claims,
+            "routes": world_routes,
         },
     }
 
     slug = (doc.title if doc else document_id)[:32].replace(" ", "-").lower()
-    filename = f"atlas-{slug}.json"
+    filename = f"atlas-{slug}-v0.1.json"
     return JSONResponse(
         content=package,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},

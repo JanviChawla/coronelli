@@ -151,9 +151,9 @@ def test_claim_missing_predicate_produces_partial_not_empty():
 
 # ── Payload validation: reject malformed candidates before persistence ─────────
 
-def test_visual_claim_missing_value_fails_validation():
-    with pytest.raises(ValueError, match="value"):
-        validate_candidate_payload("visual_claim", {"subject": "Emerald City", "visual_property": "appearance"})
+def test_visual_claim_missing_observation_fails_validation():
+    with pytest.raises(ValueError, match="observation|category"):
+        validate_candidate_payload("visual_claim", {"subject": "Emerald City", "category": "atmosphere"})
 
 
 def test_malformed_visual_claim_skipped_not_persisted(db):
@@ -161,7 +161,7 @@ def test_malformed_visual_claim_skipped_not_persisted(db):
     section = _make_section(db, "XIV — The Winged Monkeys", ordinal=14)
     bad_visual = RawCandidate(
         kind="visual_claim",
-        payload={"subject": "Emerald City", "visual_property": "appearance"},  # missing 'value'
+        payload={"subject": "Emerald City", "category": "atmosphere"},  # missing 'observation'
         status="explicit",
         confidence=0.85,
         excerpt="everything green",
@@ -293,8 +293,8 @@ def test_all_persisted_candidates_have_display_summary(db):
         _rc("claim", {"subject": "Palace of Oz", "predicate": "LOCATED_IN", "object": "Emerald City"}),
         _rc("travel_rule", {"traveler": "Dorothy", "can_traverse": True,
             "route": "Emerald City -> Palace of Oz -> Throne Room", "condition": None}),
-        _rc("visual_claim", {"subject": "Emerald City", "visual_property": "appearance",
-            "value": "everything green"}),
+        _rc("visual_claim", {"subject": "Emerald City", "category": "atmosphere",
+            "observation": "everything green"}),
     ]
     _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
 

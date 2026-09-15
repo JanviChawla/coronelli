@@ -4,15 +4,16 @@ import { CandidatesTable } from '../candidates/CandidatesTable'
 import { type Candidate, fetchCandidates } from '../candidates/candidateApi'
 import { fetchPreflight, triggerExtraction } from './extractionApi'
 import type { Document, Section } from './sourceApi'
-import { ApprovedAtlasView } from '../atlas/ApprovedAtlasView'
-import { ProvisionalAtlasView } from '../synthesis/ProvisionalAtlasView'
-import { type SynthesisItem, fetchProvisionalAtlas, triggerSynthesis } from '../synthesis/synthesisApi'
+import { fetchAtlas } from '../atlas/atlasApi'
+import type { AtlasEntity } from '../atlas/atlasApi'
+import { triggerSynthesis } from '../synthesis/synthesisApi'
 
 interface Props {
   document: Document
   sections: Section[]
   onEditSections: () => void
   onAtlasChanged?: () => void
+  onViewAtlas?: () => void
 }
 
 type Phase = 'preflight' | 'ready' | 'extracting' | 'harvested' | 'synthesizing' | 'done' | 'error'
@@ -103,7 +104,7 @@ function Ornament() {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function SourceWorkflow({ document, sections, onEditSections, onAtlasChanged }: Props) {
+export function SourceWorkflow({ document, sections, onEditSections, onAtlasChanged, onViewAtlas }: Props) {
   const [phase, setPhase] = useState<Phase>('preflight')
   const [errorInStep, setErrorInStep] = useState<3 | 4>(3)
   const [totalCost, setTotalCost] = useState<number | null>(null)
@@ -116,23 +117,28 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
   const [totalElapsedMs, setTotalElapsedMs] = useState(0)
   const [workflowError, setWorkflowError] = useState<string | null>(null)
   const [allCandidates, setAllCandidates] = useState<Record<string, Candidate[]>>({})
-  const [synthesisItems, setSynthesisItems] = useState<SynthesisItem[]>([])
-  const [synthesisFromCache, setSynthesisFromCache] = useState(false)
+  const [canonicalEntityCount, setCanonicalEntityCount] = useState(0)
+  const [canonicalClaimCount, setCanonicalClaimCount] = useState(0)
+  const [atlasEntities, setAtlasEntities] = useState<AtlasEntity[]>([])
+  const [synthElapsedMs, setSynthElapsedMs] = useState(0)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const [atlasRefreshKey, setAtlasRefreshKey] = useState(0)
 
+  // Wait for sections to be available before initialising — parent loads them async
   useEffect(() => {
+    if (!sections.length) return
     initWorkflow()
     return () => { if (timerRef.current) clearInterval(timerRef.current) }
-  }, [document.id])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [document.id, sections.length])
 
   async function initWorkflow() {
     setPhase('preflight')
     try {
-      const atlas = await fetchProvisionalAtlas(document.id)
-      if (atlas.items.length > 0) {
-        setSynthesisItems(atlas.items)
-        setSynthesisFromCache(true)
+      const atlas = await fetchAtlas(document.id)
+      if (atlas.entity_count > 0) {
+        setCanonicalEntityCount(atlas.entity_count)
+        setCanonicalClaimCount(atlas.claim_count)
+        setAtlasEntities(atlas.entities)
         const bySection: Record<string, Candidate[]> = {}
         let total = 0
         await Promise.all(sections.map(async (s) => {
@@ -144,7 +150,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
         setPhase('done')
         return
       }
-    } catch { /* no synthesis run yet */ }
+    } catch { /* no atlas yet */ }
 
     try {
       const bySection: Record<string, Candidate[]> = {}
@@ -215,12 +221,20 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
 
   async function handleSynthesize(force = false) {
     setPhase('synthesizing')
+    setSynthElapsedMs(0)
+    const synthStart = Date.now()
+    timerRef.current = setInterval(() => setSynthElapsedMs(Date.now() - synthStart), 100)
     try {
-      const result = await triggerSynthesis(document.id, force)
-      setSynthesisItems(result.items)
-      setSynthesisFromCache(result.from_cache)
+      await triggerSynthesis(document.id, force)
+      if (timerRef.current) clearInterval(timerRef.current)
+      const atlas = await fetchAtlas(document.id)
+      setCanonicalEntityCount(atlas.entity_count)
+      setCanonicalClaimCount(atlas.claim_count)
+      setAtlasEntities(atlas.entities)
       setPhase('done')
+      onAtlasChanged?.()
     } catch (e) {
+      if (timerRef.current) clearInterval(timerRef.current)
       setWorkflowError(e instanceof Error ? e.message : 'Synthesis failed.')
       setErrorInStep(4)
       setPhase('error')
@@ -255,13 +269,22 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
         label="Prepare sections"
         detail={`${sections.length} section${sections.length !== 1 ? 's' : ''} ready`}
         action={
-          <button
-            type="button"
-            className="btn-outline-warm"
-            onClick={onEditSections}
-          >
-            Review and edit
-          </button>
+          <details>
+            <summary style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+              ▸ Inspect sections ({sections.length})
+            </summary>
+            <div style={{ marginTop: '0.65rem' }}>
+              {sections.map((s, i) => (
+                <div key={s.id} style={{ display: 'flex', gap: '0.5rem', fontSize: '0.78rem', marginBottom: '0.2rem' }}>
+                  <span style={{ color: 'var(--gold)', minWidth: '2rem', fontSize: '0.62rem', flexShrink: 0 }}>§{i + 1}</span>
+                  <span style={{ color: 'var(--ink)' }}>{s.title}</span>
+                </div>
+              ))}
+              <button type="button" className="btn-outline-warm" style={{ marginTop: '0.65rem' }} onClick={onEditSections}>
+                Edit sections
+              </button>
+            </div>
+          </details>
         }
       />
       <StepConnector />
@@ -270,22 +293,29 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
       {step3Done ? (
         <StepDone
           label="Harvest evidence"
-          detail={`${totalCandidates} candidate${totalCandidates !== 1 ? 's' : ''} across ${sections.length} sections · ${(totalElapsedMs / 1000).toFixed(1)}s`}
+          detail={`${totalCandidates} candidate${totalCandidates !== 1 ? 's' : ''} across ${sections.length} sections${totalElapsedMs > 0 ? ` · ${(totalElapsedMs / 1000).toFixed(1)}s` : ''}`}
           action={
-            <details>
-              <summary style={{
-                fontSize: '0.78rem', color: 'var(--ink-muted)',
-                cursor: 'pointer', listStyle: 'none',
-              }}>
-                ▸ Inspect raw candidates ({totalCandidates})
-              </summary>
-              <div style={{ marginTop: '0.75rem' }}>
-                <CandidatesTable
-                  sections={sections.map(s => ({ id: s.id, title: s.title }))}
-                  candidates={allCandidates}
-                />
-              </div>
-            </details>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+              <details>
+                <summary style={{
+                  fontSize: '0.78rem', color: 'var(--ink-muted)',
+                  cursor: 'pointer', listStyle: 'none',
+                }}>
+                  ▸ Inspect raw candidates ({totalCandidates})
+                </summary>
+                <div style={{ marginTop: '0.75rem' }}>
+                  <CandidatesTable
+                    sections={sections.map(s => ({ id: s.id, title: s.title }))}
+                    candidates={allCandidates}
+                  />
+                </div>
+              </details>
+              {phase !== 'synthesizing' && phase !== 'done' && (
+                <button type="button" className="btn-outline-warm" style={{ alignSelf: 'flex-start' }} onClick={handleHarvest}>
+                  Re-harvest
+                </button>
+              )}
+            </div>
           }
         />
       ) : step3Error ? (
@@ -365,7 +395,47 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
       {step4Done ? (
         <StepDone
           label="Synthesize atlas"
-          detail={`${synthesisItems.length} synthesis item${synthesisItems.length !== 1 ? 's' : ''} produced${synthesisFromCache ? ' · from cache' : ''}`}
+          detail={`${canonicalEntityCount} place${canonicalEntityCount !== 1 ? 's' : ''} · ${canonicalClaimCount} relationship${canonicalClaimCount !== 1 ? 's' : ''} canonicalized`}
+          action={
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+              <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap' }}>
+                {onViewAtlas && (
+                  <button type="button" className="btn-outline-warm" onClick={onViewAtlas}>
+                    Atlas Explorer →
+                  </button>
+                )}
+                <button type="button" className="btn-outline-warm" onClick={() => handleSynthesize(true)}>
+                  Re-synthesize
+                </button>
+              </div>
+              {atlasEntities.length > 0 && (
+                <details>
+                  <summary style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+                    ▸ Inspect canonical places ({canonicalEntityCount})
+                  </summary>
+                  <div style={{
+                    marginTop: '0.65rem',
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+                    gap: '0.35rem 0.75rem',
+                  }}>
+                    {atlasEntities
+                      .slice()
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map(e => (
+                        <div key={e.id} style={{ fontSize: '0.78rem', color: 'var(--ink)', display: 'flex', gap: '0.3rem', alignItems: 'baseline' }}>
+                          <span style={{ flexShrink: 0, color: 'var(--gold)', fontSize: '0.6rem' }}>◉</span>
+                          <span>{e.name}</span>
+                          {e.place_kind && (
+                            <span style={{ color: 'var(--ink-faint)', fontSize: '0.62rem' }}>· {e.place_kind}</span>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          }
         />
       ) : step4Error ? (
         <StepActive n={4} label="Synthesize atlas">
@@ -378,61 +448,26 @@ export function SourceWorkflow({ document, sections, onEditSections, onAtlasChan
         </StepActive>
       ) : phase === 'synthesizing' ? (
         <StepActive n={4} label="Synthesize atlas">
-          <p style={{ fontSize: '0.82rem', color: 'var(--ink-faint)' }}>
-            Synthesizing — this may take a moment…
+          <p style={{ fontSize: '0.85rem', color: 'var(--ink-muted)', marginBottom: '0.2rem' }}>
+            Synthesizing {totalCandidates} evidence fragment{totalCandidates !== 1 ? 's' : ''} in one pass · {(synthElapsedMs / 1000).toFixed(1)}s
+          </p>
+          <p style={{ fontSize: '0.78rem', color: 'var(--ink-faint)' }}>
+            Merging entities, resolving aliases, anchoring provenance…
           </p>
         </StepActive>
       ) : phase === 'harvested' ? (
         <StepActive n={4} label="Synthesize atlas">
           <p style={{ fontSize: '0.82rem', color: 'var(--ink-muted)', marginBottom: '1rem', lineHeight: 1.55 }}>
             Stage 2 reads all {totalCandidates} evidence fragment{totalCandidates !== 1 ? 's' : ''} in one pass
-            and produces a consolidated provisional atlas — merging duplicates, proposing same-as
-            identities, surfacing contradictions, and tracking where each place is first revealed.
+            and writes a canonical atlas — merging duplicates, resolving aliases,
+            surfacing contradictions, and anchoring each place to its first revealed section.
           </p>
           <button className="btn-cta" style={{ maxWidth: '240px' }} type="button" onClick={() => handleSynthesize(false)}>
             Synthesize atlas
           </button>
         </StepActive>
       ) : (
-        <StepLocked n={4} label="Synthesize atlas" detail="Reads all harvested evidence in one pass and consolidates it into a provisional atlas." />
-      )}
-      <StepConnector />
-
-      {/* ── Step 5: Review provisional atlas ─────────────────────────── */}
-      {step4Done ? (
-        <StepActive n={5} label="Review provisional atlas">
-          <p style={{ fontSize: '0.82rem', color: 'var(--ink-muted)', marginBottom: '0.85rem', lineHeight: 1.55 }}>
-            Approve, reject, or defer each synthesis item. Approved places and claims are written
-            to the atlas. Same-as approvals merge duplicate entities. This step is iterative — you
-            can re-synthesize at any time.
-          </p>
-          <ProvisionalAtlasView
-            items={synthesisItems}
-            documentId={document.id}
-            onResynthesize={() => handleSynthesize(true)}
-            onReviewed={() => { setAtlasRefreshKey(k => k + 1); onAtlasChanged?.() }}
-          />
-        </StepActive>
-      ) : (
-        <StepLocked n={5} label="Review provisional atlas" detail="Approve, reject, or defer synthesis items. Same-as proposals merge entities; reveal events anchor places to their first chapter." />
-      )}
-      <StepConnector />
-
-      {/* ── Step 6: Approved atlas ────────────────────────────────────── */}
-      {step4Done ? (
-        <StepActive n={6} label="Approved atlas">
-          <p style={{ fontSize: '0.82rem', color: 'var(--ink-muted)', marginBottom: '0.85rem', lineHeight: 1.55 }}>
-            The canonical atlas built from approved items. Export as an Atlas Package (JSON) to use
-            in downstream tools or share with collaborators.
-          </p>
-          <ApprovedAtlasView
-            documentId={document.id}
-            documentTitle={document.title}
-            refreshSignal={atlasRefreshKey}
-          />
-        </StepActive>
-      ) : (
-        <StepLocked n={6} label="Approved atlas" detail="The canonical place graph built from your review decisions. Export as an Atlas Package when ready." />
+        <StepLocked n={4} label="Synthesize atlas" detail="Reads all harvested evidence in one pass and writes the canonical atlas automatically." />
       )}
     </div>
   )

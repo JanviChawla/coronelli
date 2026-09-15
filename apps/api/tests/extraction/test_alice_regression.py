@@ -129,11 +129,11 @@ CH1_CANDIDATES = [
          "condition": None},
         excerpt="down the rabbit-hole"),
     # visual claims
-    _rc("visual_claim", {"subject": "Fall Shaft", "visual_property": "contents", "value": "shelves and cupboards, maps and pictures"},
+    _rc("visual_claim", {"subject": "Fall Shaft", "category": "material", "observation": "shelves and cupboards, maps and pictures"},
         excerpt="cupboards and book-shelves"),
-    _rc("visual_claim", {"subject": "Long Low Hall", "visual_property": "lighting", "value": "row of lamps hanging from the roof"},
+    _rc("visual_claim", {"subject": "Long Low Hall", "category": "light", "observation": "row of lamps hanging from the roof"},
         excerpt="row of lamps hanging from the roof"),
-    _rc("visual_claim", {"subject": "Garden", "visual_property": "appearance", "value": "bright flower-beds and cool fountains"},
+    _rc("visual_claim", {"subject": "Garden", "category": "terrain", "observation": "bright flower-beds and cool fountains"},
         excerpt="bright flower-beds and cool fountains"),
 ]
 
@@ -438,8 +438,8 @@ _ATLAS_READY_CANDIDATES = [
         {"traveler": "Alice", "can_traverse": True,
          "route": "Riverbank -> Long Low Hall -> Little Door -> Garden", "condition": None},
         excerpt="down the rabbit-hole"),
-    _rc("visual_claim", {"subject": "Long Low Hall", "visual_property": "lighting",
-        "value": "row of lamps hanging from the roof"},
+    _rc("visual_claim", {"subject": "Long Low Hall", "category": "light",
+        "observation": "row of lamps hanging from the roof"},
         excerpt="row of lamps hanging from the roof"),
 ]
 

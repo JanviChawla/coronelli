@@ -121,7 +121,7 @@ def claim_candidate(db, run, section):
 @pytest.fixture
 def visual_candidate(db, run, section):
     return _candidate(db, run, section, "visual_claim",
-                      {"subject": "The Forest", "visual_property": "color", "value": "dark green"})
+                      {"subject": "The Forest", "category": "color", "observation": "dark green"})
 
 
 @pytest.fixture

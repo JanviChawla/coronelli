@@ -1,4 +1,4 @@
-SYNTHESIS_PROMPT_VERSION = "1.0"
+SYNTHESIS_PROMPT_VERSION = "1.1"
 
 SYNTHESIS_SYSTEM_PROMPT = """\
 CORONELLI ATLAS SYNTHESIS — Stage 2
@@ -12,7 +12,7 @@ Your job is to synthesize this raw evidence into a provisional atlas — a struc
 The evidence ledger is a JSON array of candidates, each with:
 - section_title: which section this was extracted from
 - section_ordinal: section order within the book (1-indexed, for temporal reasoning)
-- kind: entity | claim | travel_rule | visual_claim | scene_anchor
+- kind: entity | claim | travel_rule | visual_claim | access | movement | scene_anchor
 - payload: the extracted data
 - confidence: extraction confidence (0.0–1.0)
 - excerpt: verbatim source text supporting this candidate
@@ -53,20 +53,32 @@ Payload: {"traveler": str|null, "from": str, "to": str, "via": str|null, "can_tr
 
 ### 4. visual_claim
 A confirmed visual or appearance fact about a place.
-Payload: {"subject": str, "visual_property": str, "value": str}
+Payload: {"subject": str, "category": str, "observation": str}
+- category must be one of: architecture, terrain, light, weather, color, material, scale, atmosphere, other
 - Consolidate visual_claim candidates.
 
-### 5. same_as
+### 5. access
+A structural access constraint on a place — who may or may not enter, and under what conditions.
+Payload: {"place_name": str, "access_type": str, "condition": str|null, "traveler": str|null}
+- access_type must be: permitted, prohibited, or conditional
+- Consolidate access candidates from the extraction ledger.
+
+### 6. movement
+A narrated journey between named places, capturing the full arc of travel.
+Payload: {"traveler": str|null, "from_place": str, "to_place": str, "via": str|null, "mechanism": str|null, "stops": [str]}
+- Consolidate movement candidates from the extraction ledger.
+
+### 7. same_as
 Two candidate entity names refer to the same real place.
 Payload: {"a": str, "b": str, "rationale": str}
 - Only emit when evidence strongly supports identity (not mere proximity).
 
-### 6. unresolved
+### 8. unresolved
 Contradictory or ambiguous evidence that cannot be resolved.
 Payload: {"description": str, "evidence_a": str, "evidence_b": str}
 - Prefer to surface contradictions rather than guess a resolution.
 
-### 7. reveal_event
+### 9. reveal_event
 The section where a place entity is first unambiguously revealed.
 Payload: {"entity_name": str, "section_title": str, "section_ordinal": int, "excerpt": str}
 - Emit one reveal_event for every entity item you produce (use the earliest section_ordinal where it appears).
@@ -95,7 +107,7 @@ rationale: one sentence explaining what evidence supports this item.
 5. TEMPORAL FIRST MENTION: Emit a reveal_event for every entity item you produce, at its earliest section_ordinal.
 6. ROUTES OVER RULES: Consolidate travel_rule candidates into route items.
 7. SCENE ANCHORS: Use scene_anchor candidates (especially role=opening or role=ending) as reveal_event signals.
-8. MINIMUM COVERAGE: If the ledger contains evidence for entity, claim, route, and visual_claim, produce at least one of each.
+8. MINIMUM COVERAGE: If the ledger contains evidence for entity, claim, route, and visual_claim, produce at least one of each. Consolidate access and movement candidates from the ledger when present.
 
 ## FINAL CHECK
 
@@ -103,7 +115,9 @@ Before outputting, verify:
 A) Every entity item has a non-empty name and a valid type.
 B) Every claim item has subject, predicate (must be one of the 15 allowed predicates, same set as Stage 1 extraction), and object.
 C) Every route item has from and to fields.
-D) Every visual_claim has subject, visual_property, and value.
+D) Every visual_claim has subject, category (one of: architecture|terrain|light|weather|color|material|scale|atmosphere|other), and observation.
+D2) Every access item has place_name and access_type (permitted|prohibited|conditional).
+D3) Every movement item has from_place and to_place.
 E) Every same_as has a and b fields.
 F) Every unresolved has a description.
 G) Every reveal_event has entity_name, section_title, section_ordinal, and excerpt.

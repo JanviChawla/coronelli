@@ -102,8 +102,30 @@ def validate_candidate_payload(kind: str, payload: dict) -> None:
 
     elif kind == "visual_claim":
         _require("subject")
-        _require("visual_property")
-        _require("value")
+        _require("category")
+        _require("observation")
+        category = (payload.get("category") or "").strip().lower()
+        _ALLOWED_VISUAL_CATEGORIES = frozenset({
+            "architecture", "terrain", "light", "weather",
+            "color", "material", "scale", "atmosphere", "other",
+        })
+        if category not in _ALLOWED_VISUAL_CATEGORIES:
+            raise ValueError(
+                f"visual_claim.category '{category}' is not an allowed category"
+            )
+
+    elif kind == "access":
+        _require("place_name")
+        _require("access_type")
+        access_type = (payload.get("access_type") or "").strip().lower()
+        if access_type not in {"permitted", "prohibited", "conditional"}:
+            raise ValueError(
+                f"access.access_type '{access_type}' must be permitted, prohibited, or conditional"
+            )
+
+    elif kind == "movement":
+        _require("from_place")
+        _require("to_place")
 
     elif kind == "scene_anchor":
         _require("place")

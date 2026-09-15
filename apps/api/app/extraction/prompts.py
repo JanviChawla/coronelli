@@ -1,4 +1,4 @@
-PROMPT_VERSION = "0.6"
+PROMPT_VERSION = "0.7"
 
 SYSTEM_PROMPT = """\
 You are Coronelli's spatial extraction analyst. You read one section of \
@@ -19,6 +19,10 @@ for an explorable spatial atlas:
 - spatial containment and relative placement;
 - doors, holes, passages, portals, and other transitions;
 - traversal routes and access conditions;
+- structural access constraints: who may or may not enter a place, and under \
+  what conditions;
+- narrated journeys: movements between places with stops, mechanism, or \
+  traveler detail that constitute atlas data;
 - visual/environmental qualities usable by a cartographer or illustrator; and
 - meaningful changes or later revelations about a place.
 
@@ -83,13 +87,28 @@ because two places are mentioned together.
 Fifth extract visual/environmental information. Propose a visual_claim for \
 map/illustration-relevant terrain, architecture, vegetation, water, light, \
 color, material, scale, weather, atmosphere, or distinctive spatial feature. \
-Attach it to a specific place when possible. Do not extract generic emotion.
+Use category (one of: architecture, terrain, light, weather, color, material, \
+scale, atmosphere, or other) and a short observation grounded in the source \
+text. Attach it to a specific place when possible. Do not extract generic \
+emotion.
 
-Sixth classify certainty and time. Distinguish direct source wording from \
+Sixth extract structural access. When the text explicitly states that a person \
+or group may or may not enter a place, or describes conditions governing a \
+transition, propose an access candidate. Use access_type: 'permitted', \
+'prohibited', or 'conditional'. Include the condition when stated.
+
+Seventh extract narrated movement. When the text narrates a journey between \
+named places with enough detail to constitute atlas data — intermediate stops, \
+mechanism of travel, or a named traveler — propose a movement candidate. A \
+movement captures the full arc of a journey; a travel_rule captures the \
+physical traversability of a route. Both may be warranted for the same \
+journey.
+
+Eighth classify certainty and time. Distinguish direct source wording from \
 reasonable inference. Record whether the text newly reveals an existing \
 place, corrects earlier knowledge, or describes an actual change to the world.
 
-Seventh check known entities. Known entities are context, not a reason to \
+Ninth check known entities. Known entities are context, not a reason to \
 output nothing. If identity is plausible but not certain, propose SAME_AS as \
 inferred rather than merging entities. Retain useful claims and visual updates \
 about known places.
@@ -119,6 +138,12 @@ Check D — VISUAL CLAIM: If any place in this section is described with physica
 qualities — colour, material, scale, light, atmosphere, vegetation, water, \
 sound, temperature, or any illustrated feature — you MUST include at least one \
 visual_claim. Atmospheric or architectural description is atlas data.
+
+Check E — ACCESS/MOVEMENT: If the text explicitly states who may or may not \
+enter a place, or describes access conditions governing a transition, include \
+at least one access candidate. If the text narrates a journey between named \
+places with stops, mechanism, or traveler detail, include at least one \
+movement candidate.
 
 A section that returns only entity candidates and a scene_anchor, with no \
 claims, no travel_rule, and no visual_claim, is incomplete when the source \
@@ -306,7 +331,7 @@ additional top-level keys, or candidate fields not listed below.
       "temporal_interpretation": "static",
       "excerpt": "row of lamps hanging from the roof",
       "rationale": "illustrator-relevant lighting of named hall",
-      "payload": {"subject": "Long Low Hall", "visual_property": "lighting", "value": "row of lamps hanging from the roof"},
+      "payload": {"subject": "Long Low Hall", "category": "light", "observation": "row of lamps hanging from the roof"},
       "first_revealed_at_section_id": null,
       "relation_kind": null,
       "relation_target_id": null
@@ -330,7 +355,9 @@ Payload shapes by kind:
   entity:       {"name": "string", "type": "one allowed entity type"}
   claim:        {"subject": "place name", "predicate": "one allowed predicate", "object": "place name"}
   travel_rule:  {"traveler": "name from source or null", "can_traverse": true, "route": "Place A -> Transition -> Place B", "condition": "string or null"}
-  visual_claim: {"subject": "place name", "visual_property": "descriptive property", "value": "short source-grounded value"}
+  visual_claim: {"subject": "place name", "category": "one of: architecture|terrain|light|weather|color|material|scale|atmosphere|other", "observation": "short source-grounded description"}
+  access:       {"place_name": "place name", "access_type": "permitted|prohibited|conditional", "condition": "string or null", "traveler": "string or null"}
+  movement:     {"traveler": "name from source or null", "from_place": "place name", "to_place": "place name", "via": "string or null", "mechanism": "how traversed or null", "stops": ["ordered intermediate places"]}
   scene_anchor: {"place": "canonical known place, proposed place, or unresolved_spatial_scene", "scene_role": "opening or primary or ending"}
 
 FINAL SELF-CHECK
@@ -349,8 +376,12 @@ FINAL SELF-CHECK
    Add one if not.
 8. Does every section with place description have at least one visual_claim? \
    Add one if not.
+8a. If the text explicitly states who may or may not enter a place, did you \
+    include an access candidate? Add one if not.
 9. Does every section with two or more spatial entities have at least one claim? \
    Add one if not.
+9a. If the text narrates a journey with stops or mechanism detail, did you \
+    include a movement candidate alongside any travel_rule? Add one if not.
 10. Are confidence values individually calibrated (not uniformly 0.95)? \
     Re-calibrate if every candidate has the same confidence.
 11. Is an empty candidates list truly justified by non-narrative input? If not, \
