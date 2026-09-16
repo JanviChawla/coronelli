@@ -342,6 +342,67 @@ def export_atlas_package(document_id: str, db: Session = Depends(get_db)) -> JSO
     )
 
 
+# ── Entity merge ──────────────────────────────────────────────────────────────
+
+class EntityMergeRequest(BaseModel):
+    keep_id: str   # stays active, gains aliases
+    drop_id: str   # becomes alias, state → "merged"
+
+
+class EntityMergeResponse(BaseModel):
+    merged: bool
+    canonical_entity_id: str
+    canonical_entity_name: str
+    new_aliases: list[str]
+
+
+@router.post("/api/entities/merge", response_model=EntityMergeResponse)
+def merge_entities(body: EntityMergeRequest, db: Session = Depends(get_db)):
+    from fastapi import HTTPException
+    keep = db.get(MapEntity, body.keep_id)
+    drop = db.get(MapEntity, body.drop_id)
+    if not keep or not drop:
+        raise HTTPException(status_code=404, detail="One or both entities not found")
+    if keep.id == drop.id:
+        raise HTTPException(status_code=422, detail="Cannot merge an entity with itself")
+    if keep.state != "active" or drop.state != "active":
+        raise HTTPException(status_code=422, detail="Both entities must be active")
+
+    # Absorb drop's name and aliases into keep's alias list
+    new_aliases = list(keep.aliases or [])
+    for name in [drop.name, *(drop.aliases or [])]:
+        if name and name != keep.name and name not in new_aliases:
+            new_aliases.append(name)
+    keep.aliases = new_aliases
+
+    # Redirect active claims: subject_ref
+    db.query(MapClaim).filter(
+        MapClaim.subject_ref == body.drop_id,
+        MapClaim.state == "active",
+    ).update({"subject_ref": body.keep_id}, synchronize_session=False)
+
+    # Redirect active claims: object_refs (JSON array — must iterate in Python)
+    object_claims = (
+        db.query(MapClaim)
+        .filter(MapClaim.state == "active")
+        .all()
+    )
+    for c in object_claims:
+        if c.object_refs and body.drop_id in c.object_refs:
+            c.object_refs = [body.keep_id if r == body.drop_id else r for r in c.object_refs]
+
+    drop.state = "merged"
+    db.commit()
+    db.refresh(keep)
+
+    return EntityMergeResponse(
+        merged=True,
+        canonical_entity_id=keep.id,
+        canonical_entity_name=keep.name,
+        new_aliases=new_aliases,
+    )
+
+
 # ── Oracle evaluation ──────────────────────────────────────────────────────────
 
 class OracleRequest(BaseModel):

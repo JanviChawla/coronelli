@@ -77,6 +77,16 @@ export async function fetchAtlas(documentId: string): Promise<AtlasResponse> {
   return res.json()
 }
 
+export async function mergeEntities(keepId: string, dropId: string): Promise<{ merged: boolean; canonical_entity_id: string; canonical_entity_name: string; new_aliases: string[] }> {
+  const res = await fetch(`${BASE}/api/entities/merge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keep_id: keepId, drop_id: dropId }),
+  })
+  if (!res.ok) throw new Error('Failed to merge entities')
+  return res.json()
+}
+
 export async function downloadAtlasPackage(documentId: string, documentTitle: string): Promise<void> {
   const res = await fetch(`${BASE}/api/documents/${documentId}/atlas-package`)
   if (!res.ok) throw new Error('Failed to export atlas package')

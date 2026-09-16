@@ -14,7 +14,7 @@ import {
 import type { Node as RFNode, Edge as RFEdge, NodeProps, EdgeProps } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
-import { fetchAtlas, fetchEntityMentions } from './atlasApi'
+import { fetchAtlas, fetchEntityMentions, mergeEntities } from './atlasApi'
 import type { AtlasResponse, EntityMention, AtlasEntity, AtlasTravelRule, AtlasClaim } from './atlasApi'
 import {
   buildDiagramViewModel,
@@ -409,10 +409,13 @@ interface InnerProps {
   onSelect: (t: InspectorTarget) => void
   allEntities: Map<string, AtlasEntity>
   travelRules: AtlasTravelRule[]
+  mergeSourceId?: string | null
+  onMergeTargetSelect?: (id: string, name: string) => void
 }
 
 function InnerDiagram({
   vm, positions, containmentMap, filters, cursor, sectionOrder, onSelect, allEntities, travelRules,
+  mergeSourceId, onMergeTargetSelect,
 }: InnerProps) {
   const { fitView } = useReactFlow()
   const [rfNodes, setRfNodes] = useState<RFNode[]>([])
@@ -517,6 +520,12 @@ function InnerDiagram({
   const onNodeClick = useCallback((_: unknown, node: RFNode) => {
     if (node.type === 'hull') return
     const diagNode = node.data as DiagramNode
+    // In merge-select mode: clicking any node other than the source selects it as merge target
+    if (mergeSourceId && onMergeTargetSelect && diagNode.id !== mergeSourceId) {
+      const entity = allEntities.get(diagNode.id)
+      onMergeTargetSelect(diagNode.id, entity?.name ?? diagNode.label)
+      return
+    }
     const entity = allEntities.get(diagNode.id) ?? null
     const entityName = entity?.name ?? diagNode.label
     const entityRules = travelRules.filter(r => {
@@ -524,7 +533,7 @@ function InnerDiagram({
       return p.from === entityName || p.to === entityName || p.via === entityName
     })
     onSelect({ kind: 'node', node: diagNode, entity, travelRules: entityRules })
-  }, [allEntities, travelRules, onSelect])
+  }, [allEntities, travelRules, onSelect, mergeSourceId, onMergeTargetSelect])
 
   const onEdgeClick = useCallback((_: unknown, edge: RFEdge) => {
     onSelect({ kind: 'edge', edge: edge.data as DiagramEdge })
@@ -555,6 +564,7 @@ function InnerDiagram({
       nodesConnectable={false}
       elementsSelectable
       proOptions={{ hideAttribution: true }}
+      style={mergeSourceId ? { cursor: 'crosshair' } : undefined}
     >
       <Background color="#d4bc8a" gap={28} size={0.7} style={{ opacity: 0.14 }} />
       <Controls
@@ -763,7 +773,7 @@ function Disclaimer() {
 // ── Inspector overlay ─────────────────────────────────────────────────────────
 
 function InspectorOverlay({
-  target, sectionTitles, cursor, entityMentions, sectionOrder, onClose,
+  target, sectionTitles, cursor, entityMentions, sectionOrder, onClose, onStartMerge,
 }: {
   target: InspectorTarget
   sectionTitles: Map<string, string>
@@ -771,6 +781,7 @@ function InspectorOverlay({
   entityMentions: EntityMention[]
   sectionOrder: Map<string, number>
   onClose: () => void
+  onStartMerge?: (entityId: string, entityName: string) => void
 }) {
   if (!target) return null
 
@@ -791,7 +802,94 @@ function InspectorOverlay({
           cursor={cursor}
           entityMentions={entityMentions}
           sectionOrder={sectionOrder}
+          onStartMerge={onStartMerge}
         />
+      </div>
+    </div>
+  )
+}
+
+// ── Merge UI ──────────────────────────────────────────────────────────────────
+
+type MergeSide = 'a' | 'b'
+
+interface MergeEntity { id: string; name: string }
+
+function MergeSelectBanner({ sourceName, onCancel }: { sourceName: string; onCancel: () => void }) {
+  return (
+    <div style={{
+      position: 'absolute', top: '3rem', left: '50%', transform: 'translateX(-50%)',
+      zIndex: 30, background: 'var(--parchment-alt)', border: '1px solid var(--border-warm)',
+      borderRadius: '6px', padding: '0.55rem 1rem', display: 'flex', alignItems: 'center',
+      gap: '0.75rem', boxShadow: '0 2px 8px rgba(0,0,0,0.10)', fontSize: '0.78rem',
+      color: 'var(--ink-body)', whiteSpace: 'nowrap',
+    }}>
+      <span>Click a place to merge with <strong>{sourceName}</strong></span>
+      <button onClick={onCancel} style={{
+        background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-faint)',
+        fontSize: '0.78rem', padding: '0 0.2rem',
+      }}>Cancel</button>
+    </div>
+  )
+}
+
+function MergeConfirmPanel({
+  a, b, canonical, onSetCanonical, onConfirm, onCancel, merging,
+}: {
+  a: MergeEntity; b: MergeEntity
+  canonical: MergeSide
+  onSetCanonical: (s: MergeSide) => void
+  onConfirm: () => void
+  onCancel: () => void
+  merging: boolean
+}) {
+  const primary = canonical === 'a' ? a : b
+  const alias   = canonical === 'a' ? b : a
+  return (
+    <div className="atlas-overlay atlas-inspector" role="dialog" aria-label="Merge places" style={{ bottom: '3.5rem' }}>
+      <div className="atlas-inspector-header">
+        <span className="atlas-inspector-title">Merge places</span>
+        <button onClick={onCancel} className="atlas-inspector-close" aria-label="Cancel merge">×</button>
+      </div>
+      <div className="atlas-inspector-body" style={{ padding: '0.75rem' }}>
+        <p style={{ fontSize: '0.72rem', color: 'var(--ink-faint)', marginBottom: '0.75rem', lineHeight: 1.4 }}>
+          Choose the primary name. The other becomes an alias.
+        </p>
+        {([['a', a], ['b', b]] as [MergeSide, MergeEntity][]).map(([side, ent]) => (
+          <label key={side} style={{
+            display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0.5rem',
+            borderRadius: '4px', cursor: 'pointer', marginBottom: '0.3rem',
+            background: canonical === side ? 'rgba(201,168,76,0.10)' : 'transparent',
+            border: canonical === side ? '1px solid rgba(201,168,76,0.35)' : '1px solid transparent',
+            fontSize: '0.78rem', fontWeight: canonical === side ? 600 : 400,
+          }}>
+            <input
+              type="radio" name="merge-canonical" value={side}
+              checked={canonical === side}
+              onChange={() => onSetCanonical(side)}
+              style={{ accentColor: '#c9a84c' }}
+            />
+            <span>{ent.name}</span>
+            {canonical === side && (
+              <span style={{ marginLeft: 'auto', fontSize: '0.6rem', color: 'var(--ink-faint)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>primary</span>
+            )}
+          </label>
+        ))}
+        <p style={{ fontSize: '0.68rem', color: 'var(--ink-faint)', margin: '0.5rem 0 0.75rem' }}>
+          <em>{alias.name}</em> becomes an alias of <em>{primary.name}</em>.
+        </p>
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+          <button onClick={onCancel} disabled={merging} style={{
+            background: 'none', border: '1px solid var(--border-warm)', borderRadius: '4px',
+            padding: '0.3rem 0.75rem', cursor: 'pointer', fontSize: '0.75rem',
+            color: 'var(--ink-faint)',
+          }}>Cancel</button>
+          <button onClick={onConfirm} disabled={merging} style={{
+            background: 'var(--accent-warm, #c9a84c)', border: 'none', borderRadius: '4px',
+            padding: '0.3rem 0.75rem', cursor: merging ? 'wait' : 'pointer', fontSize: '0.75rem',
+            fontWeight: 600, color: '#fff', opacity: merging ? 0.7 : 1,
+          }}>{merging ? 'Merging…' : 'Merge'}</button>
+        </div>
       </div>
     </div>
   )
@@ -816,6 +914,12 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
   const [inspectorTarget, setInspectorTarget] = useState<InspectorTarget>(null)
   const [entityMentions, setEntityMentions] = useState<EntityMention[]>([])
 
+  // ── Merge state ──────────────────────────────────────────────────────────────
+  const [mergeSource, setMergeSource] = useState<MergeEntity | null>(null)
+  const [mergeTarget, setMergeTarget] = useState<MergeEntity | null>(null)
+  const [mergeCanonical, setMergeCanonical] = useState<MergeSide>('a')
+  const [merging, setMerging] = useState(false)
+
   // Layout state — computed from vm once and reused (positions don't change with filters/cursor)
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }> | null>(null)
   const [containmentMap, setContainmentMap] = useState<ContainmentMap>({})
@@ -833,10 +937,10 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
   }, [sections])
 
   // Load atlas data
-  useEffect(() => {
+  const loadAtlas = useCallback((resetCursor = false) => {
     setLoading(true)
     setError(null)
-    setCursor(sections.length > 0 ? sections.length - 1 : 0)
+    if (resetCursor) setCursor(sections.length > 0 ? sections.length - 1 : 0)
     setInspectorTarget(null)
     setEntityMentions([])
     setPositions(null)
@@ -858,7 +962,44 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       })
       .catch(e => setError(e instanceof Error ? e.message : 'Failed to load atlas'))
       .finally(() => setLoading(false))
-  }, [documentId])
+  }, [documentId, sections.length, onAtlasLoaded])
+
+  useEffect(() => { loadAtlas(true) }, [documentId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Merge handlers ───────────────────────────────────────────────────────────
+  const handleStartMerge = useCallback((entityId: string, entityName: string) => {
+    setMergeSource({ id: entityId, name: entityName })
+    setMergeTarget(null)
+    setMergeCanonical('a')
+    setInspectorTarget(null)
+  }, [])
+
+  const handleMergeTargetSelect = useCallback((id: string, name: string) => {
+    setMergeTarget({ id, name })
+    setMergeCanonical('a')
+  }, [])
+
+  const handleMergeCancel = useCallback(() => {
+    setMergeSource(null)
+    setMergeTarget(null)
+    setMerging(false)
+  }, [])
+
+  const handleMergeConfirm = useCallback(async () => {
+    if (!mergeSource || !mergeTarget) return
+    const keepId   = mergeCanonical === 'a' ? mergeSource.id : mergeTarget.id
+    const dropId   = mergeCanonical === 'a' ? mergeTarget.id : mergeSource.id
+    setMerging(true)
+    try {
+      await mergeEntities(keepId, dropId)
+      setMergeSource(null)
+      setMergeTarget(null)
+      setMerging(false)
+      loadAtlas(false)
+    } catch {
+      setMerging(false)
+    }
+  }, [mergeSource, mergeTarget, mergeCanonical, loadAtlas])
 
   // Build view-model and run layout whenever atlas data or section order changes
   useEffect(() => {
@@ -929,19 +1070,38 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
           onSelect={setInspectorTarget}
           allEntities={allEntities}
           travelRules={atlasData?.travel_rules ?? []}
+          mergeSourceId={mergeSource?.id}
+          onMergeTargetSelect={handleMergeTargetSelect}
         />
       </ReactFlowProvider>
       <Legend />
       <NarrativeScrubber sections={sections} cursor={cursor} onChange={setCursor} />
       <Disclaimer />
-      <InspectorOverlay
-        target={inspectorTarget}
-        sectionTitles={sectionTitles}
-        cursor={cursor}
-        entityMentions={entityMentions}
-        sectionOrder={sectionOrder}
-        onClose={() => setInspectorTarget(null)}
-      />
+      {mergeSource && !mergeTarget && (
+        <MergeSelectBanner sourceName={mergeSource.name} onCancel={handleMergeCancel} />
+      )}
+      {mergeSource && mergeTarget && (
+        <MergeConfirmPanel
+          a={mergeSource}
+          b={mergeTarget}
+          canonical={mergeCanonical}
+          onSetCanonical={setMergeCanonical}
+          onConfirm={handleMergeConfirm}
+          onCancel={handleMergeCancel}
+          merging={merging}
+        />
+      )}
+      {!mergeSource && (
+        <InspectorOverlay
+          target={inspectorTarget}
+          sectionTitles={sectionTitles}
+          cursor={cursor}
+          entityMentions={entityMentions}
+          sectionOrder={sectionOrder}
+          onClose={() => setInspectorTarget(null)}
+          onStartMerge={handleStartMerge}
+        />
+      )}
     </div>
   )
 }
@@ -987,13 +1147,14 @@ function NarrativeThread({
 // ── Inspector content ─────────────────────────────────────────────────────────
 
 export function InspectorContent({
-  target, sectionTitles, cursor = 0, entityMentions = [], sectionOrder = new Map(),
+  target, sectionTitles, cursor = 0, entityMentions = [], sectionOrder = new Map(), onStartMerge,
 }: {
   target: InspectorTarget
   sectionTitles: Map<string, string>
   cursor?: number
   entityMentions?: EntityMention[]
   sectionOrder?: Map<string, number>
+  onStartMerge?: (entityId: string, entityName: string) => void
 }) {
   if (!target) {
     return (
@@ -1168,6 +1329,21 @@ export function InspectorContent({
           sectionOrder={sectionOrder}
           sectionTitles={sectionTitles}
         />
+
+        {onStartMerge && entity && (
+          <div style={{ borderTop: '1px solid var(--border-warm)', marginTop: '0.75rem', paddingTop: '0.6rem' }}>
+            <button
+              onClick={() => onStartMerge(entity.id, entity.name)}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                fontSize: '0.72rem', color: 'var(--ink-faint)',
+                display: 'flex', alignItems: 'center', gap: '0.3rem',
+              }}
+            >
+              Merge with another place →
+            </button>
+          </div>
+        )}
       </div>
     )
   }
