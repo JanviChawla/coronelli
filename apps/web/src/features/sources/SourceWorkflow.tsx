@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { CandidatesTable } from '../candidates/CandidatesTable'
 import { type Candidate, fetchCandidates, fetchDocumentEntityCandidates, patchCandidateReviewState } from '../candidates/candidateApi'
-import { fetchPreflight, triggerDocumentCatalog, getDocumentCatalogStatus, confirmDocumentCatalog, triggerEvidenceExtraction, getExtractionProgress } from './extractionApi'
+import { fetchPreflight, triggerDocumentCatalog, getDocumentCatalogStatus, confirmDocumentCatalog, triggerEvidenceExtraction, getExtractionProgress, fetchPlaceSuggestions, addManualCandidate } from './extractionApi'
 import type { Document, Section } from './sourceApi'
 import { fetchAtlas } from '../atlas/atlasApi'
 import type { AtlasEntity, AtlasTravelRule } from '../atlas/atlasApi'
@@ -226,6 +226,11 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
   const [synthPhase, setSynthPhase] = useState<string | null>(null)
   const [entityCandidates, setEntityCandidates] = useState<Candidate[]>([])
   const [rejectedCandidateIds, setRejectedCandidateIds] = useState<Set<string>>(new Set())
+  const [placeSuggestions, setPlaceSuggestions] = useState<string[]>([])
+  const [addPlaceInput, setAddPlaceInput] = useState('')
+  const [showAddSuggestions, setShowAddSuggestions] = useState(false)
+  const [addingPlace, setAddingPlace] = useState(false)
+  const addPlaceRef = useRef<HTMLDivElement>(null)
   const [evidenceSubPhase, setEvidenceSubPhase] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -380,8 +385,13 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
 
   // Shared: once catalog is done on the server, fetch entities and move to review.
   async function _finishCatalogAndReview() {
-    const entities = await fetchDocumentEntityCandidates(document.id)
+    const [entities, suggestions] = await Promise.all([
+      fetchDocumentEntityCandidates(document.id),
+      fetchPlaceSuggestions(document.id),
+    ])
     setEntityCandidates(entities)
+    setPlaceSuggestions(suggestions)
+    setAddPlaceInput('')
     setPhase('catalog-review')
   }
 
@@ -590,6 +600,28 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
   )
   const rejectedCount = rejectedCandidateIds.size
   const approvedCount = uniqueEntityCandidates.length - rejectedCount
+
+  // Add-missing-place helpers
+  const existingCandidateNames = new Set(uniqueEntityCandidates.map(c => String((c.payload as Record<string, unknown>).name ?? '').toLowerCase()))
+  const filteredSuggestions = addPlaceInput.length >= 1
+    ? placeSuggestions.filter(s =>
+        s.toLowerCase().includes(addPlaceInput.toLowerCase()) &&
+        !existingCandidateNames.has(s.toLowerCase())
+      ).slice(0, 8)
+    : []
+
+  async function handleAddManualPlace(name: string) {
+    if (!name.trim() || addingPlace) return
+    setAddingPlace(true)
+    setShowAddSuggestions(false)
+    setAddPlaceInput('')
+    try {
+      await addManualCandidate(document.id, name.trim())
+      const entities = await fetchDocumentEntityCandidates(document.id)
+      setEntityCandidates(entities)
+    } catch { /* ignore */ }
+    setAddingPlace(false)
+  }
 
   // Candidate kind counts for inspection panel
   const allCandidatesList = Object.values(allCandidates).flat()
@@ -855,9 +887,15 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
                       {type && (
                         <span style={{ fontSize: '0.68rem', color: 'var(--ink-faint)', flexShrink: 0 }}>{type}</span>
                       )}
-                      <span style={{ fontSize: '0.72rem', color: 'var(--gold)', opacity: 0.65, flexShrink: 0 }}>
-                        {(c.confidence * 100).toFixed(0)}%
-                      </span>
+                      {c.source === 'manual' ? (
+                        <span style={{ fontSize: '0.62rem', color: 'var(--ink-faint)', flexShrink: 0, border: '1px solid rgba(212,188,138,0.35)', borderRadius: '3px', padding: '0.05rem 0.3rem' }}>
+                          added
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: '0.72rem', color: 'var(--gold)', opacity: 0.65, flexShrink: 0 }}>
+                          {(c.confidence * 100).toFixed(0)}%
+                        </span>
+                      )}
                     </div>
                     {c.excerpt && (
                       <div style={{
@@ -872,6 +910,58 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
                 )
               })}
             </div>
+          </div>
+
+          {/* Add missing place */}
+          <div ref={addPlaceRef} style={{ position: 'relative', marginBottom: '0.75rem' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <input
+                type="text"
+                placeholder="Add missing place…"
+                value={addPlaceInput}
+                disabled={addingPlace}
+                onChange={e => { setAddPlaceInput(e.target.value); setShowAddSuggestions(true) }}
+                onFocus={() => setShowAddSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowAddSuggestions(false), 150)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && addPlaceInput.trim()) { handleAddManualPlace(addPlaceInput.trim()) }
+                  if (e.key === 'Escape') { setShowAddSuggestions(false); setAddPlaceInput('') }
+                }}
+                style={{
+                  flex: 1, padding: '0.45rem 0.75rem',
+                  background: 'var(--parchment-card)', border: '1px solid var(--border-warm)',
+                  borderRadius: '5px', color: 'var(--ink)', fontSize: '0.88rem',
+                  outline: 'none',
+                }}
+              />
+              {addingPlace && (
+                <span style={{ fontSize: '0.75rem', color: 'var(--ink-faint)' }}>Adding…</span>
+              )}
+            </div>
+            {showAddSuggestions && filteredSuggestions.length > 0 && (
+              <div style={{
+                position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10,
+                background: 'var(--parchment-card)', border: '1px solid var(--border-warm)',
+                borderRadius: '0 0 5px 5px', boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+                maxHeight: '10rem', overflowY: 'auto',
+              }}>
+                {filteredSuggestions.map(s => (
+                  <button
+                    key={s}
+                    type="button"
+                    onMouseDown={() => handleAddManualPlace(s)}
+                    style={{
+                      width: '100%', padding: '0.45rem 0.75rem',
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      textAlign: 'left', fontSize: '0.88rem', color: 'var(--ink)',
+                      borderBottom: '1px solid rgba(212,188,138,0.12)',
+                    }}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <button className="btn-cta" type="button" onClick={handleConfirmCatalog} disabled={confirmingCatalog}>

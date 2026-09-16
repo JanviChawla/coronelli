@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -340,6 +341,116 @@ def export_atlas_package(document_id: str, db: Session = Depends(get_db)) -> JSO
         content=package,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ── Place suggestions (autocomplete from section text) ───────────────────────
+
+_CAP_SEQUENCE = re.compile(r'\b([A-Z][a-z]{1,}(?:\s+[A-Z][a-z]{1,}){0,3})\b')
+_COMMON_STARTERS = {
+    "The", "A", "An", "In", "On", "At", "By", "He", "She", "They", "It", "We",
+    "I", "You", "His", "Her", "Its", "Their", "Our", "My", "This", "That",
+    "Then", "When", "But", "And", "Or", "So", "As", "If", "Up", "Down",
+    "Now", "All", "No", "Not", "There", "Here", "With", "From", "For",
+    "After", "Before", "Into", "Over", "Out", "Was", "Were", "Had",
+    "Has", "Have", "Could", "Would", "Should", "May", "Might", "Will",
+}
+
+
+@router.get("/api/documents/{document_id}/place-suggestions", response_model=list[str])
+def get_place_suggestions(document_id: str, db: Session = Depends(get_db)) -> list[str]:
+    sections = (
+        db.query(SourceSection)
+        .filter(SourceSection.document_id == document_id)
+        .order_by(SourceSection.ordinal)
+        .all()
+    )
+    suggestions: set[str] = set()
+    for section in sections:
+        text = section.content or ""
+        for m in _CAP_SEQUENCE.finditer(text):
+            phrase = m.group(1).strip()
+            first_word = phrase.split()[0]
+            if first_word in _COMMON_STARTERS:
+                continue
+            if len(phrase) >= 3:
+                suggestions.add(phrase)
+    return sorted(suggestions)
+
+
+# ── Manual entity creation ────────────────────────────────────────────────────
+
+class ManualEntityRequest(BaseModel):
+    name: str
+    type: str | None = None
+    spatial_level: int | None = None
+
+
+class ManualEntityResponse(BaseModel):
+    id: str
+    name: str
+
+
+@router.post("/api/documents/{document_id}/manual-entity", response_model=ManualEntityResponse)
+def add_manual_entity(document_id: str, body: ManualEntityRequest, db: Session = Depends(get_db)):
+    from fastapi import HTTPException
+    from app.extraction.models import Candidate, ExtractionRun
+
+    if not body.name or not body.name.strip():
+        raise HTTPException(status_code=422, detail="name is required")
+
+    first_section = (
+        db.query(SourceSection)
+        .filter(SourceSection.document_id == document_id)
+        .order_by(SourceSection.ordinal)
+        .first()
+    )
+    if not first_section:
+        raise HTTPException(status_code=404, detail="Document has no sections")
+
+    # Find or create the manual stub ExtractionRun for this document (keyed by section)
+    stub_run = (
+        db.query(ExtractionRun)
+        .filter(
+            ExtractionRun.section_id == first_section.id,
+            ExtractionRun.status == "manual",
+        )
+        .first()
+    )
+    if not stub_run:
+        now = datetime.now(timezone.utc)
+        stub_run = ExtractionRun(
+            section_id=first_section.id,
+            status="manual",
+            provider="manual",
+            model="manual",
+            prompt_version="manual-entry",
+            started_at=now,
+            completed_at=now,
+        )
+        db.add(stub_run)
+        db.flush()
+
+    payload: dict = {"name": body.name.strip(), "type": body.type or "place", "aliases": []}
+    if body.spatial_level is not None:
+        payload["spatial_level"] = body.spatial_level
+
+    candidate = Candidate(
+        extraction_run_id=stub_run.id,
+        section_id=first_section.id,
+        kind="entity",
+        payload=payload,
+        status="explicit",
+        confidence=1.0,
+        excerpt="",
+        rationale="Manually added by user",
+        review_state="approved",
+        ordinal=9999,
+        source="manual",
+    )
+    db.add(candidate)
+    db.commit()
+
+    return ManualEntityResponse(id=candidate.id, name=body.name.strip())
 
 
 # ── Entity merge ──────────────────────────────────────────────────────────────

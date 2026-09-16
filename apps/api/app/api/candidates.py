@@ -33,6 +33,7 @@ class CandidateOut(BaseModel):
     relation_kind: str | None
     relation_target_id: str | None
     display_summary: str
+    source: str = "extraction"
 
     model_config = {"from_attributes": True}
 
@@ -219,6 +220,20 @@ def list_document_entity_candidates(document_id: str, db: Session = Depends(get_
             .all()
         )
         candidates.extend(section_candidates)
+
+    # Also include manually-added candidates (survive re-catalog, always show)
+    manual_candidates = (
+        db.query(Candidate)
+        .filter(
+            Candidate.section_id.in_([s.id for s in sections]),
+            Candidate.source == "manual",
+            Candidate.kind == "entity",
+        )
+        .all()
+    )
+    # Add manual candidates not already included (avoid duplicates by id)
+    existing_ids = {c.id for c in candidates}
+    candidates.extend(c for c in manual_candidates if c.id not in existing_ids)
 
     return [CandidateOut.model_validate(c) for c in candidates]
 

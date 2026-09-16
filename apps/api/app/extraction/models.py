@@ -60,6 +60,7 @@ class Candidate(Base):
         String, ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True
     )
     is_mention: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    source: Mapped[str] = mapped_column(String, nullable=False, default="extraction", server_default="extraction")
 
     @property
     def display_summary(self) -> str:

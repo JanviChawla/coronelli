@@ -430,7 +430,7 @@ COMBINED_PROMPT_VERSION = "2.0"
 # Pre-pass: catalog all sections first → aggregate global entity list
 # Evidence pass: each section gets the full global entity list as context
 
-GLOBAL_CATALOG_VERSION = "3.5-catalog"
+GLOBAL_CATALOG_VERSION = "3.6-catalog"
 GLOBAL_EVIDENCE_VERSION = "3.4-evidence"
 
 # v4: evidence split into three focused sub-passes
@@ -509,9 +509,18 @@ HARD EXCLUSIONS — never catalog these, no exceptions:
    somewhere else — and the narrated action NEVER moves there — do NOT catalog it.
    A location name in a song lyric or quoted verse is not a Wonderland atlas entry.
 
-5. REAL-WORLD GEOGRAPHY USED AS REFERENCE: Actual place names mentioned in passing,
-   for comparison, or in a character's speech ("like London", "Canterbury") are not
-   part of the fictional atlas unless the narrative physically enters that place.
+5. REAL-WORLD GEOGRAPHY — INCLUDE CONTAINERS, EXCLUDE REFERENCES: Distinguish two cases:
+   a) INCLUDE: Real geographic containers (states, regions, countries) that define the
+      spatial frame of the story — the narrative action happens there or the story is set
+      there. Catalog these at spatial_level 1 (territory/region). Examples: "New York"
+      as the state where Ichabod Crane lives, "Connecticut" as a territory the characters
+      travel to, "Tennessee" as the region where the story unfolds. If the story is set
+      in a real place, that place belongs in the atlas.
+   b) EXCLUDE: Real place names mentioned only in passing for comparison, flavor, or
+      a character's offhand remark when the narrative NEVER physically enters them.
+      ("like London", "back in Canterbury", "somewhere in France"). The test is whether
+      the narrative action happens there — if yes, include; if it's purely a reference
+      or comparison, exclude.
 
 When in doubt, EXCLUDE. A missed real place can be recovered on re-run;
 a cataloged non-place pollutes the entire evidence pipeline downstream.

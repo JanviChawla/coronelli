@@ -121,3 +121,23 @@ export async function getExtractionProgress(sectionId: string): Promise<Extracti
   if (!res.ok) throw new Error(`Progress fetch failed: ${res.statusText}`)
   return res.json()
 }
+
+export async function fetchPlaceSuggestions(documentId: string): Promise<string[]> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/place-suggestions`)
+  if (!res.ok) return []
+  return res.json()
+}
+
+export async function addManualCandidate(
+  documentId: string,
+  name: string,
+  type?: string,
+): Promise<{ id: string; name: string }> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/manual-entity`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, type: type || null }),
+  })
+  if (!res.ok) throw new Error('Failed to add manual place')
+  return res.json()
+}

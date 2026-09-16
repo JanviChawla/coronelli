@@ -327,8 +327,11 @@ def run_catalog_extraction(
             )
             return existing, cached, True
     else:
-        # Wipe all previous candidates and runs for this section
-        session.query(Candidate).filter(Candidate.section_id == section_id).delete(synchronize_session=False)
+        # Wipe all previous candidates and runs for this section, but preserve manually-added ones
+        session.query(Candidate).filter(
+            Candidate.section_id == section_id,
+            Candidate.source != "manual",
+        ).delete(synchronize_session=False)
         session.query(ExtractionRun).filter(
             ExtractionRun.section_id == section_id,
         ).update({"status": "superseded"}, synchronize_session=False)

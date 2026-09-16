@@ -133,9 +133,42 @@ def _build_evidence_ledger(session: Session, document_id: str) -> list[dict]:
                 existing["confidence"] = item["confidence"]
                 existing["payload"] = item["payload"]
 
+    # Also include manually-added entity candidates (survive re-catalog, always flow to synthesis)
+    manual_candidates = (
+        session.query(Candidate)
+        .filter(
+            Candidate.section_id.in_([s.id for s in sections]),
+            Candidate.source == "manual",
+            Candidate.kind == "entity",
+            Candidate.review_state != "rejected",
+        )
+        .all()
+    )
+    for c in manual_candidates:
+        name = (c.payload.get("name") or "").strip().lower()
+        if not name:
+            continue
+        mention = {"section_title": "manual entry", "section_ordinal": -1, "excerpt": ""}
+        if name not in seen_names:
+            seen_names[name] = len(entity_deduped)
+            merged = {
+                "section_title": "manual entry",
+                "section_ordinal": -1,
+                "kind": c.kind,
+                "payload": c.payload,
+                "confidence": c.confidence,
+                "excerpt": c.excerpt,
+                "status": c.status,
+                "review_state": c.review_state,
+                "section_mentions": [mention],
+            }
+            entity_deduped.append(merged)
+        else:
+            entity_deduped[seen_names[name]]["section_mentions"].append(mention)
+
     _log.info(
-        "Evidence ledger for %s: %d raw entity candidates → %d unique; %d evidence items",
-        document_id, len(ledger) - len(non_entity), len(entity_deduped), len(non_entity),
+        "Evidence ledger for %s: %d raw entity candidates → %d unique (%d manual); %d evidence items",
+        document_id, len(ledger) - len(non_entity), len(entity_deduped), len(manual_candidates), len(non_entity),
     )
     return entity_deduped + non_entity
 

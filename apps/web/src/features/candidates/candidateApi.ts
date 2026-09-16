@@ -17,6 +17,7 @@ export type Candidate = {
   relation_kind: string | null
   relation_target_id: string | null
   display_summary: string
+  source?: string
 }
 
 export type ReviewRequest = {
