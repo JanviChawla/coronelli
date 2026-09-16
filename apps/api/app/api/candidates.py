@@ -8,7 +8,8 @@ from app.db.engine import get_db
 from app.db.models import SourceSection
 from app.domain.review import ReviewError, ReviewEvent, review_candidate as _review_candidate
 from app.domain.world import MapClaim, MapEntity
-from app.extraction.models import Candidate
+from app.extraction.models import Candidate, ExtractionRun
+from app.extraction.prompts import GLOBAL_CATALOG_VERSION
 
 router = APIRouter(tags=["candidates"])
 
@@ -185,21 +186,40 @@ class ReviewStateRequest(BaseModel):
 
 @router.get("/api/documents/{document_id}/entity-candidates", response_model=list[CandidateOut])
 def list_document_entity_candidates(document_id: str, db: Session = Depends(get_db)):
-    """Return all entity candidates from catalog runs for a document, across all sections."""
-    section_ids = [
-        s.id for s in db.query(SourceSection).filter(SourceSection.document_id == document_id).all()
-    ]
-    if not section_ids:
+    """Return entity candidates from the most recent catalog run for each section.
+
+    Filtering to the latest run prevents stale candidate IDs from appearing in the UI
+    after a re-catalog (which deletes old candidates and creates new ones with new IDs).
+    """
+    sections = db.query(SourceSection).filter(SourceSection.document_id == document_id).order_by(SourceSection.ordinal).all()
+    if not sections:
         return []
-    candidates = (
-        db.query(Candidate)
-        .filter(
-            Candidate.section_id.in_(section_ids),
-            Candidate.kind == "entity",
+
+    candidates: list[Candidate] = []
+    for section in sections:
+        latest_run = (
+            db.query(ExtractionRun)
+            .filter(
+                ExtractionRun.section_id == section.id,
+                ExtractionRun.status == "completed",
+                ExtractionRun.prompt_version == GLOBAL_CATALOG_VERSION,
+            )
+            .order_by(ExtractionRun.completed_at.desc())
+            .first()
         )
-        .order_by(Candidate.ordinal)
-        .all()
-    )
+        if not latest_run:
+            continue
+        section_candidates = (
+            db.query(Candidate)
+            .filter(
+                Candidate.extraction_run_id == latest_run.id,
+                Candidate.kind == "entity",
+            )
+            .order_by(Candidate.ordinal)
+            .all()
+        )
+        candidates.extend(section_candidates)
+
     return [CandidateOut.model_validate(c) for c in candidates]
 
 

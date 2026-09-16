@@ -4,7 +4,6 @@ import { CandidatesTable } from '../candidates/CandidatesTable'
 import { type Candidate, fetchCandidates, fetchDocumentEntityCandidates, patchCandidateReviewState } from '../candidates/candidateApi'
 import { fetchPreflight, triggerDocumentCatalog, getDocumentCatalogStatus, confirmDocumentCatalog, triggerEvidenceExtraction, getExtractionProgress } from './extractionApi'
 import type { Document, Section } from './sourceApi'
-import { resectionDocument } from './sourceApi'
 import { fetchAtlas } from '../atlas/atlasApi'
 import type { AtlasEntity, AtlasTravelRule } from '../atlas/atlasApi'
 import { triggerSynthesis, getSynthesisProgress } from '../synthesis/synthesisApi'
@@ -558,14 +557,6 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
     }
   }
 
-  async function handleResection() {
-    try {
-      const newSections = await resectionDocument(document.id)
-      onSectionsChanged?.(newSections)
-    } catch (e) {
-      setWorkflowError(e instanceof Error ? e.message : 'Re-prepare failed.')
-    }
-  }
 
   // Step 3 = Catalog places
   const step3Done = phase === 'evidence-ready' || phase === 'extracting' || phase === 'inspecting' || phase === 'synthesizing' || phase === 'done' || (phase === 'error' && errorInStep >= 4)
@@ -692,29 +683,19 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
         label="Prepare sections"
         detail={`${sections.length} section${sections.length !== 1 ? 's' : ''} ready`}
         action={
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            <RerunCard
-              label="Re-prepare cost"
-              costLo={0}
-              costHi={0}
-              meta="Re-runs semantic splitting · free"
-              action="Re-prepare sections"
-              onAction={handleResection}
-            />
-            <details>
-              <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
-                Inspect sections ({sections.length})
-              </summary>
-              <div style={{ marginTop: '0.65rem' }}>
-                {sections.map((s, i) => (
-                  <div key={s.id} style={{ display: 'flex', gap: '0.5rem', fontSize: '0.88rem', marginBottom: '0.3rem' }}>
-                    <span style={{ color: 'var(--gold)', minWidth: '2rem', fontSize: '0.62rem', flexShrink: 0 }}>§{i + 1}</span>
-                    <span style={{ color: 'var(--ink)' }}>{s.title}</span>
-                  </div>
-                ))}
-              </div>
-            </details>
-          </div>
+          <details>
+            <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+              Inspect sections ({sections.length})
+            </summary>
+            <div style={{ marginTop: '0.65rem' }}>
+              {sections.map((s, i) => (
+                <div key={s.id} style={{ display: 'flex', gap: '0.5rem', fontSize: '0.88rem', marginBottom: '0.3rem' }}>
+                  <span style={{ color: 'var(--gold)', minWidth: '2rem', fontSize: '0.62rem', flexShrink: 0 }}>§{i + 1}</span>
+                  <span style={{ color: 'var(--ink)' }}>{s.title}</span>
+                </div>
+              ))}
+            </div>
+          </details>
         }
       />
       <StepConnector />
