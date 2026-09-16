@@ -95,8 +95,8 @@ interface HullData {
 
 function HullNode({ data }: NodeProps) {
   const { label, depth } = data as HullData
-  const opacity = Math.max(0.07, 0.14 - depth * 0.04)
-  const strokeOpacity = Math.max(0.22, 0.35 - depth * 0.06)
+  const opacity = Math.max(0.06, 0.13 - depth * 0.03)
+  const strokeOpacity = Math.max(0.20, 0.32 - depth * 0.05)
 
   return (
     <div
@@ -106,7 +106,7 @@ function HullNode({ data }: NodeProps) {
         borderRadius: '14px',
         border: `1.5px dashed rgba(201,168,76,${strokeOpacity})`,
         background: `rgba(201,168,76,${opacity})`,
-        pointerEvents: 'none',
+        // No pointer-events: none — the wrapper div captures clicks for hull inspection
         position: 'relative',
       }}
     >
@@ -411,11 +411,12 @@ interface InnerProps {
   travelRules: AtlasTravelRule[]
   mergeSourceId?: string | null
   onMergeTargetSelect?: (id: string, name: string) => void
+  hiddenEntityIds?: Set<string>
 }
 
 function InnerDiagram({
   vm, positions, containmentMap, filters, cursor, sectionOrder, onSelect, allEntities, travelRules,
-  mergeSourceId, onMergeTargetSelect,
+  mergeSourceId, onMergeTargetSelect, hiddenEntityIds,
 }: InnerProps) {
   const { fitView } = useReactFlow()
   const [rfNodes, setRfNodes] = useState<RFNode[]>([])
@@ -439,12 +440,32 @@ function InnerDiagram({
     }
 
     // ── Hull nodes (containment background shapes) ─────────────────────────
+    // Compute reverse containment map to determine nesting depth of each container.
+    // containerParentOf[childId] = parentId — only for nodes that are THEMSELVES containers.
+    const containerParentOf: Record<string, string> = {}
+    for (const [parentId, children] of Object.entries(containmentMap)) {
+      for (const childId of children) {
+        if (containmentMap[childId]) containerParentOf[childId] = parentId
+      }
+    }
+    const getContainerDepth = (id: string): number => {
+      let depth = 0; let current = id; const visited = new Set<string>()
+      while (containerParentOf[current] && !visited.has(current)) {
+        visited.add(current); depth++; current = containerParentOf[current]
+      }
+      return depth
+    }
+
+    // Track which container entities have a hull rendered — these hide their own place-node.
+    const containersWithHull = new Set<string>()
+
     const hullNodes: RFNode[] = []
     if (filters.containment) {
       for (const [containerId, childIds] of Object.entries(containmentMap)) {
-        // Only draw hull if container itself is visible
+        // Only draw hull if container itself is visible and not hidden by user
         if (!visibleNodeIds.has(containerId)) continue
-        const visibleChildren = childIds.filter(id => visibleNodeIds.has(id))
+        if (hiddenEntityIds?.has(containerId)) continue
+        const visibleChildren = childIds.filter(id => visibleNodeIds.has(id) && !hiddenEntityIds?.has(id))
         if (visibleChildren.length === 0) continue
 
         const members = [containerId, ...visibleChildren]
@@ -464,22 +485,26 @@ function InnerDiagram({
         }
         if (!isFinite(minX)) continue
 
+        containersWithHull.add(containerId)
         const containerNode = vm.nodes.find(n => n.id === containerId)
+        const depth = getContainerDepth(containerId)
         hullNodes.push({
           id: `hull-${containerId}`,
           type: 'hull',
           position: { x: minX, y: minY },
-          style: { width: maxX - minX, height: maxY - minY },
-          data: { label: containerNode?.label ?? '', depth: 0 },
+          style: { width: maxX - minX, height: maxY - minY, cursor: 'pointer' },
+          data: { label: containerNode?.label ?? '', depth },
           selectable: false,
           focusable: false,
           draggable: false,
-          zIndex: -2,
+          // Deeper nesting renders further back so outer hull is always visible
+          zIndex: -(2 + depth),
         })
       }
     }
 
     // ── Place nodes ────────────────────────────────────────────────────────
+    // Container entities with a hull are hidden — the hull IS their visual representation.
     const placeNodes: RFNode[] = vm.nodes.map(n => {
       const { w, h } = nodeSize(n.role, n.spatialLevel)
       return {
@@ -487,7 +512,9 @@ function InnerDiagram({
         type: 'place',
         position: positions[n.id] ?? { x: 0, y: 0 },
         data: n,
-        hidden: !visibleNodeIds.has(n.id),
+        hidden: !visibleNodeIds.has(n.id)
+          || containersWithHull.has(n.id)
+          || (hiddenEntityIds?.has(n.id) ?? false),
         style: { width: w, height: h },
         zIndex: 1,
       }
@@ -515,10 +542,23 @@ function InnerDiagram({
     }))
 
     setTimeout(() => fitView({ padding: 0.14, duration: 350 }), 60)
-  }, [positions, vm, filters, cursor, sectionOrder, containmentMap, fitView])
+  }, [positions, vm, filters, cursor, sectionOrder, containmentMap, fitView, hiddenEntityIds])
 
   const onNodeClick = useCallback((_: unknown, node: RFNode) => {
-    if (node.type === 'hull') return
+    // Hull click → inspect the container entity (node.id = "hull-{entityId}")
+    if (node.type === 'hull') {
+      const containerId = node.id.startsWith('hull-') ? node.id.slice(5) : node.id
+      const diagNode = vm.nodes.find(n => n.id === containerId)
+      if (!diagNode) return
+      const entity = allEntities.get(containerId) ?? null
+      const entityName = entity?.name ?? diagNode.label
+      const entityRules = travelRules.filter(r => {
+        const p = r.payload as Record<string, unknown>
+        return p.from === entityName || p.to === entityName || p.via === entityName
+      })
+      onSelect({ kind: 'node', node: diagNode, entity, travelRules: entityRules })
+      return
+    }
     const diagNode = node.data as DiagramNode
     // In merge-select mode: clicking any node other than the source selects it as merge target
     if (mergeSourceId && onMergeTargetSelect && diagNode.id !== mergeSourceId) {
@@ -533,7 +573,7 @@ function InnerDiagram({
       return p.from === entityName || p.to === entityName || p.via === entityName
     })
     onSelect({ kind: 'node', node: diagNode, entity, travelRules: entityRules })
-  }, [allEntities, travelRules, onSelect, mergeSourceId, onMergeTargetSelect])
+  }, [vm, allEntities, travelRules, onSelect, mergeSourceId, onMergeTargetSelect])
 
   const onEdgeClick = useCallback((_: unknown, edge: RFEdge) => {
     onSelect({ kind: 'edge', edge: edge.data as DiagramEdge })
@@ -773,7 +813,7 @@ function Disclaimer() {
 // ── Inspector overlay ─────────────────────────────────────────────────────────
 
 function InspectorOverlay({
-  target, sectionTitles, cursor, entityMentions, sectionOrder, onClose, onStartMerge,
+  target, sectionTitles, cursor, entityMentions, sectionOrder, onClose, onStartMerge, onToggleHide, hiddenEntityIds,
 }: {
   target: InspectorTarget
   sectionTitles: Map<string, string>
@@ -782,6 +822,8 @@ function InspectorOverlay({
   sectionOrder: Map<string, number>
   onClose: () => void
   onStartMerge?: (entityId: string, entityName: string) => void
+  onToggleHide?: (entityId: string) => void
+  hiddenEntityIds?: Set<string>
 }) {
   if (!target) return null
 
@@ -803,6 +845,8 @@ function InspectorOverlay({
           entityMentions={entityMentions}
           sectionOrder={sectionOrder}
           onStartMerge={onStartMerge}
+          onToggleHide={onToggleHide}
+          hiddenEntityIds={hiddenEntityIds}
         />
       </div>
     </div>
@@ -913,6 +957,18 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
   const [cursor, setCursor] = useState(() => Math.max(0, sections.length - 1))
   const [inspectorTarget, setInspectorTarget] = useState<InspectorTarget>(null)
   const [entityMentions, setEntityMentions] = useState<EntityMention[]>([])
+
+  // ── Edit state — entities the user hid from view (ephemeral, cleared on reload) ──
+  const [hiddenEntityIds, setHiddenEntityIds] = useState<Set<string>>(new Set())
+
+  const handleToggleHide = useCallback((entityId: string) => {
+    setHiddenEntityIds(prev => {
+      const next = new Set(prev)
+      if (next.has(entityId)) next.delete(entityId)
+      else next.add(entityId)
+      return next
+    })
+  }, [])
 
   // ── Merge state ──────────────────────────────────────────────────────────────
   const [mergeSource, setMergeSource] = useState<MergeEntity | null>(null)
@@ -1059,6 +1115,23 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
   return (
     <div className="atlas-canvas-root" role="main" aria-label="Atlas Explorer">
       <FilterBar filters={filters} onChange={setFilters} />
+      {hiddenEntityIds.size > 0 && (
+        <div style={{
+          position: 'absolute', top: '3rem', left: '50%', transform: 'translateX(-50%)',
+          zIndex: 30, background: 'var(--parchment-alt)', border: '1px solid rgba(180,120,20,0.35)',
+          borderRadius: '6px', padding: '0.45rem 0.85rem', display: 'flex', alignItems: 'center',
+          gap: '0.65rem', boxShadow: '0 2px 8px rgba(0,0,0,0.10)', fontSize: '0.75rem',
+          color: 'var(--ink-muted)', whiteSpace: 'nowrap',
+        }}>
+          <span>{hiddenEntityIds.size} place{hiddenEntityIds.size !== 1 ? 's' : ''} hidden from view</span>
+          <button
+            onClick={() => setHiddenEntityIds(new Set())}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-faint)', fontSize: '0.75rem', padding: '0 0.2rem' }}
+          >
+            Restore all
+          </button>
+        </div>
+      )}
       <ReactFlowProvider>
         <InnerDiagram
           vm={vm}
@@ -1072,6 +1145,7 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
           travelRules={atlasData?.travel_rules ?? []}
           mergeSourceId={mergeSource?.id}
           onMergeTargetSelect={handleMergeTargetSelect}
+          hiddenEntityIds={hiddenEntityIds}
         />
       </ReactFlowProvider>
       <Legend />
@@ -1100,6 +1174,8 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
           sectionOrder={sectionOrder}
           onClose={() => setInspectorTarget(null)}
           onStartMerge={handleStartMerge}
+          onToggleHide={handleToggleHide}
+          hiddenEntityIds={hiddenEntityIds}
         />
       )}
     </div>
@@ -1147,7 +1223,7 @@ function NarrativeThread({
 // ── Inspector content ─────────────────────────────────────────────────────────
 
 export function InspectorContent({
-  target, sectionTitles, cursor = 0, entityMentions = [], sectionOrder = new Map(), onStartMerge,
+  target, sectionTitles, cursor = 0, entityMentions = [], sectionOrder = new Map(), onStartMerge, onToggleHide, hiddenEntityIds,
 }: {
   target: InspectorTarget
   sectionTitles: Map<string, string>
@@ -1155,6 +1231,8 @@ export function InspectorContent({
   entityMentions?: EntityMention[]
   sectionOrder?: Map<string, number>
   onStartMerge?: (entityId: string, entityName: string) => void
+  onToggleHide?: (entityId: string) => void
+  hiddenEntityIds?: Set<string>
 }) {
   if (!target) {
     return (
@@ -1330,18 +1408,32 @@ export function InspectorContent({
           sectionTitles={sectionTitles}
         />
 
-        {onStartMerge && entity && (
-          <div style={{ borderTop: '1px solid var(--border-warm)', marginTop: '0.75rem', paddingTop: '0.6rem' }}>
-            <button
-              onClick={() => onStartMerge(entity.id, entity.name)}
-              style={{
-                background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-                fontSize: '0.72rem', color: 'var(--ink-faint)',
-                display: 'flex', alignItems: 'center', gap: '0.3rem',
-              }}
-            >
-              Merge with another place →
-            </button>
+        {(onStartMerge || onToggleHide) && entity && (
+          <div style={{ borderTop: '1px solid var(--border-warm)', marginTop: '0.75rem', paddingTop: '0.6rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+            {onStartMerge && (
+              <button
+                onClick={() => onStartMerge(entity.id, entity.name)}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                  fontSize: '0.72rem', color: 'var(--ink-faint)',
+                  display: 'flex', alignItems: 'center', gap: '0.3rem', textAlign: 'left',
+                }}
+              >
+                Merge with another place →
+              </button>
+            )}
+            {onToggleHide && (
+              <button
+                onClick={() => onToggleHide(entity.id)}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                  fontSize: '0.72rem', color: hiddenEntityIds?.has(entity.id) ? 'var(--step-done)' : 'var(--ink-faint)',
+                  display: 'flex', alignItems: 'center', gap: '0.3rem', textAlign: 'left',
+                }}
+              >
+                {hiddenEntityIds?.has(entity.id) ? 'Restore to atlas ↩' : 'Hide from atlas view ×'}
+              </button>
+            )}
           </div>
         )}
       </div>
