@@ -40,3 +40,4 @@ dist/
 .idea/
 *.swp
 *.swo
+*.tsbuildinfo
