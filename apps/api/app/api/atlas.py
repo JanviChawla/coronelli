@@ -345,7 +345,7 @@ def export_atlas_package(document_id: str, db: Session = Depends(get_db)) -> JSO
 
 # ── Place suggestions (autocomplete from section text) ───────────────────────
 
-_CAP_SEQUENCE = re.compile(r'\b([A-Z][a-z]{1,}(?:\s+[A-Z][a-z]{1,}){0,3})\b')
+_CAP_SEQUENCE = re.compile(r'\b([A-Z][a-z]{1,}(?:[ \t]+[A-Z][a-z]{1,}){0,3})\b')
 _COMMON_STARTERS = {
     "The", "A", "An", "In", "On", "At", "By", "He", "She", "They", "It", "We",
     "I", "You", "His", "Her", "Its", "Their", "Our", "My", "This", "That",
@@ -353,6 +353,12 @@ _COMMON_STARTERS = {
     "Now", "All", "No", "Not", "There", "Here", "With", "From", "For",
     "After", "Before", "Into", "Over", "Out", "Was", "Were", "Had",
     "Has", "Have", "Could", "Would", "Should", "May", "Might", "Will",
+    # common verbs/adverbs that start sentences
+    "Behind", "Besides", "Better", "Bless", "Can", "Did", "Do", "Does",
+    "Else", "Even", "Just", "Looked", "Never", "Nobody", "One", "Open",
+    "Perhaps", "Personally", "Really", "Round", "Sometimes", "Still",
+    "Such", "Through", "Well", "What", "Why", "Hurrah", "Indeed", "How",
+    "Half", "Fourth", "Don", "Dear", "Cousin",
 }
 
 
@@ -366,7 +372,7 @@ def get_place_suggestions(document_id: str, db: Session = Depends(get_db)) -> li
     )
     suggestions: set[str] = set()
     for section in sections:
-        text = section.content or ""
+        text = section.text or ""
         for m in _CAP_SEQUENCE.finditer(text):
             phrase = m.group(1).strip()
             first_word = phrase.split()[0]
