@@ -412,7 +412,7 @@ COMBINED_PROMPT_VERSION = "2.0"
 # Pre-pass: catalog all sections first → aggregate global entity list
 # Evidence pass: each section gets the full global entity list as context
 
-GLOBAL_CATALOG_VERSION = "3.1-catalog"
+GLOBAL_CATALOG_VERSION = "3.2-catalog"
 GLOBAL_EVIDENCE_VERSION = "3.2-evidence"
 
 # v4: evidence split into three focused sub-passes
@@ -452,14 +452,42 @@ RULES:
 - If the same place is called by MULTIPLE DIFFERENT NAMES IN THIS TEXT, list them in
   aliases. aliases MUST contain ONLY names that literally appear in the current text —
   do NOT add names from your training knowledge of other books or other works.
-- Do NOT include: characters, creatures, furniture, food, portable objects, animals,
-  abstract concepts, emotions, non-spatial events.
 - NEVER use a person's name as a place name. If a place is known only by its
   owner ("Hans Van Ripper's farm", "the widow's cottage"), name it by what it IS
   physically ("the Van Ripper farmhouse", "the widow's cottage"), not by the
   person alone. A personal name like "Hans Van Ripper" is never a valid entry.
 - Do NOT invent. Extract only what the text names or clearly describes.
-- When in doubt, INCLUDE — synthesis will filter.
+
+HARD EXCLUSIONS — never catalog these, no exceptions:
+
+1. CHARACTERS AND CREATURES: A person's or creature's name is never a place.
+   "the Duchess", "the Queen", "the White Rabbit", "Alice", or any character is
+   NOT a place. If a location is owned by a character, name it by what it
+   physically IS: "the Duchess's kitchen", not "the Duchess".
+
+2. FURNITURE AND MOVABLE OBJECTS: Tables, chairs, mushrooms used as seats or
+   surfaces, glass boxes, bottles, keys, playing cards, tea-cups, cakes, watches,
+   fans, thimbles — none are atlas places. Exception: a named DOOR or named HOLE
+   that governs access to a passage IS valid (e.g. "Little Door"). An object a
+   character sits on, opens, drinks from, or picks up is not a place.
+
+3. AMBIENT ENVIRONMENT FEATURES: "the grass", "the sky", "the air", "the sunlight",
+   "the trees" are ambient conditions, not named places. Only include a natural
+   feature if the text treats it as a distinct NAMED LOCATION where narrative action
+   anchors and to which the protagonist travels or where a scene is set.
+   "the pool of tears" qualifies (named, scene-anchoring). "the grass" does not.
+
+4. PLACES IN DIALOGUE, SONGS, OR NESTED STORIES: If a place name appears ONLY in
+   a poem, song, riddle, quoted tale, or a character's reported speech about
+   somewhere else — and the narrated action NEVER moves there — do NOT catalog it.
+   A location name in a song lyric or quoted verse is not a Wonderland atlas entry.
+
+5. REAL-WORLD GEOGRAPHY USED AS REFERENCE: Actual place names mentioned in passing,
+   for comparison, or in a character's speech ("like London", "Canterbury") are not
+   part of the fictional atlas unless the narrative physically enters that place.
+
+When in doubt, EXCLUDE. A missed real place can be recovered on re-run;
+a cataloged non-place pollutes the entire evidence pipeline downstream.
 
 FRAME AND TRANSITIONAL LOCATIONS — easy to miss, always required:
 If a section opens outdoors, in a transitional space, or in a "real world" frame before
