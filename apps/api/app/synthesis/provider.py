@@ -2,6 +2,7 @@ import json
 import logging
 import os
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -131,8 +132,32 @@ class OpenAISynthesisProvider:
         # ── Pass 1: entity consolidation ─────────────────────────────────────
         if phase_callback:
             phase_callback("entities")
+
+        # Build must-include list from human-approved catalog entities.
+        # These were explicitly reviewed and accepted by the user; the model
+        # must not silently drop them during consolidation.
+        must_include = [
+            {
+                "name": item["payload"].get("name", ""),
+                "type": item["payload"].get("type", ""),
+                "aliases": item["payload"].get("aliases", []),
+            }
+            for item in entity_ledger
+            if item.get("review_state") == "approved" and item["payload"].get("name")
+        ]
+
         entity_json = json.dumps(entity_ledger, indent=2, ensure_ascii=False)
-        entity_user = f"Entity candidates ({len(entity_ledger)} unique places):\n{entity_json}\n\n"
+        entity_user = ""
+        if must_include:
+            entity_user += (
+                f"MUST-INCLUDE ENTITIES (human-approved catalog, {len(must_include)} entries):\n"
+                f"Every entity in this list MUST appear in your output as an entity item. "
+                f"You may merge two entries only if they are definitively the same place — "
+                f"pick the more specific name as canonical and list the other as an alias. "
+                f"Do not drop or omit any entry for any other reason.\n"
+                f"{json.dumps(must_include, indent=2, ensure_ascii=False)}\n\n"
+            )
+        entity_user += f"Full entity candidates with section context ({len(entity_ledger)} unique places):\n{entity_json}\n\n"
         if same_as_hints:
             entity_user += (
                 f"SAME_AS hints from evidence ({len(same_as_hints)} pairs) — "
@@ -157,18 +182,21 @@ class OpenAISynthesisProvider:
             _log.warning("Entity consolidation pass failed to parse JSON: %s", exc)
         entity_raw = entity_parsed.get("synthesis_items", [])
 
-        # Build canonical names + aliases list for Golden Rule enforcement in sub-passes
+        # Build canonical entity map: [{name, aliases}] for Golden Rule enforcement.
+        # Also build a flat list of all names+aliases for non-spatial passes.
+        canonical_entity_map: list[dict] = []
         canonical_names: list[str] = []
         for item in entity_raw:
             if item.get("kind") == "entity":
-                name = (item.get("payload") or {}).get("name", "")
+                payload = item.get("payload") or {}
+                name = payload.get("name", "")
+                aliases = [a for a in payload.get("aliases", []) if a]
                 if name:
+                    canonical_entity_map.append({"name": name, "aliases": aliases})
                     canonical_names.append(name)
-                    for alias in (item.get("payload") or {}).get("aliases", []):
-                        if alias:
-                            canonical_names.append(alias)
+                    canonical_names.extend(aliases)
 
-        # ── Pass 2: 5 focused evidence sub-passes ────────────────────────────
+        # ── Pass 2: 5 focused evidence sub-passes (run in parallel) ─────────
         _SUBPASSES: list[tuple[str, str, set[str], set[str]]] = [
             ("spatial",  SPATIAL_CLAIMS_SYNTHESIS_PROMPT,  {"claim", "scene_anchor"}, {"claim"}),
             ("visual",   VISUAL_CLAIMS_SYNTHESIS_PROMPT,   {"visual_claim"},           {"visual_claim"}),
@@ -177,21 +205,33 @@ class OpenAISynthesisProvider:
             ("movement", MOVEMENT_SYNTHESIS_PROMPT,         {"movement"},               {"movement"}),
         ]
 
+        # Spatial pass gets structured alias map; others get a flat name list
+        entity_map_json = json.dumps(canonical_entity_map, ensure_ascii=False)
         entity_names_json = json.dumps(canonical_names, ensure_ascii=False)
-        all_claims_raw: list[dict] = []
-        subpass_responses: dict[str, dict] = {}
 
-        for subpass_name, system_prompt, input_kinds, allowed_output_kinds in _SUBPASSES:
-            if phase_callback:
-                phase_callback(subpass_name)
+        # Signal once on the caller thread (session-safe)
+        if phase_callback:
+            phase_callback("parallel")
+
+        def _run_subpass(subpass: tuple) -> tuple[str, list[dict], dict]:
+            subpass_name, system_prompt, input_kinds, allowed_output_kinds = subpass
             filtered = [item for item in evidence_ledger if item.get("kind") in input_kinds]
             if not filtered:
                 _log.debug("Synthesis sub-pass %s: no candidates, skipping", subpass_name)
-                continue
-
+                return subpass_name, [], {}
+            # Spatial pass uses structured alias map; others use flat name list
+            if subpass_name == "spatial":
+                entity_header = (
+                    f"Canonical entity list ({len(canonical_entity_map)} entities with aliases):\n"
+                    f"{entity_map_json}"
+                )
+            else:
+                entity_header = (
+                    f"Canonical entity list ({len(canonical_names)} names):\n"
+                    f"{entity_names_json}"
+                )
             sub_user = (
-                f"Canonical entity list ({len(canonical_names)} names):\n"
-                f"{entity_names_json}\n\n"
+                f"{entity_header}\n\n"
                 f"Evidence candidates ({len(filtered)} items):\n"
                 f"{json.dumps(filtered, indent=2, ensure_ascii=False)}\n\n"
                 f"Produce synthesis items of kind {sorted(allowed_output_kinds)} only."
@@ -206,22 +246,28 @@ class OpenAISynthesisProvider:
                     response_format={"type": "json_object"},
                     max_tokens=8192,
                 )
-                sub_text = sub_resp.choices[0].message.content
-                sub_parsed = json.loads(sub_text)
+                sub_parsed = json.loads(sub_resp.choices[0].message.content)
                 sub_items = sub_parsed.get("synthesis_items", [])
-                # Filter to only the expected output kinds
                 accepted = [r for r in sub_items if isinstance(r, dict) and r.get("kind") in allowed_output_kinds]
                 dropped = len(sub_items) - len(accepted)
                 if dropped:
                     _log.warning("Synthesis sub-pass %s: dropped %d items with wrong kind", subpass_name, dropped)
-                _log.info(
-                    "Synthesis sub-pass %s: %d input → %d output items",
-                    subpass_name, len(filtered), len(accepted),
-                )
-                all_claims_raw.extend(accepted)
-                subpass_responses[subpass_name] = sub_parsed
-            except (json.JSONDecodeError, Exception) as exc:
+                _log.info("Synthesis sub-pass %s: %d input → %d output items", subpass_name, len(filtered), len(accepted))
+                return subpass_name, accepted, sub_parsed
+            except Exception as exc:
                 _log.warning("Synthesis sub-pass %s failed: %s", subpass_name, exc)
+                return subpass_name, [], {}
+
+        all_claims_raw: list[dict] = []
+        subpass_responses: dict[str, dict] = {}
+
+        with ThreadPoolExecutor(max_workers=len(_SUBPASSES)) as pool:
+            futures = {pool.submit(_run_subpass, sp): sp for sp in _SUBPASSES}
+            for future in as_completed(futures):
+                name, accepted, parsed = future.result()
+                all_claims_raw.extend(accepted)
+                if parsed:
+                    subpass_responses[name] = parsed
 
         # ── Combine and parse all raw items ───────────────────────────────────
         all_raw = entity_raw + all_claims_raw

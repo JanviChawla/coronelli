@@ -10,6 +10,7 @@ from app.domain.world import MapClaim, MapEntity, MapTravelRule
 from app.extraction.models import Candidate
 from app.extraction.prompts import GLOBAL_CATALOG_VERSION, GLOBAL_EVIDENCE_VERSION
 from app.synthesis.models import SynthesisItem, SynthesisRun
+from app.synthesis.prompts import THREE_PASS_SYNTHESIS_VERSION
 from app.synthesis.provider import SynthesisProvider
 from app.synthesis.review import canonicalize_synthesis_run
 
@@ -196,6 +197,7 @@ def run_synthesis(
             .filter(
                 SynthesisRun.document_id == document_id,
                 SynthesisRun.evidence_hash == ledger_hash,
+                SynthesisRun.synthesis_prompt_version == THREE_PASS_SYNTHESIS_VERSION,
                 SynthesisRun.status == "completed",
             )
             .first()

@@ -1,5 +1,5 @@
 SYNTHESIS_PROMPT_VERSION = "1.2"  # kept for single-pass fallback
-THREE_PASS_SYNTHESIS_VERSION = "3.0"  # Pass 1 entity consolidation + 5 focused evidence sub-passes
+THREE_PASS_SYNTHESIS_VERSION = "3.8"  # 3.8: ON_BANK_OF predicate, must-include rooms not rejected as vague
 
 SYNTHESIS_SYSTEM_PROMPT = """\
 CORONELLI ATLAS SYNTHESIS — Stage 2
@@ -155,16 +155,50 @@ Each input record has:
 
 RULES:
 1. ONE entity per distinct real place. Merge any variants that name the same place.
+   Actively look for archaic or poetic renamings of the same building: "castle of [person]"
+   and "[person]'s mansion" are the same place when the work has one primary building for that person.
 2. Canonical name: the most specific, unambiguous, and complete name.
 3. type must be one of: world, region, island, settlement, landmark, building, room, hall,
    tunnel, shaft, passage, portal, door, exterior, terrain_feature, body_of_water, site, court, barrier
-4. aliases: all other names or phrasings used for this place in the source.
+3a. TYPE CORRECTIONS — apply by inspecting the entity's name, regardless of what extraction assigned.
+    Look for these words IN the name (not just as the whole name) and assign accordingly:
+    body_of_water  : name contains → spring, brook, stream, creek, run, river, pond, lake,
+                     mill-pond, millpond, inlet, bay, cove, harbor
+                     Examples: "the spring" → body_of_water, "the neighboring brook" → body_of_water,
+                               "the millpond" → body_of_water, "Tappan Zee" → body_of_water
+    terrain_feature: name contains → hill, mountain, cliff, ravine, grove, wood, forest, field,
+                     meadow, swamp, bog, moor, marsh, fen, hollow, vale, glen, dell, elm, oak,
+                     or other named individual tree or landform
+                     Examples: "Wiley's Swamp" → terrain_feature, "the great elm" → terrain_feature,
+                               "Raven Rock" → terrain_feature, "the hollow" → terrain_feature
+    region         : a named hollow, valley, or dale that IS the primary geographic setting of the whole
+                     work — e.g. the work is named after it, or it encloses all other places.
+                     Override terrain_feature with region in this case.
+                     Example: "Sleepy Hollow" / "the hollow" in The Legend of Sleepy Hollow → region
+    building       : name contains → house, mansion, castle, farmhouse, schoolhouse, mill, inn,
+                     tavern, cottage, barn, farmstead, estate
+    room           : any named interior space — name contains → hall, parlor, dining-room, study,
+                     nursery, chamber, kitchen, garret, cellar, attic, salon, saloon, drawing-room
+    passage        : name contains → staircase, corridor, hallway, passage, tunnel
+    settlement     : named town, village, borough, hamlet, or district
+    IMPORTANT: Do NOT use "site" as a default fallback. "site" is only for named archeological,
+    ceremonial, or historically-marked outdoor locations (a burial mound, a battlefield marker, a
+    named well or crossroads). If an entity fits body_of_water, terrain_feature, region, building,
+    room, passage, or settlement — use that type, not "site".
+4. aliases: EVERY name that differs from the canonical name must appear here — the input record's
+   payload.name, payload.aliases, and any other phrasings used in the source. If you rename a place
+   (e.g. "the lovely shaded lane" → "that lovely lane"), the original name MUST become an alias.
+   Aliases are used downstream to match evidence claims, so completeness is critical.
 5. observations: one brief sentence PER ENTRY in section_mentions, in section_ordinal order.
    Draw from the excerpt to capture what is spatially or experientially distinctive about that
    section's encounter with this place — season, time of day, atmosphere, who is present, what happens.
    If a place has 8 section_mentions, write 8 observations. Volume matters: this is the atlas detail.
 6. Include ONLY named places. Reject: characters, creatures, furniture, portable objects,
    food, abstract concepts, body parts, emotions, pronouns, vague descriptors ("the dark", "inside").
+   EXCEPTION: if an entity appears in the MUST-INCLUDE list, it is a valid named place by definition —
+   do not reject it as a vague descriptor even if its name uses a generic article. "The hall",
+   "the best parlor", "the common room", "the schoolroom" are all legitimate named interior spaces
+   in their literary context. Short names with "the" are not automatically vague.
 7. Also emit reveal_event for every entity — use the section_mention with the lowest section_ordinal.
 
 OUTPUT: valid JSON only, no markdown.
@@ -201,8 +235,9 @@ You receive:
 2. Evidence candidates for ONE specific claim type extracted section-by-section.
 
 THE GOLDEN RULE for spatial claims:
-Both the subject AND object of every "claim" item must appear in the canonical entity list
-(exact match or close variant). Discard any claim where either side is not a named place in the list.
+Both the subject AND object of every "claim" item must be resolvable to the canonical entity list
+(exact canonical name OR any alias listed for that entity). If a claim uses an alias, rewrite both
+sides to canonical names before outputting. Discard only if neither side matches any entity or alias.
 
 OUTPUT: valid JSON only, no markdown.
 Each item MUST have four top-level fields: kind, payload, confidence, rationale.
@@ -218,18 +253,29 @@ YOUR TASK: Produce ONLY items of kind "claim" — spatial relationships between 
 
 Payload: {"subject": "canonical place", "predicate": "PREDICATE", "object": "canonical place"}
 
-Predicates: CONTAINS, LOCATED_IN, LEADS_TO, OPENS_TOWARD, ADJACENT_TO, NEAR, UNDER, ABOVE,
+Predicates: CONTAINS, LOCATED_IN, PART_OF, LEADS_TO, OPENS_TOWARD, ADJACENT_TO, NEAR, UNDER, ABOVE,
 DESCENDS_TO, ENDS_AT, HAS_OPENING, REACHED_FROM, SAME_AS, IN_OR_ADJACENT_TO, BLOCKS_ACCESS_TO,
-SURROUNDED_BY, NORTH_OF, SOUTH_OF, EAST_OF, WEST_OF, NORTHEAST_OF, NORTHWEST_OF, SOUTHEAST_OF, SOUTHWEST_OF
+SURROUNDED_BY, BORDERS, PORTAL_TO, VISIBLE_FROM, ON_BANK_OF,
+NORTH_OF, SOUTH_OF, EAST_OF, WEST_OF, NORTHEAST_OF, NORTHWEST_OF, SOUTHEAST_OF, SOUTHWEST_OF
+
+ON_BANK_OF: a land place sits on the bank, shore, or waterfront edge of a body of water.
+Use instead of LOCATED_IN when the land place borders the water but is not inside it.
+Example: "Van Tassel's mansion ON_BANK_OF the Hudson" (the mansion overlooks the river; it is not in the river).
 
 Rules:
-- Both subject AND object must be in the canonical entity list. Discard the claim if either is absent.
+- Both subject AND object must be in the canonical entity list (exact canonical name or any listed alias).
+  If an evidence claim uses an alias, rewrite it to use the canonical name before outputting.
+- Include ALL distinct relationships supported by the evidence. Each unique subject-predicate-object
+  triple must appear EXACTLY ONCE in the output, even if multiple evidence items support the same claim.
+  Deduplicate: if two evidence items assert the same triple, emit one claim (use the higher confidence).
 - Include inferred claims with confidence ≥ 0.55.
 - Include containment hierarchy: rooms inside buildings, buildings inside settlements, settlements inside regions.
-- Include proximity (NEAR, ADJACENT_TO, REACHED_FROM) when the text supports it.
+- Include proximity and visibility (NEAR, ADJACENT_TO, REACHED_FROM, VISIBLE_FROM) when the text supports it.
 - Emit SAME_AS when two canonical names clearly refer to the same place.
+- If an evidence candidate has predicate PART_OF or VISIBLE_FROM and both places are in the entity list (or aliases), always emit it.
+- Do NOT change predicates from the evidence — if evidence says LOCATED_IN, emit LOCATED_IN (not NEAR or CONTAINS).
 
-SELF-CHECK: For every claim, verify subject AND object are in the entity list. Remove any that fail.
+SELF-CHECK: For every claim, verify subject AND object match a canonical name or alias. Rewrite to canonical names. Remove only if neither side can be resolved to any entity.
 """
 
 VISUAL_CLAIMS_SYNTHESIS_PROMPT = _SYNTH_PASS2_HEADER + """\
