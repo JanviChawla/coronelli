@@ -228,6 +228,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
   const [rejectedCandidateIds, setRejectedCandidateIds] = useState<Set<string>>(new Set())
   const [evidenceSubPhase, setEvidenceSubPhase] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [confirmingCatalog, setConfirmingCatalog] = useState(false)
   // Staleness flags: set when a preceding step is re-run, cleared when the stale step starts.
   const [evidenceStale, setEvidenceStale] = useState(false)
@@ -606,34 +607,39 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
       }}>
         Source work
       </p>
-      {confirmingDelete ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', padding: '0.6rem 0', marginBottom: '0.2rem' }}>
-          <span style={{ fontSize: '0.92rem', color: 'var(--ink-muted)' }}>Remove from library?</span>
-          <button type="button" onClick={() => setConfirmingDelete(false)} style={{
-            background: 'none', border: '1px solid var(--border-warm)', borderRadius: '3px',
-            padding: '0.25rem 0.75rem', fontSize: '0.8rem', color: 'var(--ink-muted)', cursor: 'pointer',
-          }}>Cancel</button>
-          <button type="button" onClick={() => onDelete?.()} style={{
-            background: 'none', border: '1px solid rgba(180,60,60,0.45)', borderRadius: '3px',
-            padding: '0.25rem 0.75rem', fontSize: '0.8rem', color: 'var(--error-text)', cursor: 'pointer',
-          }}>Remove</button>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
           <h2 style={{ flex: 1, fontSize: '2.4rem', fontWeight: 400, color: 'var(--ink)', lineHeight: 1.15, margin: 0 }}>
             {document.title}
           </h2>
           {onDelete && (
-            <button type="button" onClick={() => setConfirmingDelete(true)} title="Remove from library"
-              style={{
-                marginTop: '0.4rem', background: 'none', border: 'none', cursor: 'pointer',
-                color: 'var(--ink-faint)', fontSize: '1.1rem', lineHeight: 1, padding: '0 0.1rem',
-                opacity: 0.45, transition: 'opacity 0.15s',
+            <button
+              type="button"
+              title={confirmingDelete ? 'Click again to confirm removal' : 'Remove from library'}
+              onClick={() => {
+                if (confirmingDelete) {
+                  if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current)
+                  setConfirmingDelete(false)
+                  onDelete?.()
+                } else {
+                  setConfirmingDelete(true)
+                  deleteTimerRef.current = setTimeout(() => setConfirmingDelete(false), 3000)
+                }
               }}
-            >×</button>
+              style={{
+                marginTop: '0.4rem', background: 'none', cursor: 'pointer', lineHeight: 1,
+                border: confirmingDelete ? '1px solid rgba(180,60,60,0.5)' : 'none',
+                borderRadius: '3px',
+                padding: confirmingDelete ? '0.2rem 0.5rem' : '0 0.1rem',
+                color: confirmingDelete ? 'var(--error-text)' : 'var(--ink-faint)',
+                fontSize: confirmingDelete ? '0.78rem' : '1.1rem',
+                opacity: confirmingDelete ? 1 : 0.45,
+                transition: 'all 0.15s',
+              }}
+            >
+              {confirmingDelete ? 'Remove?' : '×'}
+            </button>
           )}
         </div>
-      )}
       {document.author && (
         <p style={{ fontSize: '1rem', color: 'var(--ink-muted)', marginTop: '0.35rem' }}>
           {document.author}{document.year ? `, ${document.year}` : ''}
