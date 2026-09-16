@@ -343,6 +343,11 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
         if (evidenceCount > 0) {
           setAllCandidates(bySection)
           setTotalCandidates(total)
+          try {
+            const entities = await fetchDocumentEntityCandidates(document.id)
+            setEntityCandidates(entities)
+            setRejectedCandidateIds(new Set(entities.filter(e => e.review_state === 'rejected').map(e => e.id)))
+          } catch { /* non-critical */ }
           setPhase('inspecting')
           return
         }
@@ -464,6 +469,27 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
       else next.add(id)
       return next
     })
+  }
+
+  async function toggleRejectPersist(id: string) {
+    const wasRejected = rejectedCandidateIds.has(id)
+    const newState = wasRejected ? 'proposed' : 'rejected'
+    setRejectedCandidateIds(prev => {
+      const next = new Set(prev)
+      if (wasRejected) next.delete(id)
+      else next.add(id)
+      return next
+    })
+    try {
+      await patchCandidateReviewState(id, newState)
+    } catch {
+      setRejectedCandidateIds(prev => {
+        const next = new Set(prev)
+        if (wasRejected) next.add(id)
+        else next.delete(id)
+        return next
+      })
+    }
   }
 
   // Gate between catalog and evidence: persist rejections, mark confirmed, then wait for evidence.
@@ -799,7 +825,17 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
                       const levelLabel = level !== null ? SPATIAL_LEVEL_LABELS[level] : null
                       const isRejected = rejectedCandidateIds.has(c.id)
                       return (
-                        <div key={c.id} style={{ display: 'flex', gap: '0.5rem', fontSize: '0.88rem', alignItems: 'baseline', opacity: isRejected ? 0.38 : 1 }}>
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => toggleRejectPersist(c.id)}
+                          title={isRejected ? 'Click to restore' : 'Click to reject'}
+                          style={{
+                            display: 'flex', gap: '0.5rem', fontSize: '0.88rem', alignItems: 'baseline',
+                            opacity: isRejected ? 0.38 : 1, background: 'none', border: 'none',
+                            padding: '0.1rem 0', cursor: 'pointer', textAlign: 'left', width: '100%',
+                          }}
+                        >
                           <span style={{ flexShrink: 0, color: isRejected ? 'var(--error-text)' : 'var(--gold)', fontSize: '0.58rem' }}>
                             {isRejected ? '✕' : '◉'}
                           </span>
@@ -810,7 +846,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
                             </span>
                           )}
                           {type && <span style={{ color: 'var(--ink-faint)', fontSize: '0.72rem' }}>· {type}</span>}
-                        </div>
+                        </button>
                       )
                     })}
                   </div>
