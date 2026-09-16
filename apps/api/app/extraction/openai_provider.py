@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 _log = logging.getLogger(__name__)
@@ -202,6 +203,12 @@ class OpenAIExtractionProvider:
                 _log.info("Catalog filter: dropped bare possessive %r", name)
                 continue
             payload: dict[str, Any] = {"name": name, "type": ptype}
+            lvl = p.get("spatial_level")
+            if lvl is not None:
+                try:
+                    payload["spatial_level"] = int(lvl)
+                except (TypeError, ValueError):
+                    pass
             aliases = [a for a in (p.get("aliases") or []) if not _BARE_POSSESSIVE_RE.search(a or "")]
             if aliases:
                 payload["aliases"] = aliases
@@ -274,13 +281,12 @@ class OpenAIExtractionProvider:
             (GLOBAL_EVIDENCE_DEDUP_VERSION,       "dedup",       ENTITY_DEDUP_SYSTEM_PROMPT,      catalog_only_content, {"claim"}),
         ]
 
-        all_candidates: list[RawCandidate] = []
-        total_in = 0
-        total_out = 0
+        # Signal that all passes are starting in parallel (session-safe: single call on caller thread)
+        if phase_callback:
+            phase_callback("parallel")
 
-        for version, label, system_prompt, subpass_user, allowed_kinds in _SUBPASSES:
-            if phase_callback:
-                phase_callback(label)
+        def _run_one(subpass: tuple) -> tuple[list[RawCandidate], int, int]:
+            version, label, system_prompt, subpass_user, allowed_kinds = subpass
             try:
                 resp = self._client.chat.completions.create(
                     model=self._model,
@@ -297,17 +303,16 @@ class OpenAIExtractionProvider:
                     out_tok = int(resp.usage.completion_tokens)
                 except (AttributeError, TypeError, ValueError):
                     in_tok = out_tok = 0
-                total_in += in_tok
-                total_out += out_tok
 
                 parsed = json.loads(raw_text)
                 raw_list = parsed.get("candidates", [])
                 if not isinstance(raw_list, list):
                     raw_list = []
-            except (json.JSONDecodeError, Exception) as exc:
+            except Exception as exc:
                 _log.warning("Evidence sub-pass %s failed: %s", version, exc)
-                continue
+                return [], 0, 0
 
+            candidates: list[RawCandidate] = []
             for raw in raw_list:
                 if not isinstance(raw, dict):
                     continue
@@ -320,7 +325,7 @@ class OpenAIExtractionProvider:
                 temporal = raw.get("temporal_interpretation", "static")
                 if temporal not in _VALID_TEMPORAL:
                     temporal = "static"
-                all_candidates.append(RawCandidate(
+                candidates.append(RawCandidate(
                     kind=kind,
                     payload=raw.get("payload", {}),
                     status=status,
@@ -329,6 +334,19 @@ class OpenAIExtractionProvider:
                     rationale=str(raw.get("rationale", "")),
                     temporal_interpretation=temporal,
                 ))
+            return candidates, in_tok, out_tok
+
+        all_candidates: list[RawCandidate] = []
+        total_in = 0
+        total_out = 0
+
+        with ThreadPoolExecutor(max_workers=len(_SUBPASSES)) as pool:
+            futures = {pool.submit(_run_one, sp): sp for sp in _SUBPASSES}
+            for future in as_completed(futures):
+                cands, in_tok, out_tok = future.result()
+                all_candidates.extend(cands)
+                total_in += in_tok
+                total_out += out_tok
 
         return all_candidates, total_in, total_out
 
@@ -380,6 +398,12 @@ class OpenAIExtractionProvider:
                 _log.info("Catalog filter: dropped bare possessive %r", name)
                 continue
             payload: dict[str, Any] = {"name": name, "type": ptype}
+            lvl = p.get("spatial_level")
+            if lvl is not None:
+                try:
+                    payload["spatial_level"] = int(lvl)
+                except (TypeError, ValueError):
+                    pass
             aliases = [a for a in (p.get("aliases") or []) if not _BARE_POSSESSIVE_RE.search(a or "")]
             if aliases:
                 payload["aliases"] = aliases

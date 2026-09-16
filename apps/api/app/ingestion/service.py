@@ -20,8 +20,11 @@ def import_document(
     # Detect Gutenberg boundaries and authored end-matter (Postscript, etc.).
     normalized = normalize_source(parsed.text)
 
-    # Section the narrative body; split any section that is too long for a single extraction pass.
-    narrative_sections = split_long_sections(section_text(normalized.narrative_body))
+    # Section the narrative body.  Only apply semantic splitting (paragraph-boundary chunking)
+    # when the text has no structural chapters — i.e. section_text() fell through to the
+    # single-section fallback.  Texts with real chapter divisions are already chapter-sized.
+    _raw_sections = section_text(normalized.narrative_body)
+    narrative_sections = split_long_sections(_raw_sections) if len(_raw_sections) <= 1 else _raw_sections
 
     # Build authored sections (Postscript, Appendix…) as end_matter entries.
     # Append them after all narrative sections so ordinals stay contiguous.
@@ -65,7 +68,8 @@ def resection_document(session: Session, document_id: str) -> list[SourceSection
         raise ValueError(f"Document {document_id} has no stored raw text; re-import to resection")
 
     normalized = normalize_source(doc.raw_text)
-    narrative_sections = split_long_sections(section_text(normalized.narrative_body))
+    _raw_sections = section_text(normalized.narrative_body)
+    narrative_sections = split_long_sections(_raw_sections) if len(_raw_sections) <= 1 else _raw_sections
 
     proposed: list[ProposedSection] = list(narrative_sections)
     next_ordinal = len(narrative_sections)

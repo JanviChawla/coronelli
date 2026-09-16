@@ -173,9 +173,18 @@ character changes size, or an earlier place is no longer visible.
 
 ALLOWED ENTITY TYPES
 
-Use only: world, region, island, settlement, landmark, building, room, hall, \
-tunnel, shaft, passage, portal, door, exterior, terrain_feature, body_of_water, \
-site, court, barrier.
+Use only: world, region, island, district, settlement, grounds, landmark, \
+building, hall, room, tunnel, shaft, passage, portal, door, exterior, \
+terrain_feature, body_of_water, vessel, site, court, barrier.
+
+Use the narrowest supported type. Assign spatial_level (0–3) to every entity: \
+0=realm, 1=territory, 2=place (default), 3=feature. A large garden is site or \
+exterior (not region). A hall is a hall (not a room). A named house with rooms \
+is a building. A rabbit hole acting as entrance is a tunnel or portal. A wall or \
+hedge separating regions is a barrier. A ship or train characters inhabit is a \
+vessel. A named urban zone within a city is a district. An estate's outdoor \
+grounds is grounds, not site. Never use court for a social faction or house — \
+only for a physical court space.
 
 Use the narrowest supported type. A large garden is a site or exterior, not a \
 region. A hall is a hall, not a room. A named house with internal rooms is a \
@@ -191,11 +200,20 @@ distances, scale, road networks, or a complete layout.
 
 - CONTAINS: outer place -> inner place.
 - LOCATED_IN: inner feature/place -> enclosing place.
+- PART_OF: structural containment — place is an intrinsic physical part of \
+  parent (a chimney PART_OF a house; a wing PART_OF a castle). More specific \
+  than LOCATED_IN; use when contained place is literally built into parent.
 - LEADS_TO: physical transition -> immediate destination.
+- PORTAL_TO: a threshold, named door, or magical object -> the realm or distinct \
+  space on the other side of a magical crossing. Use when crossing implies a \
+  fundamental change in world-space (not just entering a room).
 - OPENS_TOWARD: opening -> visible/approached destination where direct \
   traversal is not yet established.
 - ADJACENT_TO: direct side-by-side relation explicitly supported by text.
+- BORDERS: two territories share a named boundary. Use for level-1 territories; \
+  prefer ADJACENT_TO for smaller-scale places.
 - NEAR: proximity only; never substitute it for unknown relation.
+- VISIBLE_FROM: a place explicitly described as visible from another catalog place.
 - UNDER: lower feature -> upper feature.
 - ABOVE: lower-level feature -> higher-level feature only when directly stated.
 - DESCENDS_TO: descending route/feature -> lower destination.
@@ -352,7 +370,7 @@ additional top-level keys, or candidate fields not listed below.
 }
 
 Payload shapes by kind:
-  entity:       {"name": "string", "type": "one allowed entity type"}
+  entity:       {"name": "string", "type": "one allowed entity type", "spatial_level": 0|1|2|3}
   claim:        {"subject": "place name", "predicate": "one allowed predicate", "object": "place name"}
   travel_rule:  {"traveler": "name from source or null", "can_traverse": true, "route": "Place A -> Transition -> Place B", "condition": "string or null"}
   visual_claim: {"subject": "place name", "category": "one of: architecture|terrain|light|weather|color|material|scale|atmosphere|other", "observation": "short source-grounded description"}
@@ -412,17 +430,17 @@ COMBINED_PROMPT_VERSION = "2.0"
 # Pre-pass: catalog all sections first → aggregate global entity list
 # Evidence pass: each section gets the full global entity list as context
 
-GLOBAL_CATALOG_VERSION = "3.2-catalog"
-GLOBAL_EVIDENCE_VERSION = "3.2-evidence"
+GLOBAL_CATALOG_VERSION = "3.5-catalog"
+GLOBAL_EVIDENCE_VERSION = "3.4-evidence"
 
 # v4: evidence split into three focused sub-passes
-GLOBAL_EVIDENCE_SPATIAL_VERSION      = "4.0-spatial"      # claim + scene_anchor
+GLOBAL_EVIDENCE_SPATIAL_VERSION      = "4.2-spatial"      # ON_BANK_OF predicate for waterfront land fixtures
 GLOBAL_EVIDENCE_VISUAL_VERSION       = "4.0-visual"       # visual_claim
 GLOBAL_EVIDENCE_TRAVELRULE_VERSION   = "4.0-travelrule"   # travel_rule
 GLOBAL_EVIDENCE_MOVEMENT_VERSION     = "4.0-movement"     # movement
 GLOBAL_EVIDENCE_ACCESS_VERSION       = "4.0-access"       # access
-GLOBAL_EVIDENCE_CONTAINMENT_VERSION  = "4.0-containment"  # LOCATED_IN/CONTAINS sweep
-GLOBAL_EVIDENCE_DEDUP_VERSION        = "4.0-dedup"        # SAME_AS entity dedup
+GLOBAL_EVIDENCE_CONTAINMENT_VERSION  = "4.1-containment"  # ambiguous room parent rule
+GLOBAL_EVIDENCE_DEDUP_VERSION        = "4.1-dedup"        # archaic building names + brook pattern
 
 # ── Pass 1: Place Catalog ─────────────────────────────────────────────────────
 
@@ -432,18 +450,24 @@ CORONELLI PLACE CATALOG — Pass 1 of 2
 You are reading one section of written fiction. Your ONLY task: identify every
 named place that appears in this section, at EVERY geographic scale.
 
-SCALE HIERARCHY — work top-down, never skip a level that the text supports:
-  world      — the entire world or continent ("the Known World", "Middle-earth")
-  region     — named region, court, kingdom, territory ("the Northern Reaches", "The Shire")
-  terrain    — named landscape feature ("Enchanted Forest", "The Bog")
-  settlement — named village, town, city ("Millbrook", "the village")
-  building   — named structure or estate ("the old mill", "The Cottage")
-  interior   — named room, hall, corridor ("the parlour", "Long Hall", "Dining Room")
-  site       — named outdoor site, body of water, landmark, portal, barrier
+SPATIAL LEVEL — assign a level to every extracted place:
+  0  realm      — an entire fictional world or cosmological domain entered via threshold,
+                  dream, or magical crossing ("Wonderland", "the Land of Oz", "Neverland",
+                  "the Wizarding World"). Use ONLY when the text treats this as a distinct
+                  ontological domain, not merely a large region.
+  1  territory  — a named geographic or political zone with its own atmosphere, ruler, or
+                  logic ("the Munchkin Country", "Hertfordshire", "Sleepy Hollow",
+                  "the Northern Reaches"). A reader travels THROUGH a territory, not just to it.
+  2  place      — a named, bounded location a character arrives at or departs from
+                  ("Gringotts", "the Emerald City", "Van Tassel's farm", "the great hall").
+                  This is the default level for most extracted places.
+  3  feature    — a named detail within a place: a room, passage, threshold, landmark,
+                  or opening ("the rabbit-hole", "the third-floor corridor", "the nursery",
+                  "the trapdoor"). Too small to be a narrative destination in itself.
 
-START BIG. Always ask: "What is the largest-scale named place context for this section?"
-If the narrative is set within a named region or settlement, output that context
-FIRST, even if it is only mentioned in passing. Then output every smaller-scale place.
+START BIG. Always ask: "What is the largest-scale named spatial context for this section?"
+If the narrative is within a named realm or territory, output that context FIRST,
+even if only mentioned in passing. Then output every smaller-scale place within it.
 
 RULES:
 - Include EVERY scale level that the text names or clearly implies.
@@ -460,10 +484,13 @@ RULES:
 
 HARD EXCLUSIONS — never catalog these, no exceptions:
 
-1. CHARACTERS AND CREATURES: A person's or creature's name is never a place.
-   "the Duchess", "the Queen", "the White Rabbit", "Alice", or any character is
-   NOT a place. If a location is owned by a character, name it by what it
-   physically IS: "the Duchess's kitchen", not "the Duchess".
+1. CHARACTERS, CREATURES, AND FACTIONS: A person's, creature's, or social
+   grouping's name is never a place. No named individual, animal, or faction
+   (houses, teams, guilds, orders) is an atlas place — even if it has a named
+   seat or territory. Name the PHYSICAL location: "Gryffindor Tower" or "the
+   common room", not "Gryffindor". "the Duchess's kitchen", not "the Duchess".
+   "Tamlin's manor", not "Tamlin". If only the owner's name is given and no
+   physical space is described, skip the entry entirely.
 
 2. FURNITURE AND MOVABLE OBJECTS: Tables, chairs, mushrooms used as seats or
    surfaces, glass boxes, bottles, keys, playing cards, tea-cups, cakes, watches,
@@ -488,6 +515,8 @@ HARD EXCLUSIONS — never catalog these, no exceptions:
 
 When in doubt, EXCLUDE. A missed real place can be recovered on re-run;
 a cataloged non-place pollutes the entire evidence pipeline downstream.
+EXCEPTION: the "when in doubt" rule does NOT apply to named rooms inside a building —
+see INTERIOR COMPLETENESS below.
 
 FRAME AND TRANSITIONAL LOCATIONS — easy to miss, always required:
 If a section opens outdoors, in a transitional space, or in a "real world" frame before
@@ -496,6 +525,19 @@ A river bank, open field, hedge, doorstep, garden, courtyard, or any other space
 the action starts is as atlas-worthy as any interior room — even if the narrative moves
 elsewhere within a paragraph. Ask yourself: "Where is the protagonist at the very start
 of this section?" That place must appear in the output.
+
+INTERIOR COMPLETENESS — hard rule, always required, overrides "when in doubt":
+Any distinctly NAMED room, interior area, or attached exterior structure of a building
+MUST be cataloged, regardless of how briefly it's mentioned. Even a single sentence
+qualifies. "The 'when in doubt, EXCLUDE' rule does NOT apply here — if the text names a
+room, extract it.
+
+Named rooms that always qualify: dining-room, parlor, sitting-room, hall, porch,
+verandah/piazza, kitchen, cellar, attic, playroom, nursery, study, library.
+A staircase or passage connecting rooms is a "passage" type entity.
+
+NOT a room: a wall treatment, wallpaper, furniture, bed, or decorative object. A
+person's name is NOT a place. Only extract the physical room or space itself.
 
 Previously known places are provided for reference. Do not re-list them as new
 discoveries. If a previously known place is referenced in this section, you may
@@ -508,6 +550,7 @@ OUTPUT: valid JSON only. No markdown, no comments.
     {
       "name": "Millbrook",
       "type": "settlement",
+      "spatial_level": 2,
       "aliases": ["the village"],
       "excerpt": "the quiet village of Millbrook",
       "confidence": 0.92,
@@ -516,6 +559,7 @@ OUTPUT: valid JSON only. No markdown, no comments.
     {
       "name": "the old mill",
       "type": "building",
+      "spatial_level": 2,
       "aliases": [],
       "excerpt": "the waterwheel of the old mill",
       "confidence": 0.88,
@@ -524,12 +568,45 @@ OUTPUT: valid JSON only. No markdown, no comments.
   ]
 }
 
-type must be one of: world, region, island, settlement, landmark, building, room,
-hall, tunnel, shaft, passage, portal, door, exterior, terrain_feature,
-body_of_water, site, court, barrier
+type must be one of: world, region, island, district, settlement, grounds,
+landmark, building, hall, room, tunnel, shaft, passage, portal, door, exterior,
+terrain_feature, body_of_water, vessel, site, court, barrier
 
-is_new: true if this place is newly introduced in this section; false if it was
-in the previously-known list and is only referenced here.
+Type guidelines:
+  world         — the entire fictional setting or cosmological realm
+  region        — named large geographic or political territory
+  district      — a named urban zone or neighborhood within a settlement
+  island        — land surrounded by water (prefer over region when appropriate)
+  settlement    — named village, town, or city that is a destination in itself
+  grounds       — an estate, campus, or managed outdoor space (Pemberley estate, Hogwarts grounds)
+  building      — named structure, house, or edifice
+  hall          — a large interior gathering space or primary corridor
+  room          — a named interior chamber within a building
+  exterior      — a named outdoor area immediately adjacent to a building
+  terrain_feature — named natural landscape (forest, mountain, bog, cornfield)
+  body_of_water — river, lake, sea, pool, bay, harbor
+  tunnel        — an underground or enclosed passage
+  shaft         — a vertical passage (well, chimney, drop shaft)
+  passage       — a transitional corridor or connection between spaces
+  portal        — a threshold or magical crossing point between distinct spaces
+  door          — a named door or gate that governs access
+  vessel        — a moving location that characters inhabit (ship, train, carriage)
+  site          — a named outdoor location not covered by another type (clearing,
+                  garden, courtyard, croquet ground). Do NOT use as catch-all —
+                  if another type fits, always prefer it over site.
+  court         — a PHYSICAL court space (courtyard, throne room, castle court).
+                  Never use for social or academic groupings (houses, teams, factions).
+  landmark      — a named fixed object serving as spatial anchor (statue, crossroads,
+                  signpost). Must be physically fixed and spatially referenced.
+  barrier       — a named physical boundary (wall, hedge, gate) separating regions.
+
+spatial_level must be 0, 1, 2, or 3:
+  0 = realm (whole fictional world / cosmological domain)
+  1 = territory (named geographic or political zone)
+  2 = place (named bounded location — default for most places)
+  3 = feature (named detail within a place: room, passage, threshold)
+
+is_new: true if newly introduced in this section; false if from the previously-known list.
 
 Return {"places": []} only for non-narrative text (table of contents, copyright page).
 """
@@ -562,10 +639,21 @@ Do not soften it. Do not include it with a low confidence. Delete it.
 WHAT TO EXTRACT:
 
 1. SPATIAL CLAIMS — relationships between two catalog places.
-   Allowed predicates: CONTAINS, LOCATED_IN, LEADS_TO, OPENS_TOWARD, ADJACENT_TO,
-   NEAR, UNDER, ABOVE, DESCENDS_TO, ENDS_AT, HAS_OPENING, REACHED_FROM, SAME_AS,
-   IN_OR_ADJACENT_TO, BLOCKS_ACCESS_TO, SURROUNDED_BY,
+   Allowed predicates: CONTAINS, LOCATED_IN, PART_OF, LEADS_TO, OPENS_TOWARD,
+   ADJACENT_TO, BORDERS, NEAR, UNDER, ABOVE, DESCENDS_TO, ENDS_AT, HAS_OPENING,
+   REACHED_FROM, SAME_AS, IN_OR_ADJACENT_TO, BLOCKS_ACCESS_TO, SURROUNDED_BY,
+   PORTAL_TO, VISIBLE_FROM,
    NORTH_OF, SOUTH_OF, EAST_OF, WEST_OF, NORTHEAST_OF, NORTHWEST_OF, SOUTHEAST_OF, SOUTHWEST_OF.
+
+   New predicate guidance:
+   PART_OF        — structural/intrinsic containment (a chimney is PART_OF a house;
+                    a wing is PART_OF a castle). More specific than LOCATED_IN;
+                    use when the contained place is a literal structural part.
+   BORDERS        — two territories share a named boundary (use for level-1 territories).
+   PORTAL_TO      — a threshold, door, or magical object that crosses into a distinct
+                    realm or space on the other side (the rabbit-hole PORTAL_TO Wonderland;
+                    Platform 9¾ PORTAL_TO the Hogwarts Express platform).
+   VISIBLE_FROM   — a place is explicitly described as visible from another catalog place.
 
    CONTAINS: valid only when both container and contained are catalog places.
    HAS_OPENING: valid only when the opening (door, window) is itself a catalog place.
@@ -741,6 +829,9 @@ RULES:
   — Do NOT invent places not in the catalog.
   — Prefer LOCATED_IN (child inside parent) over CONTAINS (parent holds child);
     emit one direction per pair, not both.
+  — When a room/hall entry has an ambiguous parent, choose the most prominent building
+    entity in the catalog. A work's dominant setting (the mansion, the manor, the schoolhouse)
+    is the default parent for any interior room that has no more specific parent.
 
 OUTPUT: valid JSON only. No markdown, no comments.
 {
@@ -773,13 +864,16 @@ Use the more specific or formal name as subject; the shorter/vaguer name as obje
 
 EXAMPLES OF VALID SAME_AS:
   — "Van Tassel's mansion" and "Van Tassel's" → SAME_AS (same building, two names)
+  — "castle of [person]" and "[person]'s mansion" → SAME_AS when the work has one primary building for that person
   — "the house" and "John's house" → SAME_AS (narrator's one house referred to two ways)
   — "Greensburgh" and "Tarry Town" → SAME_AS only if the text equates them
   — "the schoolroom" and "the schoolhouse" → SAME_AS (same building)
+  — "the brook" and "the neighboring brook" → SAME_AS only if clearly the same watercourse viewed from two positions; skip if they are genuinely distinct brooks
 
 DO NOT emit SAME_AS for:
   — Places that are merely related (a room inside a house is NOT SAME_AS the house)
   — Places that are merely near each other
+  — A paling / fence / enclosure and the building it encloses — these are distinct structures
   — Any pair where you are not confident they are the exact same physical location
 
 OUTPUT: valid JSON only. No markdown, no comments.
@@ -817,14 +911,23 @@ creature, or any non-place — DISCARD the claim entirely.
 ══════════════════════════════════════════════════════════════
 
 PREDICATES:
-  Containment  : CONTAINS, LOCATED_IN, SURROUNDED_BY, IN_OR_ADJACENT_TO
+  Containment  : CONTAINS, LOCATED_IN, PART_OF, SURROUNDED_BY, IN_OR_ADJACENT_TO
   Directional  : LEADS_TO, OPENS_TOWARD, DESCENDS_TO, ENDS_AT,
-                 HAS_OPENING, BLOCKS_ACCESS_TO, CONNECTS_TO
-  Proximity    : ADJACENT_TO, NEAR
+                 HAS_OPENING, BLOCKS_ACCESS_TO, PORTAL_TO
+  Proximity    : ADJACENT_TO, BORDERS, NEAR, VISIBLE_FROM, ON_BANK_OF
   Identity     : SAME_AS  (two catalog entries are the same place)
   Reach        : REACHED_FROM  (journey narrated, route unspecified)
   Compass      : NORTH_OF, SOUTH_OF, EAST_OF, WEST_OF,
                  NORTHEAST_OF, NORTHWEST_OF, SOUTHEAST_OF, SOUTHWEST_OF
+
+  PART_OF     — structural containment (a chimney is PART_OF a house; more specific than LOCATED_IN)
+  BORDERS     — two territories share a boundary (level-1 territories only)
+  PORTAL_TO   — threshold or object that crosses into a distinct realm or space
+  VISIBLE_FROM — a place explicitly described as visible from another catalog place
+  ON_BANK_OF  — a land place sits on the bank, shore, or waterfront edge of a body of water.
+                 Use this instead of LOCATED_IN when the text says "on the bank of", "along the
+                 banks of", "on the shore of", "sitting on the edge of", "at the water's edge",
+                 or similar. The land place is NOT inside the water — it borders it.
 
 CONTAINMENT CHECKLIST — ask for every catalog place in this section:
   □ Is every room / hall / interior marked LOCATED_IN its parent building?
@@ -836,8 +939,17 @@ CONTAINMENT CHECKLIST — ask for every catalog place in this section:
 PROXIMITY CHECKLIST — scan for phrases:
   "not far from", "a few miles from", "near", "beyond", "past",
   "visible from", "overlooking", "on the outskirts of", "bordering",
-  "a short ride from", "a stone's throw", "on the way to", "lies between"
+  "a short ride from", "a stone's throw", "on the way to", "lies between",
+  "by the side of", "beside", "next to", "at the edge of", "at the foot of",
+  "adjoining", "flanking", "hard by", "close by", "skirting"
   Each such phrase between two catalog places → NEAR or ADJACENT_TO claim.
+  "by the side of X" and "beside X" → subject ADJACENT_TO X (not merely NEAR).
+
+WATERFRONT CHECKLIST — when a land place is described as sitting beside a body of water:
+  "on the bank of", "along the banks of", "on the shore of", "at the water's edge",
+  "overlooking the river", "perched above the stream", "fronting the bay"
+  → emit ON_BANK_OF (NOT LOCATED_IN — the land place is beside the water, not inside it)
+  Example: Van Tassel's mansion sits on the bank of the Hudson → mansion ON_BANK_OF Hudson
 
 SAME_AS CHECKLIST — scan for:
   Any passage that equates two catalog entries as the same physical place → SAME_AS.

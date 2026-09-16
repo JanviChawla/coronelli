@@ -16,12 +16,16 @@ _ALLOWED_PREDICATES = frozenset({
     "SURROUNDED_BY",
     # Identity / provenance
     "REACHED_FROM", "SAME_AS",
+    # Spatial hierarchy (3.3+)
+    "PART_OF", "BORDERS", "PORTAL_TO", "VISIBLE_FROM",
 })
 
 _ALLOWED_ENTITY_TYPES = frozenset({
     "world", "region", "island", "settlement", "landmark", "building", "room", "hall",
     "tunnel", "shaft", "passage", "portal", "door", "exterior", "terrain_feature",
     "body_of_water", "site", "court", "barrier",
+    # Added in 3.3
+    "district", "grounds", "vessel",
 })
 
 _NON_SPATIAL_PREFIX_RE = re.compile(
@@ -107,7 +111,7 @@ def validate_candidate_payload(kind: str, payload: dict) -> None:
         category = (payload.get("category") or "").strip().lower()
         _ALLOWED_VISUAL_CATEGORIES = frozenset({
             "architecture", "terrain", "light", "weather",
-            "color", "material", "scale", "atmosphere", "other",
+            "color", "material", "texture", "scale", "atmosphere", "decay", "other",
         })
         if category not in _ALLOWED_VISUAL_CATEGORIES:
             raise ValueError(

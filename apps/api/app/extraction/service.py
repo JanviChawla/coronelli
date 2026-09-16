@@ -361,6 +361,7 @@ def run_evidence_extraction(
     provider,
     global_catalog: list[dict],
     force: bool = False,
+    pre_created_run_id: str | None = None,
 ) -> tuple["ExtractionRun", list["Candidate"], bool]:
     """Global evidence pass: extracts claims/visual/routes using the full global catalog."""
     section = session.get(SourceSection, section_id)
@@ -424,8 +425,13 @@ def run_evidence_extraction(
         ).update({"status": "superseded"}, synchronize_session=False)
         session.flush()
 
-    run = _make_run(session, section_id, content_hash)
-    session.commit()  # visible to progress polling immediately
+    if pre_created_run_id:
+        run = session.get(ExtractionRun, pre_created_run_id)
+        if run is None:
+            raise ExtractionError(f"Pre-created run '{pre_created_run_id}' not found.")
+    else:
+        run = _make_run(session, section_id, content_hash)
+        session.commit()  # visible to progress polling immediately
 
     def _phase_callback(phase: str) -> None:
         run.current_phase = phase
