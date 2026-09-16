@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { CandidatesTable } from '../candidates/CandidatesTable'
-import { type Candidate, fetchCandidates } from '../candidates/candidateApi'
-import { fetchPreflight, triggerCatalogExtraction, triggerEvidenceExtraction } from './extractionApi'
+import { type Candidate, fetchCandidates, fetchDocumentEntityCandidates, patchCandidateReviewState } from '../candidates/candidateApi'
+import { fetchPreflight, triggerCatalogExtraction, triggerEvidenceExtraction, getExtractionProgress } from './extractionApi'
 import type { Document, Section } from './sourceApi'
 import { resectionDocument } from './sourceApi'
 import { fetchAtlas } from '../atlas/atlasApi'
@@ -20,7 +20,16 @@ interface Props {
   onDelete?: () => void
 }
 
-type Phase = 'preflight' | 'ready' | 'extracting' | 'harvested' | 'synthesizing' | 'done' | 'error'
+type Phase =
+  | 'preflight'
+  | 'ready'
+  | 'cataloging'
+  | 'catalog-review'
+  | 'extracting'
+  | 'inspecting'
+  | 'synthesizing'
+  | 'done'
+  | 'error'
 
 // ── Step chrome ───────────────────────────────────────────────────────────────
 
@@ -163,6 +172,35 @@ function RerunCard({ label, costLo, costHi, meta, action, onAction }: {
   )
 }
 
+// Sub-pass dot indicator used in both evidence-extracting and synthesis progress
+function SubPassDot({ done, active }: { done: boolean; active: boolean }) {
+  return (
+    <div style={{
+      width: '1.35rem', height: '1.35rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.05rem',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.45rem',
+      ...(done
+        ? { background: 'radial-gradient(circle at 40% 35%, #7a3528, #3d1208)', boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3)', color: 'rgba(240,215,190,0.8)' }
+        : active
+          ? { background: 'var(--step-active-circle)', color: '#fff' }
+          : { border: '1.5px solid var(--gold)', color: 'var(--gold)' }
+      ),
+    }} className={active ? 'step-processing' : ''}>
+      {done ? '✦' : ''}
+    </div>
+  )
+}
+
+// ── Evidence sub-passes definition ────────────────────────────────────────────
+const EVIDENCE_SUBPASSES: Array<{ key: string; label: string; detail: string }> = [
+  { key: 'spatial',     label: 'Spatial claims',     detail: 'LOCATED_IN, CONTAINS, NEAR, ADJACENT_TO' },
+  { key: 'visual',      label: 'Visual observations', detail: 'Appearance, atmosphere, color, material, scale' },
+  { key: 'routes',      label: 'Travel rules',        detail: 'Traversal routes and paths' },
+  { key: 'movement',    label: 'Movement',            detail: 'Narrated journeys and travel arcs' },
+  { key: 'access',      label: 'Access rules',        detail: 'Permitted, prohibited, conditional entry' },
+  { key: 'containment', label: 'Containment sweep',   detail: 'Hierarchical parent–child topology' },
+  { key: 'dedup',       label: 'Entity dedup',        detail: 'SAME_AS merge hints between aliases' },
+]
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function SourceWorkflow({ document, sections, onEditSections, onSectionsChanged, onAtlasChanged, onViewAtlas, onEdit, onDelete }: Props) {
@@ -184,16 +222,23 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
   const [atlasTravelRules, setAtlasTravelRules] = useState<AtlasTravelRule[]>([])
   const [synthElapsedMs, setSynthElapsedMs] = useState(0)
   const [synthPhase, setSynthPhase] = useState<string | null>(null)
-  const [harvestPass, setHarvestPass] = useState<1 | 2>(1)
   const [catalogEntityCount, setCatalogEntityCount] = useState(0)
+  const [entityCandidates, setEntityCandidates] = useState<Candidate[]>([])
+  const [rejectedCandidateIds, setRejectedCandidateIds] = useState<Set<string>>(new Set())
+  const [evidenceSubPhase, setEvidenceSubPhase] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const synthPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const evidencePollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     if (!sections.length) return
     initWorkflow()
-    return () => { if (timerRef.current) clearInterval(timerRef.current) }
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+      if (evidencePollRef.current) clearInterval(evidencePollRef.current)
+      if (synthPollRef.current) clearInterval(synthPollRef.current)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [document.id, sections.length])
 
@@ -209,7 +254,6 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
           total += bySection[s.id].length
         }))
         // Only treat as done if candidates exist on current sections.
-        // If sections were re-prepared, candidates will be 0 and atlas is stale.
         if (total > 0) {
           setCanonicalEntityCount(atlas.entity_count)
           setCanonicalClaimCount(atlas.claim_count)
@@ -225,7 +269,6 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
           setPhase('done')
           return
         }
-        // Atlas is stale (sections re-prepared) — fall through to check for candidates
       }
     } catch { /* no atlas yet */ }
 
@@ -236,15 +279,14 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
         bySection[s.id] = await fetchCandidates(s.id)
         total += bySection[s.id].length
       }))
-      // Only treat as "harvested" if evidence candidates exist (non-entity kinds)
-      // Catalog-only pass produces entity candidates; evidence pass produces the rest.
+      // Only treat as "inspecting" if evidence candidates exist (non-entity kinds)
       const evidenceCount = Object.values(bySection).reduce(
         (sum, cands) => sum + cands.filter(c => c.kind !== 'entity').length, 0
       )
       if (evidenceCount > 0) {
         setAllCandidates(bySection)
         setTotalCandidates(total)
-        setPhase('harvested')
+        setPhase('inspecting')
         return
       }
     } catch { /* no candidates yet */ }
@@ -265,20 +307,19 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
     setPhase('ready')
   }
 
+  // Pass 1: catalog all sections, then show entity review
   async function handleHarvest(force = false) {
-    setPhase('extracting')
-    setHarvestPass(1)
+    setPhase('cataloging')
     setCurrentIdx(0)
-    setCandidatesSoFar(0)
     setCatalogEntityCount(0)
     setWorkflowError(null)
-    setAllCandidates({})
+    setEntityCandidates([])
+    setRejectedCandidateIds(new Set())
 
     const startTime = Date.now()
     timerRef.current = setInterval(() => setElapsedMs(Date.now() - startTime), 100)
 
     try {
-      // ── Pass 1: Global pre-pass — catalog all sections ─────────────────────
       let entityTotal = 0
       for (let i = 0; i < sections.length; i++) {
         setCurrentIdx(i + 1)
@@ -288,15 +329,64 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
         setCatalogEntityCount(entityTotal)
       }
 
-      // ── Pass 2: Global evidence pass — extract using full entity list ───────
-      setHarvestPass(2)
-      setCurrentIdx(0)
+      if (timerRef.current) clearInterval(timerRef.current)
+
+      // Fetch entity candidates for review
+      const entities = await fetchDocumentEntityCandidates(document.id)
+      setEntityCandidates(entities)
+      setPhase('catalog-review')
+    } catch (e) {
+      if (timerRef.current) clearInterval(timerRef.current)
+      setWorkflowError(e instanceof Error ? e.message : 'Catalog extraction failed.')
+      setErrorInStep(3)
+      setPhase('error')
+    }
+  }
+
+  function toggleReject(id: string) {
+    setRejectedCandidateIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // Pass 2: patch rejections then run evidence sub-passes
+  async function handleSubmitCatalogReview() {
+    // Persist rejections to the backend
+    if (rejectedCandidateIds.size > 0) {
+      await Promise.all(
+        [...rejectedCandidateIds].map(id => patchCandidateReviewState(id, 'rejected'))
+      )
+    }
+
+    setPhase('extracting')
+    setCurrentIdx(0)
+    setCandidatesSoFar(0)
+    setEvidenceSubPhase(null)
+    setAllCandidates({})
+
+    const startTime = Date.now()
+    timerRef.current = setInterval(() => setElapsedMs(Date.now() - startTime), 100)
+
+    try {
       let total = 0
       for (let i = 0; i < sections.length; i++) {
         setCurrentIdx(i + 1)
         setCurrentTitle(sections[i].title)
-        // Evidence pass never uses force — catalog already wiped old data if force=true
-        const result = await triggerEvidenceExtraction(sections[i].id, false)
+        setEvidenceSubPhase(null)
+
+        const sectionId = sections[i].id
+        evidencePollRef.current = setInterval(async () => {
+          try {
+            const prog = await getExtractionProgress(sectionId)
+            if (prog.current_phase) setEvidenceSubPhase(prog.current_phase)
+          } catch { /* ignore transient poll errors */ }
+        }, 1500)
+
+        const result = await triggerEvidenceExtraction(sectionId, false)
+        if (evidencePollRef.current) clearInterval(evidencePollRef.current)
         total += result.candidates.length
         setCandidatesSoFar(total)
       }
@@ -312,10 +402,11 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
       }))
       setAllCandidates(bySection)
       setTotalCandidates(grandTotal)
-      setPhase('harvested')
+      setPhase('inspecting')
     } catch (e) {
       if (timerRef.current) clearInterval(timerRef.current)
-      setWorkflowError(e instanceof Error ? e.message : 'Extraction failed. Check your API key.')
+      if (evidencePollRef.current) clearInterval(evidencePollRef.current)
+      setWorkflowError(e instanceof Error ? e.message : 'Evidence extraction failed.')
       setErrorInStep(3)
       setPhase('error')
     }
@@ -327,7 +418,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
     setSynthPhase(null)
     const synthStart = Date.now()
     timerRef.current = setInterval(() => setSynthElapsedMs(Date.now() - synthStart), 100)
-    // Poll the progress endpoint every 2 s so phase labels update in real time
+    // Poll the progress endpoint every 2s so phase labels update in real time
     synthPollRef.current = setInterval(async () => {
       try {
         const prog = await getSynthesisProgress(document.id)
@@ -358,13 +449,12 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
     try {
       const newSections = await resectionDocument(document.id)
       onSectionsChanged?.(newSections)
-      // initWorkflow re-runs via useEffect when sections.length changes
     } catch (e) {
       setWorkflowError(e instanceof Error ? e.message : 'Re-prepare failed.')
     }
   }
 
-  const step3Done = phase === 'harvested' || phase === 'synthesizing' || phase === 'done' || (phase === 'error' && errorInStep === 4)
+  const step3Done = phase === 'inspecting' || phase === 'synthesizing' || phase === 'done' || (phase === 'error' && errorInStep === 4)
   const step4Done = phase === 'done'
   const step3Error = phase === 'error' && errorInStep === 3
   const step4Error = phase === 'error' && errorInStep === 4
@@ -379,6 +469,20 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
   const synthCostBase = (synthInputTokens / 1_000_000) * 0.15 + (synthOutputTokens / 1_000_000) * 0.60
   const synthCostLo = synthCostBase * 0.85
   const synthCostHi = synthCostBase * 1.15
+
+  // Entity review helpers
+  const uniqueEntityCandidates = entityCandidates.filter((c, idx, self) =>
+    idx === self.findIndex(x => (x.payload as Record<string, unknown>).name === (c.payload as Record<string, unknown>).name)
+  )
+  const rejectedCount = rejectedCandidateIds.size
+  const approvedCount = uniqueEntityCandidates.length - rejectedCount
+
+  // Candidate kind counts for inspection panel
+  const allCandidatesList = Object.values(allCandidates).flat()
+  const kindCounts = allCandidatesList.reduce<Record<string, number>>((acc, c) => {
+    acc[c.kind] = (acc[c.kind] ?? 0) + 1
+    return acc
+  }, {})
 
   return (
     <div style={{ maxWidth: '720px', margin: '0 auto' }}>
@@ -527,52 +631,223 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
           <p role="alert" style={{ color: 'var(--error-text)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
             {workflowError}
           </p>
-          <button className="btn-cta" style={{ maxWidth: '200px' }} type="button" onClick={handleHarvest}>
+          <button className="btn-cta" style={{ maxWidth: '200px' }} type="button" onClick={() => handleHarvest()}>
             Retry
           </button>
         </StepActive>
-      ) : phase === 'extracting' ? (
+      ) : phase === 'cataloging' ? (
+        // ── Pass 1 running: per-section catalog progress ───────────
         <StepActive n={3} label="Harvest evidence" processing>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', marginTop: '0.25rem' }}>
-            {/* Pass 1 */}
-            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', opacity: harvestPass > 1 ? 0.55 : 1, transition: 'opacity 0.4s' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
               <div style={{
                 width: '1.35rem', height: '1.35rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.05rem',
-                ...(harvestPass > 1
-                  ? { background: 'radial-gradient(circle at 40% 35%, #7a3528, #3d1208)', boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(240,215,190,0.8)', fontSize: '0.45rem' }
-                  : { background: 'var(--step-active-circle)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '0.55rem' }
-                ),
-              }} className={harvestPass === 1 ? 'step-processing' : ''}>
-                {harvestPass > 1 ? '✦' : 'I'}
+                background: 'var(--step-active-circle)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: '#fff', fontSize: '0.55rem',
+              }} className="step-processing">
+                I
               </div>
               <div>
                 <div style={{ fontSize: '0.9rem', color: 'var(--ink)', fontWeight: 500 }}>Pass 1 — Finding places</div>
                 <div style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '0.15rem' }}>
-                  {harvestPass === 1
-                    ? <>§{currentIdx} of {sections.length}{currentTitle ? <> · <em>{currentTitle}</em></> : ''}</>
-                    : <>{catalogEntityCount} place{catalogEntityCount !== 1 ? 's' : ''} identified across {sections.length} sections</>
-                  }
+                  §{currentIdx} of {sections.length}{currentTitle ? <> · <em>{currentTitle}</em></> : ''} · {catalogEntityCount} place{catalogEntityCount !== 1 ? 's' : ''} found
                 </div>
               </div>
             </div>
-            {/* Pass 2 */}
-            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', opacity: harvestPass < 2 ? 0.38 : 1, transition: 'opacity 0.4s' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', opacity: 0.38 }}>
               <div style={{
                 width: '1.35rem', height: '1.35rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.05rem',
-                border: harvestPass < 2 ? '1.5px solid var(--gold)' : undefined,
-                background: harvestPass >= 2 ? 'var(--step-active-circle)' : undefined,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: harvestPass >= 2 ? '#fff' : 'var(--gold)', fontSize: '0.55rem',
-              }} className={harvestPass === 2 ? 'step-processing' : ''}>
-                {harvestPass >= 2 ? 'II' : ''}
+                border: '1.5px solid var(--gold)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: 'var(--gold)', fontSize: '0.55rem',
+              }}>
               </div>
               <div>
                 <div style={{ fontSize: '0.9rem', color: 'var(--ink)', fontWeight: 500 }}>Pass 2 — Gathering evidence</div>
                 <div style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '0.15rem' }}>
-                  {harvestPass === 2
-                    ? <>§{currentIdx} of {sections.length}{currentTitle ? <> · <em>{currentTitle}</em></> : ''} · {candidatesSoFar} fragment{candidatesSoFar !== 1 ? 's' : ''}</>
-                    : <>7 focused passes: claims, routes, visuals, movement, access, containment, dedup</>
-                  }
+                  7 focused passes: spatial, visual, routes, movement, access, containment, dedup
+                </div>
+              </div>
+            </div>
+          </div>
+          <p style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '1rem', fontFamily: 'monospace' }}>
+            {(elapsedMs / 1000).toFixed(1)}s elapsed
+          </p>
+        </StepActive>
+      ) : phase === 'catalog-review' ? (
+        // ── Catalog review: approve / reject entity list ───────────
+        <StepActive n={3} label="Harvest evidence">
+          <p style={{ fontSize: '0.92rem', color: 'var(--ink-muted)', marginTop: '0.25rem', marginBottom: '0.75rem', lineHeight: 1.55 }}>
+            Pass 1 found <strong style={{ color: 'var(--ink)' }}>{uniqueEntityCandidates.length}</strong> place{uniqueEntityCandidates.length !== 1 ? 's' : ''} across {sections.length} section{sections.length !== 1 ? 's' : ''}.
+            Reject any that are not real locations before running evidence passes.
+          </p>
+
+          {/* Entity list */}
+          <div style={{
+            border: '1px solid var(--border-warm)',
+            borderRadius: '6px',
+            background: 'var(--parchment-card)',
+            overflow: 'hidden',
+            marginBottom: '0.85rem',
+          }}>
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '0.55rem 0.9rem',
+              borderBottom: '1px solid var(--border-warm)',
+              fontSize: '0.72rem', color: 'var(--ink-muted)', letterSpacing: '0.12em', textTransform: 'uppercase',
+            }}>
+              <span>{approvedCount} approved · {rejectedCount} rejected</span>
+              <span>Click to reject / restore</span>
+            </div>
+            <div style={{ maxHeight: '22rem', overflowY: 'auto' }}>
+              {uniqueEntityCandidates.map((c) => {
+                const name = String((c.payload as Record<string, unknown>).name ?? '')
+                const type = String((c.payload as Record<string, unknown>).type ?? '')
+                const isRejected = rejectedCandidateIds.has(c.id)
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => toggleReject(c.id)}
+                    style={{
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.65rem',
+                      padding: '0.45rem 0.9rem',
+                      background: 'none',
+                      border: 'none',
+                      borderBottom: '1px solid rgba(212,188,138,0.15)',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      opacity: isRejected ? 0.42 : 1,
+                      transition: 'opacity 0.15s, background 0.15s',
+                    }}
+                  >
+                    <span style={{
+                      width: '1.1rem', height: '1.1rem', borderRadius: '50%', flexShrink: 0,
+                      border: isRejected ? '1.5px solid rgba(180,60,60,0.5)' : '1.5px solid var(--gold)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: '0.5rem',
+                      color: isRejected ? 'rgba(180,60,60,0.7)' : 'var(--gold)',
+                    }}>
+                      {isRejected ? '✕' : '◉'}
+                    </span>
+                    <span style={{ flex: 1, fontSize: '0.9rem', color: isRejected ? 'var(--ink-faint)' : 'var(--ink)', textDecoration: isRejected ? 'line-through' : 'none' }}>
+                      {name}
+                    </span>
+                    {type && (
+                      <span style={{ fontSize: '0.68rem', color: 'var(--ink-faint)', flexShrink: 0 }}>{type}</span>
+                    )}
+                    <span style={{ fontSize: '0.72rem', color: 'var(--gold)', opacity: 0.65, flexShrink: 0 }}>
+                      {(c.confidence * 100).toFixed(0)}%
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <button
+            className="btn-cta"
+            type="button"
+            onClick={handleSubmitCatalogReview}
+          >
+            Submit & run evidence passes →
+          </button>
+        </StepActive>
+      ) : phase === 'extracting' ? (
+        // ── Pass 2 running: per-section + per-sub-pass progress ───────────
+        <StepActive n={3} label="Harvest evidence" processing>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', marginTop: '0.25rem' }}>
+            {/* Pass 1 done */}
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', opacity: 0.55 }}>
+              <div style={{
+                width: '1.35rem', height: '1.35rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.05rem',
+                background: 'radial-gradient(circle at 40% 35%, #7a3528, #3d1208)',
+                boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: 'rgba(240,215,190,0.8)', fontSize: '0.45rem',
+              }}>
+                ✦
+              </div>
+              <div>
+                <div style={{ fontSize: '0.9rem', color: 'var(--ink)', fontWeight: 500 }}>Pass 1 — Finding places</div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '0.15rem' }}>
+                  {catalogEntityCount} place{catalogEntityCount !== 1 ? 's' : ''} · {uniqueEntityCandidates.length - rejectedCount} approved
+                </div>
+              </div>
+            </div>
+
+            {/* Pass 2 active */}
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+              <div style={{
+                width: '1.35rem', height: '1.35rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.05rem',
+                background: 'var(--step-active-circle)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: '#fff', fontSize: '0.55rem',
+              }} className="step-processing">
+                II
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '0.9rem', color: 'var(--ink)', fontWeight: 500 }}>
+                  Pass 2 — Gathering evidence
+                  <span style={{ fontWeight: 400, color: 'var(--ink-faint)', marginLeft: '0.5rem', fontSize: '0.78rem' }}>
+                    §{currentIdx} of {sections.length}{currentTitle ? <> · <em>{currentTitle}</em></> : ''}
+                  </span>
+                </div>
+                {/* 7 sub-pass progress matrix */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem', marginTop: '0.55rem' }}>
+                  {(() => {
+                    const activeIdx = EVIDENCE_SUBPASSES.findIndex(p => p.key === evidenceSubPhase)
+                    return EVIDENCE_SUBPASSES.map((sp, i) => {
+                      const done = activeIdx > i
+                      const active = activeIdx === i
+                      const locked = activeIdx < i && activeIdx >= 0
+                      const waiting = activeIdx < 0
+                      return (
+                        <div
+                          key={sp.key}
+                          title={sp.detail}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '0.3rem',
+                            padding: '0.2rem 0.55rem',
+                            borderRadius: '3px',
+                            fontSize: '0.72rem',
+                            border: done
+                              ? '1px solid rgba(122,53,40,0.4)'
+                              : active
+                                ? '1px solid var(--gold)'
+                                : '1px solid rgba(212,188,138,0.25)',
+                            background: done
+                              ? 'rgba(122,53,40,0.12)'
+                              : active
+                                ? 'rgba(212,188,138,0.15)'
+                                : 'transparent',
+                            color: done
+                              ? 'rgba(122,53,40,0.9)'
+                              : active
+                                ? 'var(--ink)'
+                                : 'var(--ink-faint)',
+                            opacity: (locked || waiting) ? 0.4 : 1,
+                            transition: 'all 0.3s',
+                          }}
+                        >
+                          {done && <span style={{ fontSize: '0.5rem' }}>✦</span>}
+                          {active && (
+                            <span style={{
+                              width: '0.45rem', height: '0.45rem', borderRadius: '50%',
+                              background: 'var(--gold)', display: 'inline-block',
+                              animation: 'pulse 1s ease-in-out infinite',
+                            }} />
+                          )}
+                          {sp.label}
+                        </div>
+                      )
+                    })
+                  })()}
+                </div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '0.45rem' }}>
+                  {candidatesSoFar} fragment{candidatesSoFar !== 1 ? 's' : ''} collected
                 </div>
               </div>
             </div>
@@ -616,7 +891,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
             {document.original_filename} · {sections.length} section{sections.length !== 1 ? 's' : ''} · OpenAI
             {cachedCount > 0 && ` · ${cachedCount} cached`}
           </p>
-          <button className="btn-cta" type="button" onClick={handleHarvest}>
+          <button className="btn-cta" type="button" onClick={() => handleHarvest()}>
             Harvest evidence
           </button>
         </StepActive>
@@ -754,27 +1029,16 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
               { key: 'access',   label: 'Access rules',         detail: 'Permitted, prohibited, and conditional entry' },
               { key: 'movement', label: 'Movement',             detail: 'Narrated journeys and character travel arcs' },
             ]
-            const currentIdx = SYNTH_PHASES.findIndex(p => p.key === synthPhase)
+            const currentSynthIdx = SYNTH_PHASES.findIndex(p => p.key === synthPhase)
             return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem', marginTop: '0.25rem' }}>
                 {SYNTH_PHASES.map((p, i) => {
-                  const done = currentIdx > i
-                  const active = currentIdx === i
-                  const locked = currentIdx < i
+                  const done = currentSynthIdx > i
+                  const active = currentSynthIdx === i
+                  const locked = currentSynthIdx < i
                   return (
                     <div key={p.key} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', opacity: locked ? 0.35 : done ? 0.55 : 1, transition: 'opacity 0.4s' }}>
-                      <div style={{
-                        width: '1.35rem', height: '1.35rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.05rem',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.45rem',
-                        ...(done
-                          ? { background: 'radial-gradient(circle at 40% 35%, #7a3528, #3d1208)', boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3)', color: 'rgba(240,215,190,0.8)' }
-                          : active
-                            ? { background: 'var(--step-active-circle)', color: '#fff' }
-                            : { border: '1.5px solid var(--gold)', color: 'var(--gold)' }
-                        ),
-                      }} className={active ? 'step-processing' : ''}>
-                        {done ? '✦' : ''}
-                      </div>
+                      <SubPassDot done={done} active={active} />
                       <div>
                         <div style={{ fontSize: '0.88rem', color: 'var(--ink)', fontWeight: active ? 600 : 400 }}>{p.label}</div>
                         <div style={{ fontSize: '0.75rem', color: 'var(--ink-faint)', marginTop: '0.1rem' }}>{p.detail}</div>
@@ -789,14 +1053,52 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
             {(synthElapsedMs / 1000).toFixed(1)}s elapsed
           </p>
         </StepActive>
-      ) : phase === 'harvested' ? (
+      ) : phase === 'inspecting' ? (
+        // ── Candidate inspection before synthesize ────────────────────
         <StepActive n={4} label="Synthesize atlas">
-          <p style={{ fontSize: '0.95rem', color: 'var(--ink-muted)', marginTop: '0.5rem', marginBottom: '1.25rem', lineHeight: 1.6 }}>
+          <p style={{ fontSize: '0.95rem', color: 'var(--ink-muted)', marginTop: '0.5rem', marginBottom: '1rem', lineHeight: 1.6 }}>
             Six focused passes over {totalCandidates} evidence fragment{totalCandidates !== 1 ? 's' : ''}:
             Pass 1 consolidates all entity candidates into a canonical place list,
             then 5 targeted passes synthesize spatial claims, visual observations,
             routes, access rules, and movement — one kind per call.
           </p>
+
+          {/* Candidate summary by kind */}
+          {Object.keys(kindCounts).length > 0 && (
+            <div style={{
+              display: 'flex', flexWrap: 'wrap', gap: '0.45rem',
+              marginBottom: '0.85rem',
+            }}>
+              {Object.entries(kindCounts)
+                .sort(([, a], [, b]) => b - a)
+                .map(([kind, count]) => (
+                  <div key={kind} style={{
+                    padding: '0.2rem 0.6rem',
+                    borderRadius: '3px',
+                    border: '1px solid var(--border-warm)',
+                    background: 'var(--parchment-card)',
+                    fontSize: '0.75rem',
+                    color: 'var(--ink-muted)',
+                  }}>
+                    <span style={{ color: 'var(--ink)', fontVariantNumeric: 'tabular-nums' }}>{count}</span>
+                    {' '}
+                    <span style={{ color: 'var(--ink-faint)' }}>{kind}</span>
+                  </div>
+                ))}
+            </div>
+          )}
+
+          {/* Inspect raw candidates */}
+          <details style={{ marginBottom: '1rem' }}>
+            <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none', marginBottom: '0.5rem' }}>
+              Inspect raw candidates ({totalCandidates})
+            </summary>
+            <CandidatesTable
+              sections={sections.map(s => ({ id: s.id, title: s.title }))}
+              candidates={allCandidates}
+            />
+          </details>
+
           <div style={{
             borderTop: '1px solid rgba(212, 188, 138, 0.5)',
             borderBottom: '1px solid rgba(212, 188, 138, 0.5)',
