@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.db.models import SourceSection
 from app.domain.world import MapClaim, MapEntity, MapTravelRule
 from app.extraction.models import Candidate
-from app.extraction.prompts import GLOBAL_CATALOG_VERSION, GLOBAL_EVIDENCE_VERSION
+from app.extraction.prompts import GLOBAL_CATALOG_VERSION, GLOBAL_CATALOG_GAP_VERSION, GLOBAL_EVIDENCE_VERSION
 from app.synthesis.models import SynthesisItem, SynthesisRun
 from app.synthesis.prompts import THREE_PASS_SYNTHESIS_VERSION
 from app.synthesis.provider import SynthesisProvider
@@ -57,6 +57,17 @@ def _build_evidence_ledger(session: Session, document_id: str) -> list[dict]:
             .first()
         )
 
+        # Also collect all gap pass runs for this section
+        gap_runs = (
+            session.query(ExtractionRun)
+            .filter(
+                ExtractionRun.section_id == section.id,
+                ExtractionRun.status == "completed",
+                ExtractionRun.prompt_version == GLOBAL_CATALOG_GAP_VERSION,
+            )
+            .all()
+        )
+
         run_ids: list[str] = []
         if catalog_run or evidence_run:
             # New global two-pass — union entity + evidence candidates
@@ -64,6 +75,8 @@ def _build_evidence_ledger(session: Session, document_id: str) -> list[dict]:
                 run_ids.append(catalog_run.id)
             if evidence_run:
                 run_ids.append(evidence_run.id)
+            for gap_run in gap_runs:
+                run_ids.append(gap_run.id)
         else:
             # Legacy single-run — use most recent completed run
             legacy_run = (

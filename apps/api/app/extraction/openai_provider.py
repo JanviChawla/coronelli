@@ -13,6 +13,7 @@ from app.extraction.prompts import (
     PROMPT_VERSION, SYSTEM_PROMPT, USER_TEMPLATE,
     COMBINED_PROMPT_VERSION,
     CATALOG_SYSTEM_PROMPT, CATALOG_USER_TEMPLATE,
+    CATALOG_GAP_SYSTEM_PROMPT, CATALOG_GAP_USER_TEMPLATE,
     EVIDENCE_SYSTEM_PROMPT, EVIDENCE_USER_TEMPLATE,
     GLOBAL_CATALOG_VERSION, GLOBAL_EVIDENCE_VERSION,
     EVIDENCE_SUBPASS_USER_TEMPLATE,
@@ -423,6 +424,87 @@ class OpenAIExtractionProvider:
             provider="openai",
             model=self._model,
             prompt_version=GLOBAL_CATALOG_VERSION,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+
+    def extract_catalog_gap(
+        self,
+        section: SourceSection,
+        already_found: list[dict],
+    ) -> ExtractionResult:
+        """Gap pass: re-read section with already-found entities as context, find missed places."""
+        gap_user = CATALOG_GAP_USER_TEMPLATE.format(
+            section_order=section.ordinal,
+            title=section.title or "(untitled)",
+            text=section.text or "",
+            already_found_json=json.dumps(already_found, ensure_ascii=False),
+        )
+        resp = self._client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": CATALOG_GAP_SYSTEM_PROMPT},
+                {"role": "user", "content": gap_user},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=4096,
+        )
+        raw_text = resp.choices[0].message.content
+        parsed: dict = {}
+        new_places: list[dict] = []
+        try:
+            parsed = json.loads(raw_text)
+            raw_places = parsed.get("places", [])
+            new_places = raw_places if isinstance(raw_places, list) else []
+        except json.JSONDecodeError:
+            _log.warning("Catalog gap pass failed to parse JSON: %s", raw_text[:500])
+
+        try:
+            input_tokens = int(resp.usage.prompt_tokens)
+            output_tokens = int(resp.usage.completion_tokens)
+        except (AttributeError, TypeError, ValueError):
+            input_tokens = 0
+            output_tokens = 0
+
+        # Normalize already_found names for dedup
+        already_found_names = {(e.get("name") or "").strip().lower() for e in already_found}
+
+        entity_candidates: list[RawCandidate] = []
+        for p in new_places:
+            name = (p.get("name") or "").strip()
+            ptype = (p.get("type") or "").strip().lower()
+            if not name or ptype not in _ALLOWED_ENTITY_TYPES:
+                continue
+            if name.lower() in already_found_names:
+                continue  # LLM repeated a known entity despite instructions
+            if _BARE_POSSESSIVE_RE.search(name):
+                continue
+            payload: dict[str, Any] = {"name": name, "type": ptype}
+            lvl = p.get("spatial_level")
+            if lvl is not None:
+                try:
+                    payload["spatial_level"] = int(lvl)
+                except (TypeError, ValueError):
+                    pass
+            aliases = [a for a in (p.get("aliases") or []) if not _BARE_POSSESSIVE_RE.search(a or "")]
+            if aliases:
+                payload["aliases"] = aliases
+            entity_candidates.append(RawCandidate(
+                kind="entity",
+                payload=payload,
+                status="explicit",
+                confidence=float(p.get("confidence", 0.80)),
+                excerpt=str(p.get("excerpt", "")),
+                rationale="Gap pass catalog",
+                temporal_interpretation="static",
+            ))
+
+        return ExtractionResult(
+            candidates=entity_candidates,
+            raw_response={"catalog_gap": parsed},
+            provider="openai",
+            model=self._model,
+            prompt_version=GLOBAL_CATALOG_GAP_VERSION,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
         )

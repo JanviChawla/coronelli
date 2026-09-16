@@ -122,6 +122,24 @@ export async function getExtractionProgress(sectionId: string): Promise<Extracti
   return res.json()
 }
 
+export type CatalogGapStatus = {
+  document_id: string
+  sections_total: number
+  status: 'running' | 'completed'
+}
+
+export async function triggerDocumentCatalogGap(documentId: string): Promise<CatalogGapStatus> {
+  const res = await fetch(`http://localhost:8000/api/documents/${documentId}/extract/catalog-gap`, { method: 'POST' })
+  if (!res.ok) throw new Error(`Catalog gap failed (HTTP ${res.status})`)
+  return res.json()
+}
+
+export async function getDocumentCatalogGapStatus(documentId: string): Promise<CatalogGapStatus> {
+  const res = await fetch(`http://localhost:8000/api/documents/${documentId}/extract/catalog-gap/status`)
+  if (!res.ok) throw new Error(`Catalog gap status failed: ${res.statusText}`)
+  return res.json()
+}
+
 export async function fetchPlaceSuggestions(documentId: string): Promise<string[]> {
   const res = await fetch(`${BASE}/api/documents/${documentId}/place-suggestions`)
   if (!res.ok) return []

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.models import SourceSection
 from app.extraction.models import Candidate, ExtractionRun
 from app.extraction.prompts import (
+    GLOBAL_CATALOG_GAP_VERSION,
     COMBINED_PROMPT_VERSION as _CURRENT_PROMPT_VERSION,
     GLOBAL_CATALOG_VERSION,
     GLOBAL_EVIDENCE_VERSION,
@@ -356,6 +357,50 @@ def run_catalog_extraction(
         session.refresh(c)
 
     return run, candidates, False
+
+
+def run_catalog_gap_extraction(
+    session: Session,
+    section_id: str,
+    provider,
+) -> tuple["ExtractionRun", list["Candidate"]]:
+    """Gap pass: re-read section with already-found entities as context, find missed places."""
+    section = session.get(SourceSection, section_id)
+    if section is None:
+        raise ExtractionError(f"Section '{section_id}' not found.")
+
+    # Collect every current entity candidate for this section (catalog + prior gap runs)
+    already_found: list[dict] = []
+    seen: set[str] = set()
+    for c in session.query(Candidate).filter(
+        Candidate.section_id == section_id,
+        Candidate.kind == "entity",
+    ).all():
+        name = (c.payload.get("name") or "").strip()
+        if name and name.lower() not in seen:
+            seen.add(name.lower())
+            already_found.append({"name": name, "type": c.payload.get("type", "")})
+
+    content_hash = _section_content_hash(section)
+    run = _make_run(session, section_id, content_hash)
+
+    try:
+        result = provider.extract_catalog_gap(section, already_found=already_found)
+    except Exception as exc:
+        run.status = "failed"
+        run.error = str(exc)
+        run.completed_at = datetime.now(timezone.utc)
+        session.commit()
+        raise ExtractionError(str(exc)) from exc
+
+    _finish_run(run, result, GLOBAL_CATALOG_GAP_VERSION)
+    candidates = _save_candidates(session, run, section_id, result)
+    session.commit()
+    session.refresh(run)
+    for c in candidates:
+        session.refresh(c)
+
+    return run, candidates
 
 
 def run_evidence_extraction(

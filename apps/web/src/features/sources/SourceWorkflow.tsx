@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { CandidatesTable } from '../candidates/CandidatesTable'
 import { type Candidate, fetchCandidates, fetchDocumentEntityCandidates, patchCandidateReviewState } from '../candidates/candidateApi'
-import { fetchPreflight, triggerDocumentCatalog, getDocumentCatalogStatus, confirmDocumentCatalog, triggerEvidenceExtraction, getExtractionProgress, fetchPlaceSuggestions, addManualCandidate } from './extractionApi'
+import { fetchPreflight, triggerDocumentCatalog, getDocumentCatalogStatus, confirmDocumentCatalog, triggerEvidenceExtraction, getExtractionProgress, fetchPlaceSuggestions, addManualCandidate, triggerDocumentCatalogGap, getDocumentCatalogGapStatus } from './extractionApi'
 import type { Document, Section } from './sourceApi'
 import { fetchAtlas } from '../atlas/atlasApi'
 import type { AtlasEntity, AtlasTravelRule } from '../atlas/atlasApi'
@@ -231,6 +231,8 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
   const [showAddSuggestions, setShowAddSuggestions] = useState(false)
   const [addingPlace, setAddingPlace] = useState(false)
   const addPlaceRef = useRef<HTMLDivElement>(null)
+  const [runningGapPass, setRunningGapPass] = useState(false)
+  const gapPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [evidenceSubPhase, setEvidenceSubPhase] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -614,6 +616,30 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
       ).slice(0, 8)
     : []
 
+  async function handleGapPass() {
+    if (runningGapPass) return
+    setRunningGapPass(true)
+    try {
+      await triggerDocumentCatalogGap(document.id)
+      // Poll until completed
+      gapPollRef.current = setInterval(async () => {
+        try {
+          const status = await getDocumentCatalogGapStatus(document.id)
+          if (status.status === 'completed') {
+            if (gapPollRef.current) clearInterval(gapPollRef.current)
+            gapPollRef.current = null
+            setRunningGapPass(false)
+            // Reload entity candidates
+            const entities = await fetchDocumentEntityCandidates(document.id)
+            setEntityCandidates(entities)
+          }
+        } catch { /* keep polling */ }
+      }, 2000)
+    } catch {
+      setRunningGapPass(false)
+    }
+  }
+
   async function handleAddManualPlace(name: string) {
     if (!name.trim() || addingPlace) return
     setAddingPlace(true)
@@ -842,7 +868,23 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
               fontSize: '0.72rem', color: 'var(--ink-muted)', letterSpacing: '0.12em', textTransform: 'uppercase',
             }}>
               <span>{approvedCount} approved · {rejectedCount} rejected</span>
-              <span>Click to reject / restore</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <button
+                  type="button"
+                  onClick={handleGapPass}
+                  disabled={runningGapPass}
+                  style={{
+                    background: 'none', border: '1px solid var(--border-warm)', borderRadius: '4px',
+                    padding: '0.15rem 0.5rem', cursor: runningGapPass ? 'default' : 'pointer',
+                    fontSize: '0.68rem', color: runningGapPass ? 'var(--ink-faint)' : 'var(--ink-muted)',
+                    letterSpacing: '0.08em', textTransform: 'uppercase',
+                    opacity: runningGapPass ? 0.6 : 1,
+                  }}
+                >
+                  {runningGapPass ? 'Scanning…' : '+ Find more'}
+                </button>
+                <span>Click to reject / restore</span>
+              </div>
             </div>
             <div style={{ maxHeight: '22rem', overflowY: 'auto' }}>
               {uniqueEntityCandidates.map((c) => {

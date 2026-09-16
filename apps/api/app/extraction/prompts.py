@@ -431,6 +431,7 @@ COMBINED_PROMPT_VERSION = "2.0"
 # Evidence pass: each section gets the full global entity list as context
 
 GLOBAL_CATALOG_VERSION = "3.6-catalog"
+GLOBAL_CATALOG_GAP_VERSION = "3.6-catalog-gap"
 GLOBAL_EVIDENCE_VERSION = "3.4-evidence"
 
 # v4: evidence split into three focused sub-passes
@@ -627,6 +628,37 @@ Section {section_order}: {title}
 
 Previously known places (do not re-list as new; mark is_new: false if referenced):
 {known_names_json}
+"""
+
+CATALOG_GAP_SYSTEM_PROMPT = """\
+CORONELLI PLACE CATALOG — Gap Pass
+
+You are re-reading one section of written fiction. A first-pass catalog already ran.
+Your ONLY task: find places that were MISSED by the first pass.
+
+The places already found are provided below. Do NOT repeat them. Only return places
+that are genuinely new additions — names not in the already-found list.
+
+Apply the exact same extraction rules as the first pass:
+- Named physical locations only (rooms, buildings, settlements, regions, terrain, waterways)
+- Real geographic containers that ARE the narrative setting count (e.g. "New York" as the
+  state where the story takes place)
+- Do not include abstract concepts, historical events, or pure comparison references
+- When in doubt, include — a missed place is worse than a borderline one in a gap pass
+
+Return JSON: {"places": [{"name": ..., "type": ..., "spatial_level": ..., "aliases": [...],
+"is_new": true, "confidence": 0.0–1.0, "excerpt": "...", "rationale": "..."}]}
+
+If you find no additional places, return {"places": []}.
+"""
+
+CATALOG_GAP_USER_TEMPLATE = """\
+Section {section_order}: {title}
+
+{text}
+
+Already found (DO NOT repeat these):
+{already_found_json}
 """
 
 # ── Pass 2: Evidence Extraction ───────────────────────────────────────────────

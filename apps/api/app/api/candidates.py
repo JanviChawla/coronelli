@@ -9,7 +9,7 @@ from app.db.models import SourceSection
 from app.domain.review import ReviewError, ReviewEvent, review_candidate as _review_candidate
 from app.domain.world import MapClaim, MapEntity
 from app.extraction.models import Candidate, ExtractionRun
-from app.extraction.prompts import GLOBAL_CATALOG_VERSION
+from app.extraction.prompts import GLOBAL_CATALOG_VERSION, GLOBAL_CATALOG_GAP_VERSION
 
 router = APIRouter(tags=["candidates"])
 
@@ -221,6 +221,19 @@ def list_document_entity_candidates(document_id: str, db: Session = Depends(get_
         )
         candidates.extend(section_candidates)
 
+    # Also include candidates from gap passes (all completed gap runs for this document)
+    gap_candidates = (
+        db.query(Candidate)
+        .join(ExtractionRun, Candidate.extraction_run_id == ExtractionRun.id)
+        .filter(
+            Candidate.section_id.in_([s.id for s in sections]),
+            Candidate.kind == "entity",
+            ExtractionRun.status == "completed",
+            ExtractionRun.prompt_version == GLOBAL_CATALOG_GAP_VERSION,
+        )
+        .all()
+    )
+
     # Also include manually-added candidates (survive re-catalog, always show)
     manual_candidates = (
         db.query(Candidate)
@@ -231,8 +244,9 @@ def list_document_entity_candidates(document_id: str, db: Session = Depends(get_
         )
         .all()
     )
-    # Add manual candidates not already included (avoid duplicates by id)
+
     existing_ids = {c.id for c in candidates}
+    candidates.extend(c for c in gap_candidates if c.id not in existing_ids)
     candidates.extend(c for c in manual_candidates if c.id not in existing_ids)
 
     return [CandidateOut.model_validate(c) for c in candidates]

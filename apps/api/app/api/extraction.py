@@ -28,6 +28,7 @@ from app.extraction.service import (
     _section_content_hash,
     run_extraction,
     run_catalog_extraction,
+    run_catalog_gap_extraction,
     run_evidence_extraction,
 )
 
@@ -35,9 +36,10 @@ router = APIRouter(tags=["extraction"])
 
 _PREFLIGHT_OUTPUT_TOKEN_ESTIMATE = 200  # conservative output estimate for cost preview
 
-# In-memory set of document_ids with an active catalog batch thread.
+# In-memory sets of document_ids with an active batch thread.
 # Used only for status reporting; accuracy is best-effort (lost on server restart).
 _active_catalog_batches: set[str] = set()
+_active_catalog_gap_batches: set[str] = set()
 
 
 class RunResponse(BaseModel):
@@ -495,6 +497,101 @@ def confirm_catalog_review(
         raise HTTPException(status_code=404, detail=f"Document '{document_id}' has no sections.")
     _write_catalog_confirmed(db, section_ids)
     return Response(status_code=204)
+
+
+def _catalog_gap_batch_worker(document_id: str, section_ids: list[str]) -> None:
+    """Background thread: run gap catalog pass for every section of a document."""
+    db = SessionLocal()
+    try:
+        try:
+            provider = get_provider()
+        except ExtractionNotConfiguredError as exc:
+            _log.error("Catalog gap batch: provider not configured: %s", exc)
+            return
+        for section_id in section_ids:
+            try:
+                run_catalog_gap_extraction(db, section_id, provider)
+            except Exception as exc:
+                _log.error("Catalog gap batch failed for section %s: %s", section_id, exc)
+    finally:
+        _active_catalog_gap_batches.discard(document_id)
+        db.close()
+
+
+class CatalogGapBatchResponse(BaseModel):
+    document_id: str
+    sections_total: int
+    status: str  # "running" | "completed"
+
+
+@router.post(
+    "/api/documents/{document_id}/extract/catalog-gap",
+    response_model=CatalogGapBatchResponse,
+    status_code=202,
+)
+def batch_catalog_gap_document(
+    document_id: str,
+    db: Session = Depends(get_db),
+) -> CatalogGapBatchResponse:
+    """Start a background gap-catalog pass for all sections of a document.
+    Finds places missed by the initial catalog pass. Can be run multiple times.
+    """
+    try:
+        get_provider()
+    except ExtractionNotConfiguredError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    section_ids = [
+        s.id for s in db.query(SourceSection)
+        .filter(SourceSection.document_id == document_id)
+        .order_by(SourceSection.ordinal)
+        .all()
+    ]
+    if not section_ids:
+        raise HTTPException(status_code=404, detail=f"Document '{document_id}' has no sections.")
+
+    if document_id in _active_catalog_gap_batches:
+        return CatalogGapBatchResponse(
+            document_id=document_id,
+            sections_total=len(section_ids),
+            status="running",
+        )
+
+    _active_catalog_gap_batches.add(document_id)
+    thread = threading.Thread(
+        target=_catalog_gap_batch_worker,
+        args=(document_id, section_ids),
+        daemon=True,
+        name=f"catalog-gap-{document_id[:8]}",
+    )
+    thread.start()
+
+    return CatalogGapBatchResponse(
+        document_id=document_id,
+        sections_total=len(section_ids),
+        status="running",
+    )
+
+
+@router.get(
+    "/api/documents/{document_id}/extract/catalog-gap/status",
+    response_model=CatalogGapBatchResponse,
+)
+def get_catalog_gap_status(
+    document_id: str,
+    db: Session = Depends(get_db),  # noqa: ARG001
+) -> CatalogGapBatchResponse:
+    section_ids = [
+        s.id for s in db.query(SourceSection)
+        .filter(SourceSection.document_id == document_id)
+        .all()
+    ]
+    status = "running" if document_id in _active_catalog_gap_batches else "completed"
+    return CatalogGapBatchResponse(
+        document_id=document_id,
+        sections_total=len(section_ids),
+        status=status,
+    )
 
 
 def _build_global_catalog(db: Session, document_id: str) -> list[dict]:
