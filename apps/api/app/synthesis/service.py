@@ -125,6 +125,8 @@ def _build_evidence_ledger(session: Session, document_id: str) -> list[dict]:
         if item["kind"] != "entity":
             non_entity.append(item)
             continue
+        if item.get("review_state") == "rejected":
+            continue  # rejected entities are excluded from synthesis
         name = (item["payload"].get("name") or "").strip().lower()
         if not name:
             non_entity.append(item)

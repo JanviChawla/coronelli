@@ -432,7 +432,7 @@ COMBINED_PROMPT_VERSION = "2.0"
 
 GLOBAL_CATALOG_VERSION = "3.6-catalog"
 GLOBAL_CATALOG_GAP_VERSION = "3.6-catalog-gap"
-GLOBAL_EVIDENCE_VERSION = "3.4-evidence"
+GLOBAL_EVIDENCE_VERSION = "3.5-evidence"
 
 # v4: evidence split into three focused sub-passes
 GLOBAL_EVIDENCE_SPATIAL_VERSION      = "4.2-spatial"      # ON_BANK_OF predicate for waterfront land fixtures
@@ -694,7 +694,10 @@ WHAT TO EXTRACT:
    PORTAL_TO      — a threshold, door, or magical object that crosses into a distinct
                     realm or space on the other side (the rabbit-hole PORTAL_TO Wonderland;
                     Platform 9¾ PORTAL_TO the Hogwarts Express platform).
-   VISIBLE_FROM   — a place is explicitly described as visible from another catalog place.
+   VISIBLE_FROM   — subject is the SEEN place; object is the VANTAGE POINT from which it is seen.
+                    "From the window, I can see the garden" → garden VISIBLE_FROM the window
+                    "The bay was visible from the nursery" → the bay VISIBLE_FROM the nursery
+                    NEVER reverse the direction: the window VISIBLE_FROM the garden is wrong.
 
    CONTAINS: valid only when both container and contained are catalog places.
    HAS_OPENING: valid only when the opening (door, window) is itself a catalog place.
