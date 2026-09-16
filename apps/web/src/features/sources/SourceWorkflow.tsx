@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { CandidatesTable } from '../candidates/CandidatesTable'
 import { type Candidate, fetchCandidates, fetchDocumentEntityCandidates, patchCandidateReviewState } from '../candidates/candidateApi'
-import { fetchPreflight, triggerCatalogExtraction, triggerEvidenceExtraction, getExtractionProgress } from './extractionApi'
+import { fetchPreflight, triggerDocumentCatalog, getDocumentCatalogStatus, confirmDocumentCatalog, triggerEvidenceExtraction, getExtractionProgress } from './extractionApi'
 import type { Document, Section } from './sourceApi'
 import { resectionDocument } from './sourceApi'
 import { fetchAtlas } from '../atlas/atlasApi'
@@ -25,6 +25,7 @@ type Phase =
   | 'ready'
   | 'cataloging'
   | 'catalog-review'
+  | 'evidence-ready'
   | 'extracting'
   | 'inspecting'
   | 'synthesizing'
@@ -201,11 +202,13 @@ const EVIDENCE_SUBPASSES: Array<{ key: string; label: string; detail: string }> 
   { key: 'dedup',       label: 'Entity dedup',        detail: 'SAME_AS merge hints between aliases' },
 ]
 
+const SPATIAL_LEVEL_LABELS: Record<number, string> = { 0: 'Realm', 1: 'Territory', 2: 'Place', 3: 'Feature' }
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function SourceWorkflow({ document, sections, onEditSections, onSectionsChanged, onAtlasChanged, onViewAtlas, onEdit, onDelete }: Props) {
   const [phase, setPhase] = useState<Phase>('preflight')
-  const [errorInStep, setErrorInStep] = useState<3 | 4>(3)
+  const [errorInStep, setErrorInStep] = useState<3 | 4 | 5>(3)
   const [totalCost, setTotalCost] = useState<number | null>(null)
   const [cachedCount, setCachedCount] = useState(0)
   const [currentIdx, setCurrentIdx] = useState(0)
@@ -222,20 +225,25 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
   const [atlasTravelRules, setAtlasTravelRules] = useState<AtlasTravelRule[]>([])
   const [synthElapsedMs, setSynthElapsedMs] = useState(0)
   const [synthPhase, setSynthPhase] = useState<string | null>(null)
-  const [catalogEntityCount, setCatalogEntityCount] = useState(0)
   const [entityCandidates, setEntityCandidates] = useState<Candidate[]>([])
   const [rejectedCandidateIds, setRejectedCandidateIds] = useState<Set<string>>(new Set())
   const [evidenceSubPhase, setEvidenceSubPhase] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [confirmingCatalog, setConfirmingCatalog] = useState(false)
+  // Staleness flags: set when a preceding step is re-run, cleared when the stale step starts.
+  const [evidenceStale, setEvidenceStale] = useState(false)
+  const [synthesisStale, setSynthesisStale] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const synthPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const evidencePollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const catalogPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     if (!sections.length) return
     initWorkflow()
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
+      if (catalogPollRef.current) clearInterval(catalogPollRef.current)
       if (evidencePollRef.current) clearInterval(evidencePollRef.current)
       if (synthPollRef.current) clearInterval(synthPollRef.current)
     }
@@ -244,52 +252,115 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
 
   async function initWorkflow() {
     setPhase('preflight')
-    try {
-      const atlas = await fetchAtlas(document.id)
-      if (atlas.entity_count > 0) {
+
+    // Always fetch catalog status first — confirmation state governs all routing decisions.
+    let catalogStatus: Awaited<ReturnType<typeof getDocumentCatalogStatus>> | null = null
+    try { catalogStatus = await getDocumentCatalogStatus(document.id) } catch { /* unavailable */ }
+
+    const catalogConfirmed = catalogStatus?.catalog_confirmed ?? false
+    const catalogDone = catalogStatus != null && catalogStatus.status === 'completed' && catalogStatus.sections_done > 0
+
+    // ── Catalog still running — re-attach ──────────────────────────────────────
+    if (catalogStatus?.status === 'running') {
+      setPhase('cataloging')
+      setCurrentIdx(catalogStatus.sections_done)
+      await loadPreflight()
+      await new Promise<void>((resolve, reject) => {
+        catalogPollRef.current = setInterval(async () => {
+          try {
+            const s = await getDocumentCatalogStatus(document.id)
+            setCurrentIdx(s.sections_done)
+            if (s.status === 'completed' || s.sections_done === s.sections_total) {
+              clearInterval(catalogPollRef.current!)
+              catalogPollRef.current = null
+              resolve()
+            }
+          } catch (e) {
+            clearInterval(catalogPollRef.current!)
+            catalogPollRef.current = null
+            reject(e)
+          }
+        }, 2000)
+      })
+      await _finishCatalogAndReview()
+      return
+    }
+
+    // ── Catalog confirmed → check for atlas (done) or evidence (inspecting/stale) ──
+    if (catalogConfirmed) {
+      try {
+        const atlas = await fetchAtlas(document.id)
+        if (atlas.entity_count > 0) {
+          const bySection: Record<string, Candidate[]> = {}
+          let total = 0
+          await Promise.all(sections.map(async (s) => {
+            bySection[s.id] = await fetchCandidates(s.id)
+            total += bySection[s.id].length
+          }))
+          if (total > 0) {
+            setCanonicalEntityCount(atlas.entity_count)
+            setCanonicalClaimCount(atlas.claim_count)
+            setAtlasEntities(atlas.entities)
+            setAtlasTravelRules(atlas.travel_rules)
+            setAllCandidates(bySection)
+            setTotalCandidates(total)
+            try {
+              const preflightResults = await Promise.all(sections.map((s) => fetchPreflight(s.id)))
+              const cost = preflightResults.reduce((sum, r) => sum + (r.estimated_cost_usd ?? 0), 0)
+              setTotalCost(cost)
+            } catch { /* preflight optional in done state */ }
+            try {
+              const entities = await fetchDocumentEntityCandidates(document.id)
+              setEntityCandidates(entities)
+              setRejectedCandidateIds(new Set(entities.filter(e => e.review_state === 'rejected').map(e => e.id)))
+            } catch { /* non-critical */ }
+            setPhase('done')
+            return
+          }
+        }
+      } catch { /* no atlas yet */ }
+
+      // Atlas not ready — check for evidence candidates mid-flight
+      try {
         const bySection: Record<string, Candidate[]> = {}
         let total = 0
         await Promise.all(sections.map(async (s) => {
           bySection[s.id] = await fetchCandidates(s.id)
           total += bySection[s.id].length
         }))
-        // Only treat as done if candidates exist on current sections.
-        if (total > 0) {
-          setCanonicalEntityCount(atlas.entity_count)
-          setCanonicalClaimCount(atlas.claim_count)
-          setAtlasEntities(atlas.entities)
-          setAtlasTravelRules(atlas.travel_rules)
+        const evidenceCount = Object.values(bySection).reduce(
+          (sum, cands) => sum + cands.filter(c => c.kind !== 'entity').length, 0
+        )
+        if (evidenceCount > 0) {
           setAllCandidates(bySection)
           setTotalCandidates(total)
-          try {
-            const preflightResults = await Promise.all(sections.map((s) => fetchPreflight(s.id)))
-            const cost = preflightResults.reduce((sum, r) => sum + (r.estimated_cost_usd ?? 0), 0)
-            setTotalCost(cost)
-          } catch { /* preflight optional in done state */ }
-          setPhase('done')
+          setPhase('inspecting')
           return
         }
-      }
-    } catch { /* no atlas yet */ }
+      } catch { /* no candidates yet */ }
+    }
 
-    try {
-      const bySection: Record<string, Candidate[]> = {}
-      let total = 0
-      await Promise.all(sections.map(async (s) => {
-        bySection[s.id] = await fetchCandidates(s.id)
-        total += bySection[s.id].length
-      }))
-      // Only treat as "inspecting" if evidence candidates exist (non-entity kinds)
-      const evidenceCount = Object.values(bySection).reduce(
-        (sum, cands) => sum + cands.filter(c => c.kind !== 'entity').length, 0
-      )
-      if (evidenceCount > 0) {
-        setAllCandidates(bySection)
-        setTotalCandidates(total)
-        setPhase('inspecting')
-        return
-      }
-    } catch { /* no candidates yet */ }
+    // ── Catalog done but not confirmed (or confirmed but no evidence yet) ──────
+    if (catalogDone) {
+      const entities = await fetchDocumentEntityCandidates(document.id)
+      setEntityCandidates(entities)
+      setRejectedCandidateIds(new Set(entities.filter(e => e.review_state === 'rejected').map(e => e.id)))
+      // If evidence candidates already exist from a previous run, mark them stale.
+      try {
+        const bySection: Record<string, Candidate[]> = {}
+        await Promise.all(sections.map(async (s) => { bySection[s.id] = await fetchCandidates(s.id) }))
+        const evidenceCount = Object.values(bySection).reduce(
+          (sum, cands) => sum + cands.filter(c => c.kind !== 'entity').length, 0
+        )
+        if (evidenceCount > 0 && !catalogConfirmed) {
+          setEvidenceStale(true)
+          setSynthesisStale(true)
+        }
+      } catch { /* non-critical */ }
+      await loadPreflight()
+      setPhase(catalogConfirmed ? 'evidence-ready' : 'catalog-review')
+      return
+    }
 
     await loadPreflight()
   }
@@ -307,36 +378,61 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
     setPhase('ready')
   }
 
-  // Pass 1: catalog all sections, then show entity review
+  // Shared: once catalog is done on the server, fetch entities and move to review.
+  async function _finishCatalogAndReview() {
+    const entities = await fetchDocumentEntityCandidates(document.id)
+    setEntityCandidates(entities)
+    setPhase('catalog-review')
+  }
+
+  // Pass 1: fire a document-level batch job, poll until done, then show entity review.
   async function handleHarvest(force = false) {
     setPhase('cataloging')
     setCurrentIdx(0)
-    setCatalogEntityCount(0)
     setWorkflowError(null)
     setEntityCandidates([])
     setRejectedCandidateIds(new Set())
+    // Re-cataloging invalidates all downstream results.
+    if (force) { setEvidenceStale(true); setSynthesisStale(true) }
+
 
     const startTime = Date.now()
     timerRef.current = setInterval(() => setElapsedMs(Date.now() - startTime), 100)
 
     try {
-      let entityTotal = 0
-      for (let i = 0; i < sections.length; i++) {
-        setCurrentIdx(i + 1)
-        setCurrentTitle(sections[i].title)
-        const result = await triggerCatalogExtraction(sections[i].id, force)
-        entityTotal += result.candidates.length
-        setCatalogEntityCount(entityTotal)
+      const job = await triggerDocumentCatalog(document.id, force)
+
+      if (job.status === 'completed') {
+        if (timerRef.current) clearInterval(timerRef.current)
+        await _finishCatalogAndReview()
+        return
       }
 
-      if (timerRef.current) clearInterval(timerRef.current)
+      // Poll progress every 2 s — non-blocking, so the user can navigate away freely.
+      setCurrentIdx(job.sections_done)
+      await new Promise<void>((resolve, reject) => {
+        catalogPollRef.current = setInterval(async () => {
+          try {
+            const status = await getDocumentCatalogStatus(document.id)
+            setCurrentIdx(status.sections_done)
+            if (status.status === 'completed' || status.sections_done === status.sections_total) {
+              clearInterval(catalogPollRef.current!)
+              catalogPollRef.current = null
+              resolve()
+            }
+          } catch (e) {
+            clearInterval(catalogPollRef.current!)
+            catalogPollRef.current = null
+            reject(e)
+          }
+        }, 2000)
+      })
 
-      // Fetch entity candidates for review
-      const entities = await fetchDocumentEntityCandidates(document.id)
-      setEntityCandidates(entities)
-      setPhase('catalog-review')
+      if (timerRef.current) clearInterval(timerRef.current)
+      await _finishCatalogAndReview()
     } catch (e) {
       if (timerRef.current) clearInterval(timerRef.current)
+      if (catalogPollRef.current) { clearInterval(catalogPollRef.current); catalogPollRef.current = null }
       setWorkflowError(e instanceof Error ? e.message : 'Catalog extraction failed.')
       setErrorInStep(3)
       setPhase('error')
@@ -352,15 +448,29 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
     })
   }
 
-  // Pass 2: patch rejections then run evidence sub-passes
-  async function handleSubmitCatalogReview() {
-    // Persist rejections to the backend
-    if (rejectedCandidateIds.size > 0) {
-      await Promise.all(
-        [...rejectedCandidateIds].map(id => patchCandidateReviewState(id, 'rejected'))
-      )
+  // Gate between catalog and evidence: persist rejections, mark confirmed, then wait for evidence.
+  async function handleConfirmCatalog() {
+    setConfirmingCatalog(true)
+    setWorkflowError(null)
+    try {
+      if (rejectedCandidateIds.size > 0) {
+        await Promise.all(
+          [...rejectedCandidateIds].map(id => patchCandidateReviewState(id, 'rejected'))
+        )
+      }
+      await confirmDocumentCatalog(document.id)
+      setPhase('evidence-ready')
+    } catch (e) {
+      setWorkflowError(e instanceof Error ? e.message : 'Failed to confirm catalog.')
+    } finally {
+      setConfirmingCatalog(false)
     }
+  }
 
+  // Pass 2: run the 7 evidence sub-passes for every section.
+  async function handleStartEvidence(force = false) {
+    setEvidenceStale(false)
+    setSynthesisStale(true)  // evidence re-run always invalidates synthesis until it completes
     setPhase('extracting')
     setCurrentIdx(0)
     setCandidatesSoFar(0)
@@ -385,9 +495,10 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
           } catch { /* ignore transient poll errors */ }
         }, 1500)
 
-        const result = await triggerEvidenceExtraction(sectionId, false)
+        await triggerEvidenceExtraction(sectionId, force)
         if (evidencePollRef.current) clearInterval(evidencePollRef.current)
-        total += result.candidates.length
+        const sectionCandidates = await fetchCandidates(sectionId)
+        total += sectionCandidates.filter(c => c.kind !== 'entity').length
         setCandidatesSoFar(total)
       }
 
@@ -402,17 +513,19 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
       }))
       setAllCandidates(bySection)
       setTotalCandidates(grandTotal)
-      setPhase('inspecting')
+      // Auto-chain synthesis immediately after evidence is harvested
+      await handleSynthesize(force)
     } catch (e) {
       if (timerRef.current) clearInterval(timerRef.current)
       if (evidencePollRef.current) clearInterval(evidencePollRef.current)
       setWorkflowError(e instanceof Error ? e.message : 'Evidence extraction failed.')
-      setErrorInStep(3)
+      setErrorInStep(4)
       setPhase('error')
     }
   }
 
   async function handleSynthesize(force = false) {
+    setSynthesisStale(false)
     setPhase('synthesizing')
     setSynthElapsedMs(0)
     setSynthPhase(null)
@@ -440,7 +553,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
       if (timerRef.current) clearInterval(timerRef.current)
       if (synthPollRef.current) clearInterval(synthPollRef.current)
       setWorkflowError(e instanceof Error ? e.message : 'Synthesis failed.')
-      setErrorInStep(4)
+      setErrorInStep(5)
       setPhase('error')
     }
   }
@@ -454,15 +567,24 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
     }
   }
 
-  const step3Done = phase === 'inspecting' || phase === 'synthesizing' || phase === 'done' || (phase === 'error' && errorInStep === 4)
-  const step4Done = phase === 'done'
+  // Step 3 = Catalog places
+  const step3Done = phase === 'evidence-ready' || phase === 'extracting' || phase === 'inspecting' || phase === 'synthesizing' || phase === 'done' || (phase === 'error' && errorInStep >= 4)
   const step3Error = phase === 'error' && errorInStep === 3
+  // Step 4 = Harvest evidence
+  const step4Done = phase === 'inspecting' || phase === 'synthesizing' || phase === 'done' || (phase === 'error' && errorInStep === 5)
   const step4Error = phase === 'error' && errorInStep === 4
+  // Step 5 = Synthesize atlas
+  const step5Done = phase === 'done'
+  const step5Error = phase === 'error' && errorInStep === 5
 
-  // Cost estimates
-  const harvestCostBase = totalCost ?? sections.length * 0.0020
-  const harvestCostLo = harvestCostBase * 0.85
-  const harvestCostHi = harvestCostBase * 1.15
+  // Cost estimates — catalog is ~1 call/section, evidence is ~7 calls/section
+  const totalCostBase = totalCost ?? sections.length * 0.0020
+  const catalogCostBase = totalCostBase / 8
+  const catalogCostLo = catalogCostBase * 0.85
+  const catalogCostHi = catalogCostBase * 1.15
+  const evidenceCostBase = (totalCostBase * 7) / 8
+  const evidenceCostLo = evidenceCostBase * 0.85
+  const evidenceCostHi = evidenceCostBase * 1.15
 
   const synthInputTokens = totalCandidates * 350 + 1500
   const synthOutputTokens = Math.min(totalCandidates * 100, 8000)
@@ -597,37 +719,57 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
       />
       <StepConnector />
 
-      {/* ── Step 3: Harvest evidence ─────────────────────────────────── */}
+      {/* ── Step 3: Catalog places ───────────────────────────────────── */}
       {step3Done ? (
         <StepDone
-          label="Harvest evidence"
-          detail={`${totalCandidates} candidate${totalCandidates !== 1 ? 's' : ''} across ${sections.length} sections${totalElapsedMs > 0 ? ` · ${(totalElapsedMs / 1000).toFixed(1)}s` : ''}`}
+          label="Catalog places"
+          detail={`${uniqueEntityCandidates.length - rejectedCount} place${uniqueEntityCandidates.length - rejectedCount !== 1 ? 's' : ''} approved · ${rejectedCount} rejected`}
           action={
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <RerunCard
-                label="Re-harvest cost"
-                costLo={harvestCostLo}
-                costHi={harvestCostHi}
-                meta={`${sections.length} section${sections.length !== 1 ? 's' : ''} · clears cache`}
-                action="Re-harvest evidence"
+                label="Re-catalog cost"
+                costLo={catalogCostLo}
+                costHi={catalogCostHi}
+                meta={`${sections.length} section${sections.length !== 1 ? 's' : ''} · 1 pass`}
+                action="Re-catalog places"
                 onAction={() => handleHarvest(true)}
               />
-              <details>
-                <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
-                  Inspect raw candidates ({totalCandidates})
-                </summary>
-                <div style={{ marginTop: '0.75rem' }}>
-                  <CandidatesTable
-                    sections={sections.map(s => ({ id: s.id, title: s.title }))}
-                    candidates={allCandidates}
-                  />
-                </div>
-              </details>
+              {uniqueEntityCandidates.length > 0 && (
+                <details>
+                  <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+                    Inspect places ({uniqueEntityCandidates.length - rejectedCount} approved{rejectedCount > 0 ? ` · ${rejectedCount} rejected` : ''})
+                  </summary>
+                  <div style={{ marginTop: '0.65rem', display: 'flex', flexDirection: 'column', gap: '0.18rem' }}>
+                    {uniqueEntityCandidates.map((c) => {
+                      const p = c.payload as Record<string, unknown>
+                      const name = String(p.name ?? '')
+                      const type = String(p.type ?? '')
+                      const level = typeof p.spatial_level === 'number' ? p.spatial_level : null
+                      const levelLabel = level !== null ? SPATIAL_LEVEL_LABELS[level] : null
+                      const isRejected = rejectedCandidateIds.has(c.id)
+                      return (
+                        <div key={c.id} style={{ display: 'flex', gap: '0.5rem', fontSize: '0.88rem', alignItems: 'baseline', opacity: isRejected ? 0.38 : 1 }}>
+                          <span style={{ flexShrink: 0, color: isRejected ? 'var(--error-text)' : 'var(--gold)', fontSize: '0.58rem' }}>
+                            {isRejected ? '✕' : '◉'}
+                          </span>
+                          <span style={{ color: 'var(--ink)', textDecoration: isRejected ? 'line-through' : 'none' }}>{name}</span>
+                          {levelLabel && (
+                            <span style={{ fontSize: '0.62rem', color: 'var(--ink-faint)', border: '1px solid rgba(212,188,138,0.35)', borderRadius: '3px', padding: '0.05rem 0.3rem' }}>
+                              L{level} {levelLabel}
+                            </span>
+                          )}
+                          {type && <span style={{ color: 'var(--ink-faint)', fontSize: '0.72rem' }}>· {type}</span>}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </details>
+              )}
             </div>
           }
         />
       ) : step3Error ? (
-        <StepActive n={3} label="Harvest evidence">
+        <StepActive n={3} label="Catalog places">
           <p role="alert" style={{ color: 'var(--error-text)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
             {workflowError}
           </p>
@@ -636,52 +778,33 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
           </button>
         </StepActive>
       ) : phase === 'cataloging' ? (
-        // ── Pass 1 running: per-section catalog progress ───────────
-        <StepActive n={3} label="Harvest evidence" processing>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', marginTop: '0.25rem' }}>
-            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
-              <div style={{
-                width: '1.35rem', height: '1.35rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.05rem',
-                background: 'var(--step-active-circle)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: '#fff', fontSize: '0.55rem',
-              }} className="step-processing">
-                I
-              </div>
-              <div>
-                <div style={{ fontSize: '0.9rem', color: 'var(--ink)', fontWeight: 500 }}>Pass 1 — Finding places</div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '0.15rem' }}>
-                  §{currentIdx} of {sections.length}{currentTitle ? <> · <em>{currentTitle}</em></> : ''} · {catalogEntityCount} place{catalogEntityCount !== 1 ? 's' : ''} found
-                </div>
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', opacity: 0.38 }}>
-              <div style={{
-                width: '1.35rem', height: '1.35rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.05rem',
-                border: '1.5px solid var(--gold)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: 'var(--gold)', fontSize: '0.55rem',
-              }}>
-              </div>
-              <div>
-                <div style={{ fontSize: '0.9rem', color: 'var(--ink)', fontWeight: 500 }}>Pass 2 — Gathering evidence</div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '0.15rem' }}>
-                  7 focused passes: spatial, visual, routes, movement, access, containment, dedup
-                </div>
-              </div>
-            </div>
+        <StepActive n={3} label="Catalog places" processing>
+          <div style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', marginTop: '0.25rem' }}>
+            {currentIdx} of {sections.length} section{sections.length !== 1 ? 's' : ''} cataloged
           </div>
-          <p style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '1rem', fontFamily: 'monospace' }}>
-            {(elapsedMs / 1000).toFixed(1)}s elapsed
+          <div style={{
+            marginTop: '0.55rem', height: '3px', borderRadius: '2px',
+            background: 'rgba(212,188,138,0.15)', overflow: 'hidden',
+          }}>
+            <div style={{
+              height: '100%', borderRadius: '2px',
+              background: 'var(--gold)',
+              width: `${sections.length > 0 ? Math.round((currentIdx / sections.length) * 100) : 0}%`,
+              transition: 'width 1.5s ease',
+            }} />
+          </div>
+          <p style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '0.75rem', fontFamily: 'monospace' }}>
+            {(elapsedMs / 1000).toFixed(1)}s elapsed · running in background — you can switch texts freely
           </p>
         </StepActive>
       ) : phase === 'catalog-review' ? (
-        // ── Catalog review: approve / reject entity list ───────────
-        <StepActive n={3} label="Harvest evidence">
+        // ── Entity review: approve / reject ───────────
+        <StepActive n={3} label="Catalog places">
           <p style={{ fontSize: '0.92rem', color: 'var(--ink-muted)', marginTop: '0.25rem', marginBottom: '0.75rem', lineHeight: 1.55 }}>
-            Pass 1 found <strong style={{ color: 'var(--ink)' }}>{uniqueEntityCandidates.length}</strong> place{uniqueEntityCandidates.length !== 1 ? 's' : ''} across {sections.length} section{sections.length !== 1 ? 's' : ''}.
+            Found <strong style={{ color: 'var(--ink)' }}>{uniqueEntityCandidates.length}</strong> place{uniqueEntityCandidates.length !== 1 ? 's' : ''} across {sections.length} section{sections.length !== 1 ? 's' : ''}.
             Reject any that are not real locations before running evidence passes.
           </p>
 
-          {/* Entity list */}
           <div style={{
             border: '1px solid var(--border-warm)',
             borderRadius: '6px',
@@ -700,8 +823,11 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
             </div>
             <div style={{ maxHeight: '22rem', overflowY: 'auto' }}>
               {uniqueEntityCandidates.map((c) => {
-                const name = String((c.payload as Record<string, unknown>).name ?? '')
-                const type = String((c.payload as Record<string, unknown>).type ?? '')
+                const p = c.payload as Record<string, unknown>
+                const name = String(p.name ?? '')
+                const type = String(p.type ?? '')
+                const level = typeof p.spatial_level === 'number' ? p.spatial_level : null
+                const levelLabel = level !== null ? SPATIAL_LEVEL_LABELS[level] : null
                 const isRejected = rejectedCandidateIds.has(c.id)
                 return (
                   <button
@@ -709,35 +835,36 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
                     type="button"
                     onClick={() => toggleReject(c.id)}
                     style={{
-                      width: '100%',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'stretch',
-                      gap: 0,
-                      padding: '0.5rem 0.9rem',
-                      background: 'none',
-                      border: 'none',
+                      width: '100%', display: 'flex', flexDirection: 'column',
+                      alignItems: 'stretch', gap: 0, padding: '0.5rem 0.9rem',
+                      background: 'none', border: 'none',
                       borderBottom: '1px solid rgba(212,188,138,0.15)',
-                      cursor: 'pointer',
-                      textAlign: 'left',
+                      cursor: 'pointer', textAlign: 'left',
                       opacity: isRejected ? 0.42 : 1,
                       transition: 'opacity 0.15s, background 0.15s',
                     }}
                   >
-                    {/* top row: icon + name + type + confidence */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', width: '100%' }}>
                       <span style={{
                         width: '1.1rem', height: '1.1rem', borderRadius: '50%', flexShrink: 0,
                         border: isRejected ? '1.5px solid rgba(180,60,60,0.5)' : '1.5px solid var(--gold)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: '0.5rem',
-                        color: isRejected ? 'rgba(180,60,60,0.7)' : 'var(--gold)',
+                        fontSize: '0.5rem', color: isRejected ? 'rgba(180,60,60,0.7)' : 'var(--gold)',
                       }}>
                         {isRejected ? '✕' : '◉'}
                       </span>
                       <span style={{ flex: 1, fontSize: '0.9rem', color: isRejected ? 'var(--ink-faint)' : 'var(--ink)', textDecoration: isRejected ? 'line-through' : 'none' }}>
                         {name}
                       </span>
+                      {levelLabel && (
+                        <span style={{
+                          fontSize: '0.62rem', color: 'var(--ink-faint)', flexShrink: 0,
+                          border: '1px solid rgba(212,188,138,0.35)', borderRadius: '3px',
+                          padding: '0.05rem 0.3rem', fontVariantNumeric: 'tabular-nums',
+                        }}>
+                          L{level} {levelLabel}
+                        </span>
+                      )}
                       {type && (
                         <span style={{ fontSize: '0.68rem', color: 'var(--ink-faint)', flexShrink: 0 }}>{type}</span>
                       )}
@@ -745,15 +872,10 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
                         {(c.confidence * 100).toFixed(0)}%
                       </span>
                     </div>
-                    {/* excerpt line */}
                     {c.excerpt && (
                       <div style={{
-                        paddingLeft: '1.75rem',
-                        fontSize: '0.75rem',
-                        color: 'var(--ink-faint)',
-                        fontStyle: 'italic',
-                        lineHeight: 1.4,
-                        marginTop: '0.18rem',
+                        paddingLeft: '1.75rem', fontSize: '0.75rem', color: 'var(--ink-faint)',
+                        fontStyle: 'italic', lineHeight: 1.4, marginTop: '0.18rem',
                         opacity: isRejected ? 0.6 : 1,
                       }}>
                         "{c.excerpt.length > 120 ? c.excerpt.slice(0, 120) + '…' : c.excerpt}"
@@ -765,140 +887,32 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
             </div>
           </div>
 
-          <button
-            className="btn-cta"
-            type="button"
-            onClick={handleSubmitCatalogReview}
-          >
-            Submit & run evidence passes →
+          <button className="btn-cta" type="button" onClick={handleConfirmCatalog} disabled={confirmingCatalog}>
+            {confirmingCatalog ? 'Confirming…' : 'Confirm catalog →'}
           </button>
-        </StepActive>
-      ) : phase === 'extracting' ? (
-        // ── Pass 2 running: per-section + per-sub-pass progress ───────────
-        <StepActive n={3} label="Harvest evidence" processing>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', marginTop: '0.25rem' }}>
-            {/* Pass 1 done */}
-            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', opacity: 0.55 }}>
-              <div style={{
-                width: '1.35rem', height: '1.35rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.05rem',
-                background: 'radial-gradient(circle at 40% 35%, #7a3528, #3d1208)',
-                boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: 'rgba(240,215,190,0.8)', fontSize: '0.45rem',
-              }}>
-                ✦
-              </div>
-              <div>
-                <div style={{ fontSize: '0.9rem', color: 'var(--ink)', fontWeight: 500 }}>Pass 1 — Finding places</div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '0.15rem' }}>
-                  {catalogEntityCount} place{catalogEntityCount !== 1 ? 's' : ''} · {uniqueEntityCandidates.length - rejectedCount} approved
-                </div>
-              </div>
-            </div>
-
-            {/* Pass 2 active */}
-            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
-              <div style={{
-                width: '1.35rem', height: '1.35rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.05rem',
-                background: 'var(--step-active-circle)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: '#fff', fontSize: '0.55rem',
-              }} className="step-processing">
-                II
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '0.9rem', color: 'var(--ink)', fontWeight: 500 }}>
-                  Pass 2 — Gathering evidence
-                  <span style={{ fontWeight: 400, color: 'var(--ink-faint)', marginLeft: '0.5rem', fontSize: '0.78rem' }}>
-                    §{currentIdx} of {sections.length}{currentTitle ? <> · <em>{currentTitle}</em></> : ''}
-                  </span>
-                </div>
-                {/* 7 sub-pass progress matrix */}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem', marginTop: '0.55rem' }}>
-                  {(() => {
-                    const activeIdx = EVIDENCE_SUBPASSES.findIndex(p => p.key === evidenceSubPhase)
-                    return EVIDENCE_SUBPASSES.map((sp, i) => {
-                      const done = activeIdx > i
-                      const active = activeIdx === i
-                      const locked = activeIdx < i && activeIdx >= 0
-                      const waiting = activeIdx < 0
-                      return (
-                        <div
-                          key={sp.key}
-                          title={sp.detail}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: '0.3rem',
-                            padding: '0.2rem 0.55rem',
-                            borderRadius: '3px',
-                            fontSize: '0.72rem',
-                            border: done
-                              ? '1px solid rgba(122,53,40,0.4)'
-                              : active
-                                ? '1px solid var(--gold)'
-                                : '1px solid rgba(212,188,138,0.25)',
-                            background: done
-                              ? 'rgba(122,53,40,0.12)'
-                              : active
-                                ? 'rgba(212,188,138,0.15)'
-                                : 'transparent',
-                            color: done
-                              ? 'rgba(122,53,40,0.9)'
-                              : active
-                                ? 'var(--ink)'
-                                : 'var(--ink-faint)',
-                            opacity: (locked || waiting) ? 0.4 : 1,
-                            transition: 'all 0.3s',
-                          }}
-                        >
-                          {done && <span style={{ fontSize: '0.5rem' }}>✦</span>}
-                          {active && (
-                            <span style={{
-                              width: '0.45rem', height: '0.45rem', borderRadius: '50%',
-                              background: 'var(--gold)', display: 'inline-block',
-                              animation: 'pulse 1s ease-in-out infinite',
-                            }} />
-                          )}
-                          {sp.label}
-                        </div>
-                      )
-                    })
-                  })()}
-                </div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '0.45rem' }}>
-                  {candidatesSoFar} fragment{candidatesSoFar !== 1 ? 's' : ''} collected
-                </div>
-              </div>
-            </div>
-          </div>
-          <p style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '1rem', fontFamily: 'monospace' }}>
-            {(elapsedMs / 1000).toFixed(1)}s elapsed
-          </p>
+          {workflowError && phase === 'catalog-review' && (
+            <p role="alert" style={{ fontSize: '0.82rem', color: 'var(--error-text)', marginTop: '0.5rem' }}>{workflowError}</p>
+          )}
         </StepActive>
       ) : phase === 'ready' ? (
-        <StepActive n={3} label="Harvest evidence">
+        <StepActive n={3} label="Catalog places">
           <p style={{ fontSize: '0.95rem', color: 'var(--ink-muted)', marginTop: '0.5rem', marginBottom: '1.25rem', lineHeight: 1.6 }}>
-            Eight passes over all {sections.length} section{sections.length !== 1 ? 's' : ''}:
-            Pass 1 identifies every named place across the whole book,
-            then 7 focused passes extract spatial claims, routes, visual observations,
-            movement, access, containment, and entity deduplication — one mission per call.
+            One pass over all {sections.length} section{sections.length !== 1 ? 's' : ''} to identify every named place.
+            After review, the approved catalog anchors the evidence passes.
           </p>
           <div style={{
             borderTop: '1px solid rgba(212, 188, 138, 0.5)',
             borderBottom: '1px solid rgba(212, 188, 138, 0.5)',
-            padding: '0.65rem 0',
-            marginBottom: '0.7rem',
-            display: 'flex',
-            alignItems: 'baseline',
-            justifyContent: 'space-between',
-            gap: '1rem',
+            padding: '0.65rem 0', marginBottom: '0.7rem',
+            display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '1rem',
           }}>
             <span style={{ fontSize: '0.68rem', color: 'var(--ink-muted)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
-              Est. extraction cost
+              Est. catalog cost
             </span>
             <span>
               {totalCost !== null ? (
                 <span style={{ fontSize: '1rem', color: 'var(--ink)', fontFamily: 'monospace' }}>
-                  ${(totalCost * 0.85).toFixed(2)} – ${(totalCost * 1.15).toFixed(2)}
+                  ${catalogCostLo.toFixed(2)} – ${catalogCostHi.toFixed(2)}
                 </span>
               ) : (
                 <span style={{ fontSize: '1rem', color: 'var(--ink-faint)', fontFamily: 'monospace' }}>Estimating…</span>
@@ -906,24 +920,149 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
             </span>
           </div>
           <p style={{ fontSize: '0.66rem', color: 'var(--ink-faint)', fontFamily: 'monospace', marginBottom: '1rem' }}>
-            {document.original_filename} · {sections.length} section{sections.length !== 1 ? 's' : ''} · OpenAI
+            {document.original_filename} · {sections.length} section{sections.length !== 1 ? 's' : ''} · 1 pass · OpenAI
             {cachedCount > 0 && ` · ${cachedCount} cached`}
           </p>
           <button className="btn-cta" type="button" onClick={() => handleHarvest()}>
-            Harvest evidence
+            Find places
           </button>
         </StepActive>
       ) : (
-        <StepActive n={3} label="Harvest evidence">
-          <p style={{ fontSize: '0.92rem', color: 'var(--ink-faint)' }}>
-            Checking sections and estimating cost…
-          </p>
+        <StepActive n={3} label="Catalog places">
+          <p style={{ fontSize: '0.92rem', color: 'var(--ink-faint)' }}>Checking sections and estimating cost…</p>
         </StepActive>
       )}
       <StepConnector />
 
-      {/* ── Step 4: Synthesize atlas ─────────────────────────────────── */}
-      {step4Done ? (
+      {/* ── Step 4: Harvest evidence ─────────────────────────────────── */}
+      {step4Done && !evidenceStale ? (
+        <StepDone
+          label="Harvest evidence"
+          detail={`${totalCandidates} candidate${totalCandidates !== 1 ? 's' : ''} across ${sections.length} sections${totalElapsedMs > 0 ? ` · ${(totalElapsedMs / 1000).toFixed(1)}s` : ''}`}
+          action={
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <RerunCard
+                label="Re-harvest cost"
+                costLo={evidenceCostLo}
+                costHi={evidenceCostHi}
+                meta={`${sections.length} section${sections.length !== 1 ? 's' : ''} · 7 passes · clears cache`}
+                action="Re-harvest evidence"
+                onAction={() => handleStartEvidence(true)}
+              />
+              <details>
+                <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
+                  Inspect raw candidates ({totalCandidates})
+                </summary>
+                <div style={{ marginTop: '0.75rem' }}>
+                  <CandidatesTable
+                    sections={sections.map(s => ({ id: s.id, title: s.title }))}
+                    candidates={allCandidates}
+                  />
+                </div>
+              </details>
+            </div>
+          }
+        />
+      ) : step4Error ? (
+        <StepActive n={4} label="Harvest evidence">
+          <p role="alert" style={{ color: 'var(--error-text)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+            {workflowError}
+          </p>
+          <button className="btn-cta" style={{ maxWidth: '200px' }} type="button" onClick={() => handleStartEvidence()}>
+            Retry
+          </button>
+        </StepActive>
+      ) : phase === 'extracting' ? (
+        <StepActive n={4} label="Harvest evidence" processing>
+          <div style={{ flex: 1 }}>
+              <div style={{ fontSize: '0.9rem', color: 'var(--ink)', fontWeight: 500 }}>
+                §{currentIdx} of {sections.length}{currentTitle ? <> · <em>{currentTitle}</em></> : ''}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem', marginTop: '0.55rem' }}>
+                {(() => {
+                  const isParallel = evidenceSubPhase === 'parallel'
+                  const activeIdx = isParallel ? -1 : EVIDENCE_SUBPASSES.findIndex(p => p.key === evidenceSubPhase)
+                  return EVIDENCE_SUBPASSES.map((sp, i) => {
+                    const done = !isParallel && activeIdx > i
+                    const active = isParallel || activeIdx === i
+                    return (
+                      <div key={sp.key} title={sp.detail} style={{
+                        display: 'flex', alignItems: 'center', gap: '0.3rem',
+                        padding: '0.2rem 0.55rem', borderRadius: '3px', fontSize: '0.72rem',
+                        border: done ? '1px solid rgba(122,53,40,0.4)' : active ? '1px solid var(--gold)' : '1px solid rgba(212,188,138,0.25)',
+                        background: done ? 'rgba(122,53,40,0.12)' : active ? 'rgba(212,188,138,0.15)' : 'transparent',
+                        color: done ? 'rgba(122,53,40,0.9)' : active ? 'var(--ink)' : 'var(--ink-faint)',
+                        opacity: (!done && !active) ? 0.4 : 1,
+                        transition: 'all 0.3s',
+                      }}>
+                        {done && <span style={{ fontSize: '0.5rem' }}>✦</span>}
+                        {active && <span style={{ width: '0.45rem', height: '0.45rem', borderRadius: '50%', background: 'var(--gold)', display: 'inline-block', animation: 'pulse 1s ease-in-out infinite' }} />}
+                        {sp.label}
+                      </div>
+                    )
+                  })
+                })()}
+              </div>
+              <div style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '0.45rem' }}>
+                {candidatesSoFar} fragment{candidatesSoFar !== 1 ? 's' : ''} collected
+              </div>
+          </div>
+          <p style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '1rem', fontFamily: 'monospace' }}>
+            {(elapsedMs / 1000).toFixed(1)}s elapsed
+          </p>
+        </StepActive>
+      ) : phase === 'evidence-ready' ? (
+        <StepActive n={4} label="Harvest evidence">
+          {evidenceStale && (
+            <div style={{
+              display: 'flex', alignItems: 'flex-start', gap: '0.55rem',
+              padding: '0.55rem 0.75rem', marginTop: '0.25rem', marginBottom: '0.75rem',
+              borderRadius: '4px', background: 'rgba(180, 120, 20, 0.12)',
+              border: '1px solid rgba(180, 120, 20, 0.35)',
+            }}>
+              <span style={{ fontSize: '0.72rem', lineHeight: 1, marginTop: '0.18rem' }}>⚠</span>
+              <span style={{ fontSize: '0.82rem', color: 'var(--ink-muted)', lineHeight: 1.5 }}>
+                Catalog has changed — previous evidence is outdated. Re-harvest to update.
+              </span>
+            </div>
+          )}
+          <p style={{ fontSize: '0.95rem', color: 'var(--ink-muted)', marginTop: '0.5rem', marginBottom: '1.25rem', lineHeight: 1.6 }}>
+            Seven focused passes over all {sections.length} section{sections.length !== 1 ? 's' : ''}, anchored to {approvedCount} approved place{approvedCount !== 1 ? 's' : ''}:
+            spatial claims, visual observations, routes, movement, access, containment, and entity deduplication.
+          </p>
+          <div style={{
+            borderTop: '1px solid rgba(212, 188, 138, 0.5)',
+            borderBottom: '1px solid rgba(212, 188, 138, 0.5)',
+            padding: '0.65rem 0', marginBottom: '0.7rem',
+            display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '1rem',
+          }}>
+            <span style={{ fontSize: '0.68rem', color: 'var(--ink-muted)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
+              Est. evidence cost
+            </span>
+            <span>
+              {totalCost !== null ? (
+                <span style={{ fontSize: '1rem', color: 'var(--ink)', fontFamily: 'monospace' }}>
+                  ${evidenceCostLo.toFixed(2)} – ${evidenceCostHi.toFixed(2)}
+                </span>
+              ) : (
+                <span style={{ fontSize: '1rem', color: 'var(--ink-faint)', fontFamily: 'monospace' }}>Estimating…</span>
+              )}
+            </span>
+          </div>
+          <p style={{ fontSize: '0.66rem', color: 'var(--ink-faint)', fontFamily: 'monospace', marginBottom: '1rem' }}>
+            {document.original_filename} · {sections.length} section{sections.length !== 1 ? 's' : ''} · 7 passes · OpenAI
+          </p>
+          <button className="btn-cta" type="button" onClick={() => handleStartEvidence()}>
+            Harvest evidence
+          </button>
+        </StepActive>
+      ) : (
+        <StepLocked n={4} label="Harvest evidence" detail="Available once the catalog is confirmed." />
+      )}
+      <StepConnector />
+
+      {/* ── Step 5: Synthesize atlas ─────────────────────────────────── */}
+      {step5Done && !synthesisStale ? (
         <StepDone
           label="Synthesize atlas"
           detail={`${canonicalEntityCount} place${canonicalEntityCount !== 1 ? 's' : ''} · ${canonicalClaimCount} relationship${canonicalClaimCount !== 1 ? 's' : ''} canonicalized`}
@@ -1027,8 +1166,8 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
             </div>
           }
         />
-      ) : step4Error ? (
-        <StepActive n={4} label="Synthesize atlas">
+      ) : step5Error ? (
+        <StepActive n={5} label="Synthesize atlas">
           <p role="alert" style={{ color: 'var(--error-text)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
             {workflowError}
           </p>
@@ -1037,33 +1176,36 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
           </button>
         </StepActive>
       ) : phase === 'synthesizing' ? (
-        <StepActive n={4} label="Synthesize atlas" processing>
+        <StepActive n={5} label="Synthesize atlas" processing>
           {(() => {
-            const SYNTH_PHASES: Array<{ key: string; label: string; detail: string }> = [
-              { key: 'entities', label: 'Entity consolidation', detail: `Merging ${sections.length}-section place list into canonical entries` },
+            const PARALLEL_PASSES: Array<{ key: string; label: string; detail: string }> = [
               { key: 'spatial',  label: 'Spatial claims',       detail: 'LOCATED_IN, CONTAINS, NEAR, ADJACENT_TO, SAME_AS' },
               { key: 'visual',   label: 'Visual observations',  detail: 'Appearance, atmosphere, color, material, scale' },
               { key: 'routes',   label: 'Routes',               detail: 'Traversal paths between places' },
               { key: 'access',   label: 'Access rules',         detail: 'Permitted, prohibited, and conditional entry' },
               { key: 'movement', label: 'Movement',             detail: 'Narrated journeys and character travel arcs' },
             ]
-            const currentSynthIdx = SYNTH_PHASES.findIndex(p => p.key === synthPhase)
+            const isParallel = synthPhase === 'parallel'
+            const entitiesDone = isParallel
+            const entitiesActive = synthPhase === 'entities'
             return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem', marginTop: '0.25rem' }}>
-                {SYNTH_PHASES.map((p, i) => {
-                  const done = currentSynthIdx > i
-                  const active = currentSynthIdx === i
-                  const locked = currentSynthIdx < i
-                  return (
-                    <div key={p.key} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', opacity: locked ? 0.35 : done ? 0.55 : 1, transition: 'opacity 0.4s' }}>
-                      <SubPassDot done={done} active={active} />
-                      <div>
-                        <div style={{ fontSize: '0.88rem', color: 'var(--ink)', fontWeight: active ? 600 : 400 }}>{p.label}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--ink-faint)', marginTop: '0.1rem' }}>{p.detail}</div>
-                      </div>
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', opacity: entitiesDone ? 0.55 : 1, transition: 'opacity 0.4s' }}>
+                  <SubPassDot done={entitiesDone} active={entitiesActive} />
+                  <div>
+                    <div style={{ fontSize: '0.88rem', color: 'var(--ink)', fontWeight: entitiesActive ? 600 : 400 }}>Entity consolidation</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--ink-faint)', marginTop: '0.1rem' }}>{`Merging ${sections.length}-section place list into canonical entries`}</div>
+                  </div>
+                </div>
+                {PARALLEL_PASSES.map(p => (
+                  <div key={p.key} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', opacity: isParallel ? 1 : 0.35, transition: 'opacity 0.4s' }}>
+                    <SubPassDot done={false} active={isParallel} />
+                    <div>
+                      <div style={{ fontSize: '0.88rem', color: 'var(--ink)', fontWeight: isParallel ? 600 : 400 }}>{p.label}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--ink-faint)', marginTop: '0.1rem' }}>{p.detail}</div>
                     </div>
-                  )
-                })}
+                  </div>
+                ))}
               </div>
             )
           })()}
@@ -1072,31 +1214,23 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
           </p>
         </StepActive>
       ) : phase === 'inspecting' ? (
-        // ── Candidate inspection before synthesize ────────────────────
-        <StepActive n={4} label="Synthesize atlas">
+        <StepActive n={5} label="Synthesize atlas">
           <p style={{ fontSize: '0.95rem', color: 'var(--ink-muted)', marginTop: '0.5rem', marginBottom: '1rem', lineHeight: 1.6 }}>
             Six focused passes over {totalCandidates} evidence fragment{totalCandidates !== 1 ? 's' : ''}:
             Pass 1 consolidates all entity candidates into a canonical place list,
             then 5 targeted passes synthesize spatial claims, visual observations,
-            routes, access rules, and movement — one kind per call.
+            routes, access rules, and movement.
           </p>
 
-          {/* Candidate summary by kind */}
           {Object.keys(kindCounts).length > 0 && (
-            <div style={{
-              display: 'flex', flexWrap: 'wrap', gap: '0.45rem',
-              marginBottom: '0.85rem',
-            }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem', marginBottom: '0.85rem' }}>
               {Object.entries(kindCounts)
                 .sort(([, a], [, b]) => b - a)
                 .map(([kind, count]) => (
                   <div key={kind} style={{
-                    padding: '0.2rem 0.6rem',
-                    borderRadius: '3px',
-                    border: '1px solid var(--border-warm)',
-                    background: 'var(--parchment-card)',
-                    fontSize: '0.75rem',
-                    color: 'var(--ink-muted)',
+                    padding: '0.2rem 0.6rem', borderRadius: '3px',
+                    border: '1px solid var(--border-warm)', background: 'var(--parchment-card)',
+                    fontSize: '0.75rem', color: 'var(--ink-muted)',
                   }}>
                     <span style={{ color: 'var(--ink)', fontVariantNumeric: 'tabular-nums' }}>{count}</span>
                     {' '}
@@ -1106,26 +1240,11 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
             </div>
           )}
 
-          {/* Inspect raw candidates */}
-          <details style={{ marginBottom: '1rem' }}>
-            <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none', marginBottom: '0.5rem' }}>
-              Inspect raw candidates ({totalCandidates})
-            </summary>
-            <CandidatesTable
-              sections={sections.map(s => ({ id: s.id, title: s.title }))}
-              candidates={allCandidates}
-            />
-          </details>
-
           <div style={{
             borderTop: '1px solid rgba(212, 188, 138, 0.5)',
             borderBottom: '1px solid rgba(212, 188, 138, 0.5)',
-            padding: '0.65rem 0',
-            marginBottom: '0.7rem',
-            display: 'flex',
-            alignItems: 'baseline',
-            justifyContent: 'space-between',
-            gap: '1rem',
+            padding: '0.65rem 0', marginBottom: '0.7rem',
+            display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '1rem',
           }}>
             <span style={{ fontSize: '0.68rem', color: 'var(--ink-muted)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
               Est. synthesis cost
@@ -1141,13 +1260,30 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
             Synthesize atlas
           </button>
         </StepActive>
+      ) : synthesisStale && step5Done ? (
+        <StepActive n={5} label="Synthesize atlas">
+          <div style={{
+            display: 'flex', alignItems: 'flex-start', gap: '0.55rem',
+            padding: '0.55rem 0.75rem', marginTop: '0.25rem', marginBottom: '1rem',
+            borderRadius: '4px', background: 'rgba(180, 120, 20, 0.12)',
+            border: '1px solid rgba(180, 120, 20, 0.35)',
+          }}>
+            <span style={{ fontSize: '0.72rem', lineHeight: 1, marginTop: '0.18rem' }}>⚠</span>
+            <span style={{ fontSize: '0.82rem', color: 'var(--ink-muted)', lineHeight: 1.5 }}>
+              Evidence has changed — atlas is outdated. Re-synthesize to rebuild.
+            </span>
+          </div>
+          <button className="btn-cta" type="button" onClick={() => handleSynthesize(true)}>
+            Re-synthesize atlas
+          </button>
+        </StepActive>
       ) : (
-        <StepLocked n={4} label="Synthesize atlas" detail="Reads all harvested evidence in one pass and writes the canonical atlas automatically." />
+        <StepLocked n={5} label="Synthesize atlas" detail="Reads all harvested evidence in one pass and writes the canonical atlas automatically." />
       )}
       <StepConnector />
 
-      {/* ── Step 5: Atlas Explorer ───────────────────────────────── */}
-      {step4Done ? (
+      {/* ── Step 6: Atlas Explorer ───────────────────────────────── */}
+      {step5Done && !synthesisStale ? (
         <StepDone
           label="Atlas Explorer"
           detail={`${canonicalEntityCount} place${canonicalEntityCount !== 1 ? 's' : ''} · no additional cost`}
@@ -1159,8 +1295,10 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
             ) : undefined
           }
         />
+      ) : synthesisStale ? (
+        <StepLocked n={6} label="Atlas Explorer" detail="Re-synthesize the atlas above to unlock the explorer." />
       ) : (
-        <StepLocked n={5} label="Atlas Explorer" detail="Available once the atlas is synthesized." />
+        <StepLocked n={6} label="Atlas Explorer" detail="Available once the atlas is synthesized." />
       )}
     </div>
   )
