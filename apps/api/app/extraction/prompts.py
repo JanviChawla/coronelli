@@ -412,7 +412,7 @@ COMBINED_PROMPT_VERSION = "2.0"
 # Pre-pass: catalog all sections first → aggregate global entity list
 # Evidence pass: each section gets the full global entity list as context
 
-GLOBAL_CATALOG_VERSION = "3.0-catalog"
+GLOBAL_CATALOG_VERSION = "3.1-catalog"
 GLOBAL_EVIDENCE_VERSION = "3.2-evidence"
 
 # v4: evidence split into three focused sub-passes
@@ -460,6 +460,14 @@ RULES:
   person alone. A personal name like "Hans Van Ripper" is never a valid entry.
 - Do NOT invent. Extract only what the text names or clearly describes.
 - When in doubt, INCLUDE — synthesis will filter.
+
+FRAME AND TRANSITIONAL LOCATIONS — easy to miss, always required:
+If a section opens outdoors, in a transitional space, or in a "real world" frame before
+moving to the main setting, catalog BOTH the opening location AND the destination.
+A river bank, open field, hedge, doorstep, garden, courtyard, or any other space where
+the action starts is as atlas-worthy as any interior room — even if the narrative moves
+elsewhere within a paragraph. Ask yourself: "Where is the protagonist at the very start
+of this section?" That place must appear in the output.
 
 Previously known places are provided for reference. Do not re-list them as new
 discoveries. If a previously known place is referenced in this section, you may
