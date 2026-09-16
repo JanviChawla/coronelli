@@ -360,16 +360,67 @@ _COMMON_STARTERS = {
     "Such", "Through", "Well", "What", "Why", "Hurrah", "Indeed", "How",
     "Half", "Fourth", "Don", "Dear", "Cousin",
 }
+_ARTICLES = frozenset({"the", "a", "an"})
+_WHITESPACE = re.compile(r'\s+')
+
+
+def _text_search_suggestions(sections: list, query: str) -> list[str]:
+    """Find canonical phrases from section text containing the query as a substring.
+
+    Tries both space and hyphen variants (dining room ↔ dining-room).
+    Attaches a preceding article when present (the parlor, a hall).
+    Returns up to 8 results ranked by occurrence count.
+    """
+    from collections import Counter
+    q = query.strip().lower()
+    if not q:
+        return []
+    # Search both space and hyphen variants so "dining room" finds "dining-room" too
+    variants: set[str] = {q}
+    if " " in q:
+        variants.add(q.replace(" ", "-"))
+    elif "-" in q:
+        variants.add(q.replace("-", " "))
+
+    counts: Counter[str] = Counter()
+    for section in sections:
+        text = section.text or ""
+        text_lower = text.lower()
+        for variant in variants:
+            pos = 0
+            while pos < len(text_lower):
+                idx = text_lower.find(variant, pos)
+                if idx == -1:
+                    break
+                # Extend the match to the end of the word (include trailing alpha/hyphen)
+                end = idx + len(variant)
+                while end < len(text) and (text[end].isalpha() or text[end] == "-"):
+                    end += 1
+                # Look back up to ~20 chars for an article
+                look_back = text[:idx].rstrip()
+                article_m = re.search(r'\b([a-zA-Z]+)\s*$', look_back)
+                if article_m and article_m.group(1).lower() in _ARTICLES:
+                    start = article_m.start()
+                else:
+                    start = idx
+                phrase = _WHITESPACE.sub(" ", text[start:end]).strip().lower()
+                if len(phrase) >= 2:
+                    counts[phrase] += 1
+                pos = idx + 1
+
+    return [phrase for phrase, _ in counts.most_common(8)]
 
 
 @router.get("/api/documents/{document_id}/place-suggestions", response_model=list[str])
-def get_place_suggestions(document_id: str, db: Session = Depends(get_db)) -> list[str]:
+def get_place_suggestions(document_id: str, q: str | None = None, db: Session = Depends(get_db)) -> list[str]:
     sections = (
         db.query(SourceSection)
         .filter(SourceSection.document_id == document_id)
         .order_by(SourceSection.ordinal)
         .all()
     )
+    if q and q.strip():
+        return _text_search_suggestions(sections, q.strip())
     suggestions: set[str] = set()
     for section in sections:
         text = section.text or ""

@@ -140,8 +140,11 @@ export async function getDocumentCatalogGapStatus(documentId: string): Promise<C
   return res.json()
 }
 
-export async function fetchPlaceSuggestions(documentId: string): Promise<string[]> {
-  const res = await fetch(`${BASE}/api/documents/${documentId}/place-suggestions`)
+export async function fetchPlaceSuggestions(documentId: string, q?: string): Promise<string[]> {
+  const url = q
+    ? `${BASE}/api/documents/${documentId}/place-suggestions?q=${encodeURIComponent(q)}`
+    : `${BASE}/api/documents/${documentId}/place-suggestions`
+  const res = await fetch(url)
   if (!res.ok) return []
   return res.json()
 }

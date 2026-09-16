@@ -233,6 +233,8 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
   const addPlaceRef = useRef<HTMLDivElement>(null)
   const [runningGapPass, setRunningGapPass] = useState(false)
   const gapPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [dynamicSuggestions, setDynamicSuggestions] = useState<string[]>([])
+  const suggestionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [evidenceSubPhase, setEvidenceSubPhase] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -610,10 +612,9 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
   // Add-missing-place helpers
   const existingCandidateNames = new Set(uniqueEntityCandidates.map(c => String((c.payload as Record<string, unknown>).name ?? '').toLowerCase()))
   const filteredSuggestions = addPlaceInput.length >= 1
-    ? placeSuggestions.filter(s =>
-        s.toLowerCase().includes(addPlaceInput.toLowerCase()) &&
-        !existingCandidateNames.has(s.toLowerCase())
-      ).slice(0, 8)
+    ? (dynamicSuggestions.length > 0 ? dynamicSuggestions : placeSuggestions.filter(s =>
+        s.toLowerCase().includes(addPlaceInput.toLowerCase())
+      )).filter(s => !existingCandidateNames.has(s.toLowerCase())).slice(0, 8)
     : []
 
   async function handleGapPass() {
@@ -645,6 +646,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
     setAddingPlace(true)
     setShowAddSuggestions(false)
     setAddPlaceInput('')
+    setDynamicSuggestions([])
     try {
       await addManualCandidate(document.id, name.trim())
       const entities = await fetchDocumentEntityCandidates(document.id)
@@ -966,7 +968,20 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
                 placeholder="Add missing place…"
                 value={addPlaceInput}
                 disabled={addingPlace}
-                onChange={e => { setAddPlaceInput(e.target.value); setShowAddSuggestions(true) }}
+                onChange={e => {
+                  const val = e.target.value
+                  setAddPlaceInput(val)
+                  setShowAddSuggestions(true)
+                  if (suggestionDebounceRef.current) clearTimeout(suggestionDebounceRef.current)
+                  if (val.trim().length >= 2) {
+                    suggestionDebounceRef.current = setTimeout(async () => {
+                      const results = await fetchPlaceSuggestions(document.id, val.trim())
+                      setDynamicSuggestions(results)
+                    }, 300)
+                  } else {
+                    setDynamicSuggestions([])
+                  }
+                }}
                 onFocus={() => setShowAddSuggestions(true)}
                 onBlur={() => setTimeout(() => setShowAddSuggestions(false), 150)}
                 onKeyDown={e => {
