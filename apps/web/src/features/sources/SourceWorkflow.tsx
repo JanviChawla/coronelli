@@ -781,7 +781,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
             }} />
           </div>
           <p style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '0.75rem', fontFamily: 'monospace' }}>
-            {(elapsedMs / 1000).toFixed(1)}s elapsed · running in background — you can switch texts freely
+            {(elapsedMs / 1000).toFixed(1)}s elapsed
           </p>
         </StepActive>
       ) : phase === 'catalog-review' ? (
