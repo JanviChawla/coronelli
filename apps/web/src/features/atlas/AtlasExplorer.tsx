@@ -28,19 +28,62 @@ import type {
   DiagramViewModel,
   FilterState,
   InspectorTarget,
+  SpatialLevel,
 } from './atlasGraph'
 import { computeLayout } from './atlasLayout'
 import type { ContainmentMap } from './atlasLayout'
 
 // ── Node dimensions ───────────────────────────────────────────────────────────
+// Base radius per spatial level; hub adds 7, inferred subtracts 3
+const SHAPE_R: Record<SpatialLevel, number> = { 0: 26, 1: 22, 2: 18, 3: 13 }
 
-const NODE_W = { hub: 140, normal: 116, inferred: 110 }
-const NODE_H = { hub: 108, normal: 92,  inferred: 86  }
+function nodeR(level: SpatialLevel, role: string): number {
+  const base = SHAPE_R[level]
+  if (role === 'hub') return base + 7
+  if (role === 'inferred') return Math.max(base - 3, 9)
+  return base
+}
 
-function nodeSize(role: string): { w: number; h: number } {
-  if (role === 'hub')      return { w: NODE_W.hub,      h: NODE_H.hub }
-  if (role === 'inferred') return { w: NODE_W.inferred, h: NODE_H.inferred }
-  return                          { w: NODE_W.normal,   h: NODE_H.normal }
+function nodeSize(role: string, level: SpatialLevel = 2): { w: number; h: number } {
+  const r = nodeR(level, role)
+  const svgW = r * 2 + 8
+  // Hub: label below → square-ish container. Others: label right → wide container.
+  if (role === 'hub') return { w: svgW + 44, h: svgW + 44 }
+  return { w: svgW + 84, h: svgW + 12 }
+}
+
+// SVG shape helper — renders the correct shape for each spatial level
+function NodeShape({
+  level, cx, cy, r, strokeColor, fillColor, strokeWidth, strokeDasharray,
+}: {
+  level: SpatialLevel; cx: number; cy: number; r: number
+  strokeColor: string; fillColor: string; strokeWidth: number; strokeDasharray?: string
+}) {
+  const p = { stroke: strokeColor, strokeWidth, strokeDasharray, fill: fillColor }
+
+  if (level === 0) {
+    // Hexagon (pointy-top)
+    const pts = Array.from({ length: 6 }, (_, k) => {
+      const a = -Math.PI / 2 + (k * Math.PI) / 3
+      return `${(cx + r * Math.cos(a)).toFixed(1)},${(cy + r * Math.sin(a)).toFixed(1)}`
+    }).join(' ')
+    return <polygon points={pts} {...p} />
+  }
+  if (level === 1) {
+    // Rounded square
+    const s = r * 1.05
+    return <rect x={(cx - s).toFixed(1)} y={(cy - s).toFixed(1)}
+      width={(s * 2).toFixed(1)} height={(s * 2).toFixed(1)} rx={4} {...p} />
+  }
+  if (level === 3) {
+    // Diamond
+    const d = r * 1.2
+    return <polygon
+      points={`${cx},${(cy - d).toFixed(1)} ${(cx + d * 0.72).toFixed(1)},${cy} ${cx},${(cy + d).toFixed(1)} ${(cx - d * 0.72).toFixed(1)},${cy}`}
+      {...p} />
+  }
+  // level 2: circle
+  return <circle cx={cx} cy={cy} r={r} {...p} />
 }
 
 // ── Containment hull node ─────────────────────────────────────────────────────
@@ -92,27 +135,17 @@ function HullNode({ data }: NodeProps) {
 
 // ── Schematic place node ──────────────────────────────────────────────────────
 
-const CIRCLE_R: Record<string, number> = { hub: 28, normal: 20, origin: 20, inferred: 17 }
+// (radius is now computed from spatialLevel + role via nodeR())
 
-const PLACE_KIND_GLYPH: Record<string, string> = {
-  terrain_feature: '△', mountain: '△', hill: '△',
-  settlement: '□', town: '□', city: '□', building: '□', hall: '□', room: '□', court: '□',
-  body_of_water: '≈', river: '≈', lake: '≈', ocean: '≈', sea: '≈',
-  forest: '♦', wood: '♦',
-  cave: '∩', tunnel: '∩', shaft: '∩',
-  island: '◦', region: '◦', world: '◎', exterior: '◦',
-  site: '◆', landmark: '◆',
-  barrier: '‖',
-  portal: '⊕', passage: '⊕', door: '⊕', gateway: '⊕',
-}
 
 // Label is positioned to the right of the circle for all non-hub nodes
 // to avoid vertical stacking and overlap with nearby nodes.
 // Hub nodes are prominent enough that a below-label reads cleanly at larger size.
 
 function SchematicNode({ data, selected }: NodeProps) {
-  const d     = data as DiagramNode
-  const r     = CIRCLE_R[d.role] ?? 20
+  const d        = data as DiagramNode
+  const level    = d.spatialLevel
+  const r        = nodeR(level, d.role)
   const isHub      = d.role === 'hub'
   const isInferred = d.role === 'inferred'
   const isOrigin   = d.role === 'origin'
@@ -127,8 +160,9 @@ function SchematicNode({ data, selected }: NodeProps) {
   const fillOpacity = selected ? 0.15 : 0.07
   const fill = `rgba(201,168,76,${fillOpacity})`
 
-  // Label to the right for normal/origin/inferred; below for hub
+  // Label to the right for non-hub nodes; below for hub
   const labelRight = !isHub
+  const { w: containerW } = nodeSize(d.role, level)
 
   const labelStyle: React.CSSProperties = labelRight
     ? {
@@ -137,10 +171,9 @@ function SchematicNode({ data, selected }: NodeProps) {
         top: '50%',
         transform: 'translateY(-50%)',
         fontSize: isInferred ? '0.65rem' : '0.70rem',
-        fontWeight: isHub ? 700 : 500,
+        fontWeight: 500,
         color: isInferred ? '#9b8574' : '#2c1810',
         fontStyle: isInferred ? 'italic' : 'normal',
-        letterSpacing: isHub ? '0.03em' : '0',
         whiteSpace: 'nowrap',
         lineHeight: 1.25,
       }
@@ -151,7 +184,7 @@ function SchematicNode({ data, selected }: NodeProps) {
         color: '#2c1810',
         textAlign: 'center' as const,
         letterSpacing: '0.03em',
-        maxWidth: `${NODE_W.hub + 40}px`,
+        maxWidth: `${containerW}px`,
         whiteSpace: 'normal',
         wordBreak: 'break-word' as const,
       }
@@ -183,7 +216,7 @@ function SchematicNode({ data, selected }: NodeProps) {
         cursor: 'pointer',
         userSelect: 'none',
         position: 'relative',
-        width: `${NODE_W.normal}px`,
+        width: `${containerW}px`,
         height: `${svgSize}px`,
       }
     : {
@@ -203,22 +236,22 @@ function SchematicNode({ data, selected }: NodeProps) {
         height={svgSize}
         style={{ overflow: 'visible', display: 'block', flexShrink: 0 }}
       >
-        {/* Selection glow */}
+        {/* Selection glow — always a circle halo regardless of shape */}
         {selected && (
-          <circle cx={cx} cy={cy} r={r + 5}
+          <circle cx={cx} cy={cy} r={r + 6}
             fill="none" stroke="#c9a84c" strokeWidth={1.2} opacity={0.35} />
         )}
 
-        {/* Main circle */}
-        <circle
-          cx={cx} cy={cy} r={r}
-          stroke={strokeColor}
+        {/* Main shape — varies by spatial level */}
+        <NodeShape
+          level={level} cx={cx} cy={cy} r={r}
+          strokeColor={strokeColor}
+          fillColor={fill}
           strokeWidth={selected ? 2.2 : isHub ? 1.8 : 1.5}
           strokeDasharray={isInferred ? '4 3' : undefined}
-          fill={fill}
         />
 
-        {/* Hub concentric ring */}
+        {/* Hub inner ring (always circle — subtle accent) */}
         {isHub && (
           <circle cx={cx} cy={cy} r={r - 7}
             fill="none" stroke={strokeColor} strokeWidth={0.8} opacity={0.45} />
@@ -230,7 +263,7 @@ function SchematicNode({ data, selected }: NodeProps) {
           fill={isInferred ? '#b0a090' : strokeColor}
         />
 
-        {/* Origin return-loop mark */}
+        {/* Origin mark */}
         {isOrigin && (
           <text x={cx + r - 2} y={cy - r + 10}
             fontSize="9" fill={strokeColor}
@@ -245,25 +278,7 @@ function SchematicNode({ data, selected }: NodeProps) {
             textAnchor="middle" dominantBaseline="middle">?</text>
         )}
 
-        {/* Place-kind glyph */}
-        {d.placeKind && !isInferred && (() => {
-          const glyph = PLACE_KIND_GLYPH[d.placeKind?.toLowerCase() ?? '']
-          if (!glyph) return null
-          return (
-            <text
-              x={cx}
-              y={cy + r * 0.58}
-              textAnchor="middle"
-              dominantBaseline="middle"
-              fontSize={r * 0.52}
-              fill={strokeColor}
-              opacity={0.3}
-              style={{ fontFamily: 'sans-serif', userSelect: 'none', pointerEvents: 'none' }}
-            >
-              {glyph}
-            </text>
-          )
-        })()}
+        {/* Place-kind glyph (suppressed — shape already communicates category) */}
       </svg>
 
       {/* Place label */}
@@ -435,8 +450,10 @@ function InnerDiagram({
         for (const id of members) {
           const pos = positions[id]
           if (!pos) continue
-          const role = vm.nodes.find(n => n.id === id)?.role ?? 'normal'
-          const { w, h } = nodeSize(role)
+          const memberNode = vm.nodes.find(n => n.id === id)
+          const role = memberNode?.role ?? 'normal'
+          const level = memberNode?.spatialLevel ?? 2
+          const { w, h } = nodeSize(role, level)
           minX = Math.min(minX, pos.x - pad)
           minY = Math.min(minY, pos.y - pad)
           maxX = Math.max(maxX, pos.x + w + pad)
@@ -461,7 +478,7 @@ function InnerDiagram({
 
     // ── Place nodes ────────────────────────────────────────────────────────
     const placeNodes: RFNode[] = vm.nodes.map(n => {
-      const { w, h } = nodeSize(n.role)
+      const { w, h } = nodeSize(n.role, n.spatialLevel)
       return {
         id: n.id,
         type: 'place',
@@ -668,8 +685,32 @@ function LegendHull() {
   )
 }
 
+function LegendShape({ shape }: { shape: 'hex' | 'square' | 'circle' | 'diamond' }) {
+  const cx = 10, cy = 10, r = 7
+  const stroke = '#3d2a50', fill = 'rgba(201,168,76,0.10)'
+  if (shape === 'hex') {
+    const pts = Array.from({ length: 6 }, (_, k) => {
+      const a = -Math.PI / 2 + (k * Math.PI) / 3
+      return `${(cx + r * Math.cos(a)).toFixed(1)},${(cy + r * Math.sin(a)).toFixed(1)}`
+    }).join(' ')
+    return <svg width={20} height={20} aria-hidden="true" style={{ flexShrink: 0 }}><polygon points={pts} stroke={stroke} strokeWidth={1.3} fill={fill} /><circle cx={cx} cy={cy} r={2} fill={stroke} /></svg>
+  }
+  if (shape === 'square') {
+    const s = r * 1.05
+    return <svg width={20} height={20} aria-hidden="true" style={{ flexShrink: 0 }}><rect x={cx-s} y={cy-s} width={s*2} height={s*2} rx={2} stroke={stroke} strokeWidth={1.3} fill={fill} /><circle cx={cx} cy={cy} r={2} fill={stroke} /></svg>
+  }
+  if (shape === 'diamond') {
+    const d = r * 1.2
+    return <svg width={20} height={20} aria-hidden="true" style={{ flexShrink: 0 }}><polygon points={`${cx},${cy-d} ${cx+d*0.72},${cy} ${cx},${cy+d} ${cx-d*0.72},${cy}`} stroke={stroke} strokeWidth={1.3} fill={fill} /><circle cx={cx} cy={cy} r={2} fill={stroke} /></svg>
+  }
+  return <LegendDot color={stroke} />
+}
+
 const LEGEND_ROWS: Array<{ icon: React.ReactNode; label: string }> = [
-  { icon: <LegendDot color="#3d2a50" />,           label: 'Place' },
+  { icon: <LegendShape shape="hex" />,              label: 'L0 — World / region' },
+  { icon: <LegendShape shape="square" />,           label: 'L1 — Settlement / area' },
+  { icon: <LegendShape shape="circle" />,           label: 'L2 — Building / feature' },
+  { icon: <LegendShape shape="diamond" />,          label: 'L3 — Room / interior' },
   { icon: <LegendOrigin />,                         label: 'Story origin' },
   { icon: <LegendDot color="#b0a090" dashed />,    label: 'Inferred / uncertain' },
   { icon: <LegendHull />,                           label: 'Contains (group)' },
@@ -678,7 +719,7 @@ const LEGEND_ROWS: Array<{ icon: React.ReactNode; label: string }> = [
   { icon: <LegendLine color="#c0ad94" dash="5 5" />, label: 'Contains / located in' },
   { icon: <LegendLine color="#c9a84c" dash="2 8" />, label: 'Adjacent / near' },
   { icon: <LegendLine color="#7a9ab5" dash="4 4" arrow />, label: 'Compass bearing' },
-  { icon: <LegendLine color="#9b8574" dash="8 5" arrow />, label: 'Reached from' },
+  { icon: <LegendLine color="#9b8574" dash="8 5" arrow />, label: 'Route / reached from' },
   { icon: <LegendLine color="#d4bc8a" dash="3 8" />, label: 'Uncertain' },
 ]
 

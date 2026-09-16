@@ -4,6 +4,20 @@ import type { AtlasResponse, AtlasTravelRule, AtlasEntity } from './atlasApi'
 
 export type NodeRole = 'origin' | 'hub' | 'normal' | 'inferred'
 
+// 0 = world/region, 1 = settlement/area, 2 = building/feature, 3 = room/interior
+export type SpatialLevel = 0 | 1 | 2 | 3
+
+export function spatialLevel(placeKind: string | null): SpatialLevel {
+  switch (placeKind?.toLowerCase()) {
+    case 'world': case 'region': case 'island': return 0
+    case 'settlement': case 'site': case 'exterior': return 1
+    case 'building': case 'court': case 'landmark':
+    case 'body_of_water': case 'terrain_feature': case 'barrier': return 2
+    case 'room': case 'hall': return 3
+    default: return 2
+  }
+}
+
 export type EdgeStyle =
   | 'containment'  // dashed grey – CONTAINS, LOCATED_IN
   | 'directed'     // solid dark + arrow – LEADS_TO, DESCENDS_TO, etc.
@@ -26,6 +40,7 @@ export interface DiagramNode {
   revealSectionId: string | null
   claimCount: number
   isInferred: boolean
+  spatialLevel: SpatialLevel
 }
 
 export interface DiagramEdge {
@@ -77,7 +92,8 @@ const TRANSITION_PLACE_KINDS = new Set([
 ])
 
 const CONTAINMENT_PREDICATES = new Set([
-  'CONTAINS', 'LOCATED_IN', 'SURROUNDED_BY', 'IN_OR_ADJACENT_TO',
+  'CONTAINS', 'LOCATED_IN', 'SURROUNDED_BY',
+  // IN_OR_ADJACENT_TO is ambiguous — proximity, not a hull/containment signal
 ])
 
 const DIRECTIONAL_PREDICATES = new Set([
@@ -86,7 +102,8 @@ const DIRECTIONAL_PREDICATES = new Set([
 ])
 
 const PROXIMITY_PREDICATES = new Set([
-  'ADJACENT_TO', 'NEAR',
+  'ADJACENT_TO', 'NEAR', 'IN_OR_ADJACENT_TO', 'ON_BANK_OF',
+  'BORDERS', 'VISIBLE_FROM',
 ])
 
 const COMPASS_PREDICATES = new Set([
@@ -119,6 +136,9 @@ export const PREDICATE_DESCRIPTIONS: Record<string, string> = {
   CONNECTS_TO:       'Two places are directly connected.',
   ADJACENT_TO:       'Two places are directly side by side.',
   NEAR:              'Two places are in proximity (no direct connection implied).',
+  ON_BANK_OF:        'A land place sits on the bank or shore of a body of water.',
+  BORDERS:           'Two territories share a boundary.',
+  VISIBLE_FROM:      'A place is explicitly described as visible from another.',
   REACHED_FROM:      'Movement was narrated but intermediate geography is unknown.',
   NORTH_OF:          'Compass placement stated explicitly in source text.',
   SOUTH_OF:          'Compass placement stated explicitly in source text.',
@@ -140,6 +160,15 @@ export function buildDiagramViewModel(
   const entityIds = new Set(atlas.entities.map(e => e.id))
   const entityById = new Map(atlas.entities.map(e => [e.id, e]))
   const entityNames = new Map(atlas.entities.map(e => [e.id, e.name]))
+
+  // Alias→entityId index for resolving travel rule place names to IDs
+  const aliasToId = new Map<string, string>()
+  for (const entity of atlas.entities) {
+    aliasToId.set(entity.name.toLowerCase(), entity.id)
+    for (const alias of (entity.aliases ?? [])) {
+      if (alias) aliasToId.set(alias.toLowerCase(), entity.id)
+    }
+  }
 
   const transitionIds = new Set(
     atlas.entities
@@ -289,7 +318,43 @@ export function buildDiagramViewModel(
     .filter(e => !dissolvableIds.has(e.source) && !dissolvableIds.has(e.target))
     .map(e => ({ ...e, edgeLabel: null, claimId: e.id }))
 
-  const edges = [...remainingEdges, ...passageEdges]
+  // Convert travel rules to route edges where both endpoints resolve to entities
+  const seenEdgePairs = new Set<string>()
+  for (const e of [...remainingEdges, ...passageEdges]) {
+    seenEdgePairs.add(`${e.source}:${e.target}`)
+    seenEdgePairs.add(`${e.target}:${e.source}`)
+  }
+  const routeEdges: DiagramEdge[] = []
+  for (const rule of atlas.travel_rules) {
+    const payload = rule.payload as Record<string, unknown>
+    const fromName = String(payload.from ?? '').toLowerCase().trim()
+    const toName   = String(payload.to   ?? '').toLowerCase().trim()
+    if (!fromName || !toName) continue
+    const sourceId = aliasToId.get(fromName)
+    const targetId = aliasToId.get(toName)
+    if (!sourceId || !targetId) continue
+    if (!entityIds.has(sourceId) || !entityIds.has(targetId)) continue
+    if (sourceId === targetId) continue
+    if (dissolvableIds.has(sourceId) || dissolvableIds.has(targetId)) continue
+    if (seenEdgePairs.has(`${sourceId}:${targetId}`) || seenEdgePairs.has(`${targetId}:${sourceId}`)) continue
+    seenEdgePairs.add(`${sourceId}:${targetId}`)
+    seenEdgePairs.add(`${targetId}:${sourceId}`)
+    const via = payload.via ? String(payload.via) : null
+    routeEdges.push({
+      id: `route-${rule.id}`,
+      source: sourceId,
+      target: targetId,
+      sourceName: entityNames.get(sourceId) ?? String(payload.from ?? ''),
+      targetName: entityNames.get(targetId) ?? String(payload.to   ?? ''),
+      predicate: 'REACHED_FROM',
+      style: 'movement',
+      edgeLabel: via,
+      excerpt: null,
+      claimId: rule.id,
+    })
+  }
+
+  const edges = [...remainingEdges, ...passageEdges, ...routeEdges]
 
   // ── Assign node roles ─────────────────────────────────────────────────────
 
@@ -334,6 +399,7 @@ export function buildDiagramViewModel(
     revealSectionId: entity.provenance_section_id,
     claimCount: entity.claims.filter(c => c.claim_type === 'spatial').length,
     isInferred: entity.status === 'inferred',
+    spatialLevel: spatialLevel(entity.place_kind),
   }))
 
   nodes.sort((a, b) => a.narrativeOrder - b.narrativeOrder || a.id.localeCompare(b.id))

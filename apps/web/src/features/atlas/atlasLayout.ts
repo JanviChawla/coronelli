@@ -21,7 +21,7 @@ import {
   forceCollide,
 } from 'd3-force'
 import type { SimulationNodeDatum, SimulationLinkDatum } from 'd3-force'
-import type { DiagramNode, DiagramEdge } from './atlasGraph'
+import type { DiagramNode, DiagramEdge, SpatialLevel } from './atlasGraph'
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -40,6 +40,7 @@ const SIM_H = 800
 interface SimNode extends SimulationNodeDatum {
   id: string
   role: string
+  level: SpatialLevel
   narrativeOrder: number
   sectionId: string | null
 }
@@ -71,18 +72,19 @@ function linkStrength(style: DiagramEdge['style']): number {
   }
 }
 
-function chargeStrength(role: string): number {
-  switch (role) {
-    case 'hub':      return -580
-    case 'origin':   return -420
-    case 'inferred': return -160
-    default:         return -230
-  }
+// Base repulsion by level (L0 worlds need the most breathing room)
+const LEVEL_CHARGE: Record<SpatialLevel, number> = { 0: -640, 1: -480, 2: -230, 3: -160 }
+const LEVEL_COLLIDE: Record<SpatialLevel, number> = { 0: 90, 1: 76, 2: 62, 3: 48 }
+
+function chargeStrength(role: string, level: SpatialLevel): number {
+  if (role === 'hub') return LEVEL_CHARGE[level] * 1.4
+  if (role === 'inferred') return LEVEL_CHARGE[level] * 0.6
+  return LEVEL_CHARGE[level]
 }
 
-function collideRadius(role: string): number {
-  // Sized so node box + label have clearance; hub label is wider
-  return role === 'hub' ? 82 : 62
+function collideRadius(role: string, level: SpatialLevel): number {
+  const base = LEVEL_COLLIDE[level]
+  return role === 'hub' ? base + 20 : base
 }
 
 // ── Layout entry point ────────────────────────────────────────────────────────
@@ -126,8 +128,8 @@ export function computeLayout(
   for (const edge of edges) {
     if (edge.style !== 'containment') continue
     // CONTAINS: "A contains B" → parent=source, child=target
-    // LOCATED_IN / SURROUNDED_BY / IN_OR_ADJACENT_TO: "A is in B" → parent=target, child=source
-    const isChildEdge = ['LOCATED_IN', 'SURROUNDED_BY', 'IN_OR_ADJACENT_TO'].includes(edge.predicate)
+    // LOCATED_IN / SURROUNDED_BY: "A is in B" → parent=target, child=source
+    const isChildEdge = ['LOCATED_IN', 'SURROUNDED_BY'].includes(edge.predicate)
     const parentId = isChildEdge ? edge.target : edge.source
     const childId  = isChildEdge ? edge.source : edge.target
     if (!containmentMap[parentId]) containmentMap[parentId] = []
@@ -155,6 +157,7 @@ export function computeLayout(
     return {
       id: n.id,
       role: n.role,
+      level: n.spatialLevel,
       narrativeOrder: n.narrativeOrder,
       sectionId: n.revealSectionId,
       x: seedX,
@@ -190,11 +193,11 @@ export function computeLayout(
         .distance(d => linkDistance(d.edgeStyle))
         .strength(d => linkStrength(d.edgeStyle)),
     )
-    .force('charge',  forceManyBody<SimNode>().strength(d => chargeStrength(d.role)))
+    .force('charge',  forceManyBody<SimNode>().strength(d => chargeStrength(d.role, d.level)))
     .force('center',  forceCenter(SIM_W / 2, SIM_H / 2).strength(0.07))
     .force('x',       forceX<SimNode>(d => targetX(d.narrativeOrder)).strength(0.07))
     .force('y',       forceY<SimNode>(d => sectionTargetY(d.sectionId)).strength(0.04))
-    .force('collide', forceCollide<SimNode>(d => collideRadius(d.role)).strength(0.92))
+    .force('collide', forceCollide<SimNode>(d => collideRadius(d.role, d.level)).strength(0.92))
     .force('cluster', sceneClusterForce)
     .stop()
     .tick(500)
