@@ -347,9 +347,13 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
 
     // ── Catalog done but not confirmed (or confirmed but no evidence yet) ──────
     if (catalogDone) {
-      const entities = await fetchDocumentEntityCandidates(document.id)
+      const [entities, suggestions] = await Promise.all([
+        fetchDocumentEntityCandidates(document.id),
+        fetchPlaceSuggestions(document.id),
+      ])
       setEntityCandidates(entities)
       setRejectedCandidateIds(new Set(entities.filter(e => e.review_state === 'rejected').map(e => e.id)))
+      setPlaceSuggestions(suggestions)
       // If evidence candidates already exist from a previous run, mark them stale.
       try {
         const bySection: Record<string, Candidate[]> = {}
