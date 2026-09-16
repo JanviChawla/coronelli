@@ -711,9 +711,10 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
                     style={{
                       width: '100%',
                       display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.65rem',
-                      padding: '0.45rem 0.9rem',
+                      flexDirection: 'column',
+                      alignItems: 'stretch',
+                      gap: 0,
+                      padding: '0.5rem 0.9rem',
                       background: 'none',
                       border: 'none',
                       borderBottom: '1px solid rgba(212,188,138,0.15)',
@@ -723,24 +724,41 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
                       transition: 'opacity 0.15s, background 0.15s',
                     }}
                   >
-                    <span style={{
-                      width: '1.1rem', height: '1.1rem', borderRadius: '50%', flexShrink: 0,
-                      border: isRejected ? '1.5px solid rgba(180,60,60,0.5)' : '1.5px solid var(--gold)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: '0.5rem',
-                      color: isRejected ? 'rgba(180,60,60,0.7)' : 'var(--gold)',
-                    }}>
-                      {isRejected ? '✕' : '◉'}
-                    </span>
-                    <span style={{ flex: 1, fontSize: '0.9rem', color: isRejected ? 'var(--ink-faint)' : 'var(--ink)', textDecoration: isRejected ? 'line-through' : 'none' }}>
-                      {name}
-                    </span>
-                    {type && (
-                      <span style={{ fontSize: '0.68rem', color: 'var(--ink-faint)', flexShrink: 0 }}>{type}</span>
+                    {/* top row: icon + name + type + confidence */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', width: '100%' }}>
+                      <span style={{
+                        width: '1.1rem', height: '1.1rem', borderRadius: '50%', flexShrink: 0,
+                        border: isRejected ? '1.5px solid rgba(180,60,60,0.5)' : '1.5px solid var(--gold)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '0.5rem',
+                        color: isRejected ? 'rgba(180,60,60,0.7)' : 'var(--gold)',
+                      }}>
+                        {isRejected ? '✕' : '◉'}
+                      </span>
+                      <span style={{ flex: 1, fontSize: '0.9rem', color: isRejected ? 'var(--ink-faint)' : 'var(--ink)', textDecoration: isRejected ? 'line-through' : 'none' }}>
+                        {name}
+                      </span>
+                      {type && (
+                        <span style={{ fontSize: '0.68rem', color: 'var(--ink-faint)', flexShrink: 0 }}>{type}</span>
+                      )}
+                      <span style={{ fontSize: '0.72rem', color: 'var(--gold)', opacity: 0.65, flexShrink: 0 }}>
+                        {(c.confidence * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                    {/* excerpt line */}
+                    {c.excerpt && (
+                      <div style={{
+                        paddingLeft: '1.75rem',
+                        fontSize: '0.75rem',
+                        color: 'var(--ink-faint)',
+                        fontStyle: 'italic',
+                        lineHeight: 1.4,
+                        marginTop: '0.18rem',
+                        opacity: isRejected ? 0.6 : 1,
+                      }}>
+                        "{c.excerpt.length > 120 ? c.excerpt.slice(0, 120) + '…' : c.excerpt}"
+                      </div>
                     )}
-                    <span style={{ fontSize: '0.72rem', color: 'var(--gold)', opacity: 0.65, flexShrink: 0 }}>
-                      {(c.confidence * 100).toFixed(0)}%
-                    </span>
                   </button>
                 )
               })}
