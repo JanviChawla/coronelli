@@ -7,7 +7,7 @@ import type { Document, Section } from './sourceApi'
 import { resectionDocument } from './sourceApi'
 import { fetchAtlas } from '../atlas/atlasApi'
 import type { AtlasEntity, AtlasTravelRule } from '../atlas/atlasApi'
-import { triggerSynthesis } from '../synthesis/synthesisApi'
+import { triggerSynthesis, getSynthesisProgress } from '../synthesis/synthesisApi'
 
 interface Props {
   document: Document
@@ -183,12 +183,12 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
   const [atlasEntities, setAtlasEntities] = useState<AtlasEntity[]>([])
   const [atlasTravelRules, setAtlasTravelRules] = useState<AtlasTravelRule[]>([])
   const [synthElapsedMs, setSynthElapsedMs] = useState(0)
-  const [synthPass, setSynthPass] = useState<1 | 2>(1)
+  const [synthPhase, setSynthPhase] = useState<string | null>(null)
   const [harvestPass, setHarvestPass] = useState<1 | 2>(1)
   const [catalogEntityCount, setCatalogEntityCount] = useState(0)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const synthPassTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const synthPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     if (!sections.length) return
@@ -324,14 +324,20 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
   async function handleSynthesize(force = false) {
     setPhase('synthesizing')
     setSynthElapsedMs(0)
-    setSynthPass(1)
+    setSynthPhase(null)
     const synthStart = Date.now()
     timerRef.current = setInterval(() => setSynthElapsedMs(Date.now() - synthStart), 100)
-    synthPassTimerRef.current = setTimeout(() => setSynthPass(2), 15000)
+    // Poll the progress endpoint every 2 s so phase labels update in real time
+    synthPollRef.current = setInterval(async () => {
+      try {
+        const prog = await getSynthesisProgress(document.id)
+        if (prog.current_phase) setSynthPhase(prog.current_phase)
+      } catch { /* ignore transient poll errors */ }
+    }, 2000)
     try {
       await triggerSynthesis(document.id, force)
       if (timerRef.current) clearInterval(timerRef.current)
-      if (synthPassTimerRef.current) clearTimeout(synthPassTimerRef.current)
+      if (synthPollRef.current) clearInterval(synthPollRef.current)
       const atlas = await fetchAtlas(document.id)
       setCanonicalEntityCount(atlas.entity_count)
       setCanonicalClaimCount(atlas.claim_count)
@@ -341,7 +347,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
       onAtlasChanged?.()
     } catch (e) {
       if (timerRef.current) clearInterval(timerRef.current)
-      if (synthPassTimerRef.current) clearTimeout(synthPassTimerRef.current)
+      if (synthPollRef.current) clearInterval(synthPollRef.current)
       setWorkflowError(e instanceof Error ? e.message : 'Synthesis failed.')
       setErrorInStep(4)
       setPhase('error')
@@ -565,7 +571,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
                 <div style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '0.15rem' }}>
                   {harvestPass === 2
                     ? <>§{currentIdx} of {sections.length}{currentTitle ? <> · <em>{currentTitle}</em></> : ''} · {candidatesSoFar} fragment{candidatesSoFar !== 1 ? 's' : ''}</>
-                    : <>Claims, routes, and visual observations</>
+                    : <>7 focused passes: claims, routes, visuals, movement, access, containment, dedup</>
                   }
                 </div>
               </div>
@@ -578,10 +584,10 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
       ) : phase === 'ready' ? (
         <StepActive n={3} label="Harvest evidence">
           <p style={{ fontSize: '0.95rem', color: 'var(--ink-muted)', marginTop: '0.5rem', marginBottom: '1.25rem', lineHeight: 1.6 }}>
-            Two-pass extraction over all {sections.length} section{sections.length !== 1 ? 's' : ''}:
+            Eight passes over all {sections.length} section{sections.length !== 1 ? 's' : ''}:
             Pass 1 identifies every named place across the whole book,
-            then Pass 2 extracts spatial claims, routes, and visual descriptions
-            anchored to that complete place list.
+            then 7 focused passes extract spatial claims, routes, visual observations,
+            movement, access, containment, and entity deduplication — one mission per call.
           </p>
           <div style={{
             borderTop: '1px solid rgba(212, 188, 138, 0.5)',
@@ -739,40 +745,46 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
         </StepActive>
       ) : phase === 'synthesizing' ? (
         <StepActive n={4} label="Synthesize atlas" processing>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', marginTop: '0.25rem' }}>
-            {/* Pass 1 */}
-            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', opacity: synthPass > 1 ? 0.55 : 1, transition: 'opacity 0.4s' }}>
-              <div style={{
-                width: '1.35rem', height: '1.35rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.05rem',
-                ...(synthPass > 1
-                  ? { background: 'radial-gradient(circle at 40% 35%, #7a3528, #3d1208)', boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(240,215,190,0.8)', fontSize: '0.45rem' }
-                  : { background: 'var(--step-active-circle)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '0.55rem' }
-                ),
-              }} className={synthPass === 1 ? 'step-processing' : ''}>
-                {synthPass > 1 ? '✦' : 'I'}
+          {(() => {
+            const SYNTH_PHASES: Array<{ key: string; label: string; detail: string }> = [
+              { key: 'entities', label: 'Entity consolidation', detail: `Merging ${sections.length}-section place list into canonical entries` },
+              { key: 'spatial',  label: 'Spatial claims',       detail: 'LOCATED_IN, CONTAINS, NEAR, ADJACENT_TO, SAME_AS' },
+              { key: 'visual',   label: 'Visual observations',  detail: 'Appearance, atmosphere, color, material, scale' },
+              { key: 'routes',   label: 'Routes',               detail: 'Traversal paths between places' },
+              { key: 'access',   label: 'Access rules',         detail: 'Permitted, prohibited, and conditional entry' },
+              { key: 'movement', label: 'Movement',             detail: 'Narrated journeys and character travel arcs' },
+            ]
+            const currentIdx = SYNTH_PHASES.findIndex(p => p.key === synthPhase)
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem', marginTop: '0.25rem' }}>
+                {SYNTH_PHASES.map((p, i) => {
+                  const done = currentIdx > i
+                  const active = currentIdx === i
+                  const locked = currentIdx < i
+                  return (
+                    <div key={p.key} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', opacity: locked ? 0.35 : done ? 0.55 : 1, transition: 'opacity 0.4s' }}>
+                      <div style={{
+                        width: '1.35rem', height: '1.35rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.05rem',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.45rem',
+                        ...(done
+                          ? { background: 'radial-gradient(circle at 40% 35%, #7a3528, #3d1208)', boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3)', color: 'rgba(240,215,190,0.8)' }
+                          : active
+                            ? { background: 'var(--step-active-circle)', color: '#fff' }
+                            : { border: '1.5px solid var(--gold)', color: 'var(--gold)' }
+                        ),
+                      }} className={active ? 'step-processing' : ''}>
+                        {done ? '✦' : ''}
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '0.88rem', color: 'var(--ink)', fontWeight: active ? 600 : 400 }}>{p.label}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--ink-faint)', marginTop: '0.1rem' }}>{p.detail}</div>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
-              <div>
-                <div style={{ fontSize: '0.9rem', color: 'var(--ink)', fontWeight: 500 }}>Pass 1 — Entity consolidation</div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '0.15rem' }}>Building canonical place list across {sections.length} sections</div>
-              </div>
-            </div>
-            {/* Pass 2 */}
-            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', opacity: synthPass < 2 ? 0.38 : 1, transition: 'opacity 0.4s' }}>
-              <div style={{
-                width: '1.35rem', height: '1.35rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.05rem',
-                border: synthPass < 2 ? '1.5px solid var(--gold)' : undefined,
-                background: synthPass >= 2 ? 'var(--step-active-circle)' : undefined,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: synthPass >= 2 ? '#fff' : 'var(--gold)', fontSize: '0.55rem',
-              }} className={synthPass === 2 ? 'step-processing' : ''}>
-                {synthPass >= 2 ? 'II' : ''}
-              </div>
-              <div>
-                <div style={{ fontSize: '0.9rem', color: 'var(--ink)', fontWeight: 500 }}>Pass 2 — Evidence synthesis</div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '0.15rem' }}>Anchoring {totalCandidates} claim{totalCandidates !== 1 ? 's' : ''}, routes, and visual observations</div>
-              </div>
-            </div>
-          </div>
+            )
+          })()}
           <p style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', marginTop: '1rem', fontFamily: 'monospace' }}>
             {(synthElapsedMs / 1000).toFixed(1)}s elapsed
           </p>
@@ -780,9 +792,10 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
       ) : phase === 'harvested' ? (
         <StepActive n={4} label="Synthesize atlas">
           <p style={{ fontSize: '0.95rem', color: 'var(--ink-muted)', marginTop: '0.5rem', marginBottom: '1.25rem', lineHeight: 1.6 }}>
-            Stage 2 reads all {totalCandidates} evidence fragment{totalCandidates !== 1 ? 's' : ''} in one pass
-            and writes a canonical atlas — merging duplicates, resolving aliases,
-            surfacing contradictions, and anchoring each place to its first revealed section.
+            Six focused passes over {totalCandidates} evidence fragment{totalCandidates !== 1 ? 's' : ''}:
+            Pass 1 consolidates all entity candidates into a canonical place list,
+            then 5 targeted passes synthesize spatial claims, visual observations,
+            routes, access rules, and movement — one kind per call.
           </p>
           <div style={{
             borderTop: '1px solid rgba(212, 188, 138, 0.5)',

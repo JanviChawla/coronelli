@@ -58,6 +58,28 @@ class ProvisionalAtlasResponse(BaseModel):
     item_count: int
 
 
+class SynthesisProgressResponse(BaseModel):
+    status: str  # "running" | "idle"
+    current_phase: str | None
+
+
+@router.get("/api/documents/{document_id}/synthesis/progress", response_model=SynthesisProgressResponse)
+def get_synthesis_progress(
+    document_id: str,
+    db: Session = Depends(get_db),
+) -> SynthesisProgressResponse:
+    """Return the current phase of an in-progress synthesis run, for live polling."""
+    run = (
+        db.query(SynthesisRun)
+        .filter(SynthesisRun.document_id == document_id, SynthesisRun.status == "running")
+        .order_by(SynthesisRun.started_at.desc())
+        .first()
+    )
+    if run is None:
+        return SynthesisProgressResponse(status="idle", current_phase=None)
+    return SynthesisProgressResponse(status="running", current_phase=run.current_phase)
+
+
 @router.post("/api/documents/{document_id}/synthesize", response_model=SynthesisResponse, status_code=201)
 def synthesize_document(
     document_id: str,

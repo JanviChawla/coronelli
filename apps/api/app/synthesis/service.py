@@ -227,13 +227,17 @@ def run_synthesis(
         started_at=datetime.now(timezone.utc),
     )
     session.add(run)
-    session.flush()
+    session.commit()  # commit immediately so the polling endpoint can see it
+
+    def _phase_callback(phase: str) -> None:
+        run.current_phase = phase
+        session.commit()
 
     try:
         entity_ledger = [item for item in ledger if item["kind"] == "entity"]
         evidence_ledger = [item for item in ledger if item["kind"] != "entity"]
         if hasattr(provider, "synthesize_two_pass"):
-            result = provider.synthesize_two_pass(entity_ledger, evidence_ledger)
+            result = provider.synthesize_two_pass(entity_ledger, evidence_ledger, phase_callback=_phase_callback)
         else:
             result = provider.synthesize(ledger)
 

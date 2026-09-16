@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -114,6 +115,7 @@ class OpenAISynthesisProvider:
         self,
         entity_ledger: list[dict],
         evidence_ledger: list[dict],
+        phase_callback: Callable[[str], None] | None = None,
     ) -> SynthesisResult:
         """Pass 1: entity consolidation (with SAME_AS hints). Pass 2: 5 focused evidence sub-passes."""
 
@@ -129,6 +131,8 @@ class OpenAISynthesisProvider:
         ]
 
         # ── Pass 1: entity consolidation ─────────────────────────────────────
+        if phase_callback:
+            phase_callback("entities")
         entity_json = json.dumps(entity_ledger, indent=2, ensure_ascii=False)
         entity_user = f"Entity candidates ({len(entity_ledger)} unique places):\n{entity_json}\n\n"
         if same_as_hints:
@@ -180,6 +184,8 @@ class OpenAISynthesisProvider:
         subpass_responses: dict[str, dict] = {}
 
         for subpass_name, system_prompt, input_kinds, allowed_output_kinds in _SUBPASSES:
+            if phase_callback:
+                phase_callback(subpass_name)
             filtered = [item for item in evidence_ledger if item.get("kind") in input_kinds]
             if not filtered:
                 _log.debug("Synthesis sub-pass %s: no candidates, skipping", subpass_name)

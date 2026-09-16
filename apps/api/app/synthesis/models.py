@@ -23,6 +23,7 @@ class SynthesisRun(Base):
     raw_response: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     evidence_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    current_phase: Mapped[str | None] = mapped_column(String, nullable=True)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )

@@ -31,6 +31,17 @@ export type SynthesisResponse = {
   from_cache: boolean
 }
 
+export type SynthesisProgress = {
+  status: 'running' | 'idle'
+  current_phase: string | null
+}
+
+export async function getSynthesisProgress(documentId: string): Promise<SynthesisProgress> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/synthesis/progress`)
+  if (!res.ok) throw new Error(`Progress fetch failed: ${res.statusText}`)
+  return res.json()
+}
+
 export async function triggerSynthesis(documentId: string, force = false): Promise<SynthesisResponse> {
   const res = await fetch(`${BASE}/api/documents/${documentId}/synthesize?force=${force}`, {
     method: 'POST',
