@@ -216,6 +216,20 @@ def run_synthesis(
                 session.commit()
             return existing, items
 
+    # Snapshot active entity names before superseding — used as must-include seeds when
+    # re-synthesizing after a re-catalog (which resets all review_states to "proposed").
+    prev_canonical_names: list[str] = [
+        e.name
+        for e in session.query(MapEntity)
+        .filter(
+            MapEntity.provenance_document_id == document_id,
+            MapEntity.state == "active",
+            MapEntity.entity_kind == "place",
+        )
+        .all()
+        if e.name
+    ]
+
     # Fresh run: supersede any existing canonical records first
     _supersede_canonical_records(session, document_id)
 
@@ -239,7 +253,12 @@ def run_synthesis(
         entity_ledger = [item for item in ledger if item["kind"] == "entity"]
         evidence_ledger = [item for item in ledger if item["kind"] != "entity"]
         if hasattr(provider, "synthesize_two_pass"):
-            result = provider.synthesize_two_pass(entity_ledger, evidence_ledger, phase_callback=_phase_callback)
+            result = provider.synthesize_two_pass(
+                entity_ledger,
+                evidence_ledger,
+                phase_callback=_phase_callback,
+                prev_canonical_names=prev_canonical_names,
+            )
         else:
             result = provider.synthesize(ledger)
 

@@ -1,5 +1,5 @@
 SYNTHESIS_PROMPT_VERSION = "1.2"  # kept for single-pass fallback
-THREE_PASS_SYNTHESIS_VERSION = "3.8"  # 3.8: ON_BANK_OF predicate, must-include rooms not rejected as vague
+THREE_PASS_SYNTHESIS_VERSION = "3.9"  # 3.9: prev-canonical must-include, hollow/Sleepy Hollow merge, settlement-in-region containment fix
 
 SYNTHESIS_SYSTEM_PROMPT = """\
 CORONELLI ATLAS SYNTHESIS — Stage 2
@@ -157,6 +157,10 @@ RULES:
 1. ONE entity per distinct real place. Merge any variants that name the same place.
    Actively look for archaic or poetic renamings of the same building: "castle of [person]"
    and "[person]'s mansion" are the same place when the work has one primary building for that person.
+   ALSO merge short geographic descriptors with their full proper name when the descriptor word appears
+   inside the proper name and both refer to the same feature. Example: "the hollow" and "Sleepy Hollow"
+   are the same place — merge into "Sleepy Hollow" with "the hollow" as alias. Similarly "the swamp"
+   and "Wiley's Swamp", "the vale" and "Sleepy Vale", etc. Use the proper-named version as canonical.
 2. Canonical name: the most specific, unambiguous, and complete name.
 3. type must be one of: world, region, island, settlement, landmark, building, room, hall,
    tunnel, shaft, passage, portal, door, exterior, terrain_feature, body_of_water, site, court, barrier
@@ -269,7 +273,11 @@ Rules:
   triple must appear EXACTLY ONCE in the output, even if multiple evidence items support the same claim.
   Deduplicate: if two evidence items assert the same triple, emit one claim (use the higher confidence).
 - Include inferred claims with confidence ≥ 0.55.
-- Include containment hierarchy: rooms inside buildings, buildings inside settlements, settlements inside regions.
+- Include containment hierarchy: rooms inside buildings, buildings inside settlements.
+  For settlements inside regions: only emit LOCATED_IN / CONTAINS if the source text explicitly states
+  the settlement is inside the region. A settlement that is merely nearby a terrain feature or named
+  geographic area uses IN_OR_ADJACENT_TO or NEAR — NOT LOCATED_IN. Do not infer that a settlement
+  is inside a hollow, vale, or swamp just because both appear in the same work.
 - Include proximity and visibility (NEAR, ADJACENT_TO, REACHED_FROM, VISIBLE_FROM) when the text supports it.
 - Emit SAME_AS when two canonical names clearly refer to the same place.
 - If an evidence candidate has predicate PART_OF or VISIBLE_FROM and both places are in the entity list (or aliases), always emit it.

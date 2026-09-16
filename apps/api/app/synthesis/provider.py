@@ -115,6 +115,7 @@ class OpenAISynthesisProvider:
         entity_ledger: list[dict],
         evidence_ledger: list[dict],
         phase_callback: Callable[[str], None] | None = None,
+        prev_canonical_names: list[str] | None = None,
     ) -> SynthesisResult:
         """Pass 1: entity consolidation (with SAME_AS hints). Pass 2: 5 focused evidence sub-passes."""
 
@@ -133,18 +134,46 @@ class OpenAISynthesisProvider:
         if phase_callback:
             phase_callback("entities")
 
-        # Build must-include list from human-approved catalog entities.
-        # These were explicitly reviewed and accepted by the user; the model
-        # must not silently drop them during consolidation.
-        must_include = [
-            {
-                "name": item["payload"].get("name", ""),
-                "type": item["payload"].get("type", ""),
-                "aliases": item["payload"].get("aliases", []),
+        # Build must-include from two sources:
+        # 1. Human-approved catalog candidates (review_state == "approved")
+        # 2. Previously-canonical entity names (survives re-catalog, which resets review_state to "proposed")
+        # De-duplicate by normalized name so neither source double-counts.
+        must_include_keys: set[str] = set()
+        must_include: list[dict] = []
+
+        def _add_must(name: str, type_: str = "", aliases: list | None = None) -> None:
+            key = name.strip().lower()
+            if key and key not in must_include_keys:
+                must_include_keys.add(key)
+                must_include.append({"name": name, "type": type_, "aliases": aliases or []})
+
+        # Source 1: approved catalog candidates
+        for item in entity_ledger:
+            if item.get("review_state") == "approved" and item["payload"].get("name"):
+                _add_must(
+                    item["payload"]["name"],
+                    item["payload"].get("type", ""),
+                    item["payload"].get("aliases", []),
+                )
+
+        # Source 2: previously-canonical entity names (populated when re-synthesizing after re-catalog)
+        # Try to enrich with type/aliases from the entity_ledger; fall back to bare name.
+        if prev_canonical_names:
+            ledger_by_name = {
+                (item["payload"].get("name") or "").strip().lower(): item
+                for item in entity_ledger
+                if item["payload"].get("name")
             }
-            for item in entity_ledger
-            if item.get("review_state") == "approved" and item["payload"].get("name")
-        ]
+            for name in prev_canonical_names:
+                ledger_item = ledger_by_name.get(name.strip().lower())
+                if ledger_item:
+                    _add_must(
+                        ledger_item["payload"].get("name", name),
+                        ledger_item["payload"].get("type", ""),
+                        ledger_item["payload"].get("aliases", []),
+                    )
+                else:
+                    _add_must(name)
 
         entity_json = json.dumps(entity_ledger, indent=2, ensure_ascii=False)
         entity_user = ""
