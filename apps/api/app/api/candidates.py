@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db.engine import get_db
+from app.db.models import SourceSection
 from app.domain.review import ReviewError, ReviewEvent, review_candidate as _review_candidate
 from app.domain.world import MapClaim, MapEntity
 from app.extraction.models import Candidate
@@ -176,3 +177,45 @@ def list_map_entities(db: Session = Depends(get_db)):
 def list_map_claims(db: Session = Depends(get_db)):
     claims = db.query(MapClaim).filter(MapClaim.state == "active").all()
     return [MapClaimOut.model_validate(c) for c in claims]
+
+
+class ReviewStateRequest(BaseModel):
+    review_state: str  # "proposed" | "approved" | "rejected"
+
+
+@router.get("/api/documents/{document_id}/entity-candidates", response_model=list[CandidateOut])
+def list_document_entity_candidates(document_id: str, db: Session = Depends(get_db)):
+    """Return all entity candidates from catalog runs for a document, across all sections."""
+    section_ids = [
+        s.id for s in db.query(SourceSection).filter(SourceSection.document_id == document_id).all()
+    ]
+    if not section_ids:
+        return []
+    candidates = (
+        db.query(Candidate)
+        .filter(
+            Candidate.section_id.in_(section_ids),
+            Candidate.kind == "entity",
+        )
+        .order_by(Candidate.ordinal)
+        .all()
+    )
+    return [CandidateOut.model_validate(c) for c in candidates]
+
+
+@router.patch("/api/candidates/{candidate_id}/review-state", response_model=CandidateOut)
+def patch_candidate_review_state(
+    candidate_id: str,
+    body: ReviewStateRequest,
+    db: Session = Depends(get_db),
+):
+    """Toggle a candidate's review_state without going through the full review workflow."""
+    candidate = db.get(Candidate, candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail=f"Candidate '{candidate_id}' not found.")
+    if body.review_state not in ("proposed", "approved", "rejected"):
+        raise HTTPException(status_code=422, detail="review_state must be 'proposed', 'approved', or 'rejected'")
+    candidate.review_state = body.review_state
+    db.commit()
+    db.refresh(candidate)
+    return CandidateOut.model_validate(candidate)

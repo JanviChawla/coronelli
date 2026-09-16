@@ -87,6 +87,25 @@ class PreflightResponse(BaseModel):
     cached_run_id: str | None
 
 
+class ExtractionProgressResponse(BaseModel):
+    status: str  # "running" | "idle"
+    current_phase: str | None
+
+
+@router.get("/api/sections/{section_id}/extraction/progress", response_model=ExtractionProgressResponse)
+def get_extraction_progress(section_id: str, db: Session = Depends(get_db)) -> ExtractionProgressResponse:
+    """Return the current sub-pass phase of an in-progress evidence extraction, for live polling."""
+    run = (
+        db.query(ExtractionRun)
+        .filter(ExtractionRun.section_id == section_id, ExtractionRun.status == "running")
+        .order_by(ExtractionRun.started_at.desc())
+        .first()
+    )
+    if run is None:
+        return ExtractionProgressResponse(status="idle", current_phase=None)
+    return ExtractionProgressResponse(status="running", current_phase=run.current_phase)
+
+
 @router.get("/api/sections/{section_id}/extract/preflight", response_model=PreflightResponse)
 def extract_preflight(section_id: str, db: Session = Depends(get_db)) -> PreflightResponse:
     section = db.get(SourceSection, section_id)
@@ -280,7 +299,11 @@ def extract_section_evidence(
     ]
     entity_candidates = (
         db.query(Candidate)
-        .filter(Candidate.section_id.in_(all_section_ids), Candidate.kind == "entity")
+        .filter(
+            Candidate.section_id.in_(all_section_ids),
+            Candidate.kind == "entity",
+            Candidate.review_state != "rejected",
+        )
         .all()
     ) if all_section_ids else []
 

@@ -242,6 +242,7 @@ class OpenAIExtractionProvider:
         self,
         section: SourceSection,
         full_catalog_list: list[dict],
+        phase_callback=None,
     ) -> tuple[list[RawCandidate], int, int]:
         """Run all 5 focused evidence sub-passes and return merged candidates + token counts."""
 
@@ -260,24 +261,26 @@ class OpenAIExtractionProvider:
             place_catalog_json=catalog_json,
         )
 
-        # (version, system_prompt, user_content, allowed_kinds)
-        _SUBPASSES: list[tuple[str, str, str, set[str]]] = [
+        # (version, label, system_prompt, user_content, allowed_kinds)
+        _SUBPASSES: list[tuple[str, str, str, str, set[str]]] = [
             # Text + catalog passes
-            (GLOBAL_EVIDENCE_SPATIAL_VERSION,    SPATIAL_CLAIMS_SYSTEM_PROMPT,   user_content,         {"claim", "scene_anchor"}),
-            (GLOBAL_EVIDENCE_VISUAL_VERSION,     VISUAL_CLAIMS_SYSTEM_PROMPT,    user_content,         {"visual_claim"}),
-            (GLOBAL_EVIDENCE_TRAVELRULE_VERSION, TRAVELRULE_SYSTEM_PROMPT,       user_content,         {"travel_rule"}),
-            (GLOBAL_EVIDENCE_MOVEMENT_VERSION,   MOVEMENT_SYSTEM_PROMPT,         user_content,         {"movement"}),
-            (GLOBAL_EVIDENCE_ACCESS_VERSION,     ACCESS_SYSTEM_PROMPT,           user_content,         {"access"}),
+            (GLOBAL_EVIDENCE_SPATIAL_VERSION,    "spatial",     SPATIAL_CLAIMS_SYSTEM_PROMPT,    user_content,         {"claim", "scene_anchor"}),
+            (GLOBAL_EVIDENCE_VISUAL_VERSION,     "visual",      VISUAL_CLAIMS_SYSTEM_PROMPT,     user_content,         {"visual_claim"}),
+            (GLOBAL_EVIDENCE_TRAVELRULE_VERSION, "routes",      TRAVELRULE_SYSTEM_PROMPT,        user_content,         {"travel_rule"}),
+            (GLOBAL_EVIDENCE_MOVEMENT_VERSION,   "movement",    MOVEMENT_SYSTEM_PROMPT,          user_content,         {"movement"}),
+            (GLOBAL_EVIDENCE_ACCESS_VERSION,     "access",      ACCESS_SYSTEM_PROMPT,            user_content,         {"access"}),
             # Catalog-only passes (no section text needed)
-            (GLOBAL_EVIDENCE_CONTAINMENT_VERSION, CONTAINMENT_SWEEP_SYSTEM_PROMPT, catalog_only_content, {"claim"}),
-            (GLOBAL_EVIDENCE_DEDUP_VERSION,       ENTITY_DEDUP_SYSTEM_PROMPT,      catalog_only_content, {"claim"}),
+            (GLOBAL_EVIDENCE_CONTAINMENT_VERSION, "containment", CONTAINMENT_SWEEP_SYSTEM_PROMPT, catalog_only_content, {"claim"}),
+            (GLOBAL_EVIDENCE_DEDUP_VERSION,       "dedup",       ENTITY_DEDUP_SYSTEM_PROMPT,      catalog_only_content, {"claim"}),
         ]
 
         all_candidates: list[RawCandidate] = []
         total_in = 0
         total_out = 0
 
-        for version, system_prompt, subpass_user, allowed_kinds in _SUBPASSES:
+        for version, label, system_prompt, subpass_user, allowed_kinds in _SUBPASSES:
+            if phase_callback:
+                phase_callback(label)
             try:
                 resp = self._client.chat.completions.create(
                     model=self._model,
@@ -404,11 +407,13 @@ class OpenAIExtractionProvider:
         self,
         section: SourceSection,
         global_catalog: list[dict],
+        phase_callback=None,
     ) -> ExtractionResult:
-        """Global evidence pass: 5 focused sub-passes using the full global catalog."""
+        """Global evidence pass: 7 focused sub-passes using the full global catalog."""
         candidates, total_in, total_out = self._run_evidence_subpasses(
             section=section,
             full_catalog_list=global_catalog,
+            phase_callback=phase_callback,
         )
         return ExtractionResult(
             candidates=candidates,

@@ -28,22 +28,6 @@ export async function fetchPreflight(sectionId: string): Promise<PreflightResult
   return res.json()
 }
 
-export async function triggerExtraction(sectionId: string, force = false): Promise<ExtractionRunResult> {
-  const url = force
-    ? `${BASE}/api/sections/${sectionId}/extract?force=true`
-    : `${BASE}/api/sections/${sectionId}/extract`
-  const res = await fetch(url, { method: 'POST' })
-  if (!res.ok) {
-    let detail = `Extraction failed (HTTP ${res.status})`
-    try {
-      const body = await res.json()
-      if (body?.detail) detail = body.detail
-    } catch { /* ignore parse errors */ }
-    throw new Error(detail)
-  }
-  return res.json()
-}
-
 export async function triggerCatalogExtraction(sectionId: string, force = false): Promise<ExtractionRunResult> {
   const url = `${BASE}/api/sections/${sectionId}/extract/catalog${force ? '?force=true' : ''}`
   const res = await fetch(url, { method: 'POST' })
@@ -69,5 +53,16 @@ export async function triggerEvidenceExtraction(sectionId: string, force = false
     } catch { /* ignore parse errors */ }
     throw new Error(detail)
   }
+  return res.json()
+}
+
+export type ExtractionProgress = {
+  status: 'running' | 'idle'
+  current_phase: string | null
+}
+
+export async function getExtractionProgress(sectionId: string): Promise<ExtractionProgress> {
+  const res = await fetch(`${BASE}/api/sections/${sectionId}/extraction/progress`)
+  if (!res.ok) throw new Error(`Progress fetch failed: ${res.statusText}`)
   return res.json()
 }

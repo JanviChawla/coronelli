@@ -30,6 +30,7 @@ class ExtractionRun(Base):
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     estimated_cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     section_content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    current_phase: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class Candidate(Base):

@@ -64,3 +64,22 @@ export async function reviewCandidate(
   if (!res.ok) throw new Error('Review action failed')
   return res.json()
 }
+
+export async function fetchDocumentEntityCandidates(documentId: string): Promise<Candidate[]> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/entity-candidates`)
+  if (!res.ok) throw new Error(`Failed to fetch entity candidates: ${res.statusText}`)
+  return res.json()
+}
+
+export async function patchCandidateReviewState(
+  candidateId: string,
+  reviewState: 'proposed' | 'approved' | 'rejected',
+): Promise<Candidate> {
+  const res = await fetch(`${BASE}/api/candidates/${candidateId}/review-state`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ review_state: reviewState }),
+  })
+  if (!res.ok) throw new Error(`Failed to update review state: ${res.statusText}`)
+  return res.json()
+}

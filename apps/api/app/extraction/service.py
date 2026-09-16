@@ -425,9 +425,14 @@ def run_evidence_extraction(
         session.flush()
 
     run = _make_run(session, section_id, content_hash)
+    session.commit()  # visible to progress polling immediately
+
+    def _phase_callback(phase: str) -> None:
+        run.current_phase = phase
+        session.commit()
 
     try:
-        result = provider.extract_evidence_only(section, global_catalog)
+        result = provider.extract_evidence_only(section, global_catalog, phase_callback=_phase_callback)
     except Exception as exc:
         run.status = "failed"
         run.error = str(exc)
