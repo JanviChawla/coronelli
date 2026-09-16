@@ -980,6 +980,19 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
                   outline: 'none',
                 }}
               />
+              {addPlaceInput.trim() && !addingPlace && (
+                <button
+                  type="button"
+                  onClick={() => handleAddManualPlace(addPlaceInput.trim())}
+                  style={{
+                    padding: '0.45rem 0.75rem', fontSize: '0.82rem', fontWeight: 600,
+                    background: 'var(--gold)', color: '#1a1208', border: 'none',
+                    borderRadius: '5px', cursor: 'pointer', whiteSpace: 'nowrap',
+                  }}
+                >
+                  Add
+                </button>
+              )}
               {addingPlace && (
                 <span style={{ fontSize: '0.75rem', color: 'var(--ink-faint)' }}>Adding…</span>
               )}
