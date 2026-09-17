@@ -751,19 +751,15 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
             gapPollRef.current = null
             setRunningGapPass(false)
             const allEntities = await fetchDocumentEntityCandidates(document.id)
-            setEntityCandidates(prev => {
-              const existingIds = new Set(prev.map(c => c.id))
-              const newEntities = allEntities.filter(c => !existingIds.has(c.id))
-              setCatalogPasses(passes => {
-                const knownNames = new Set(
-                  passes.flatMap(p => p.candidates.map(c =>
-                    String((c.payload as Record<string, unknown>).name ?? '').toLowerCase()
-                  ))
-                )
-                return [...passes, buildGapPass(newEntities, knownNames, passes.length)]
-              })
-              return allEntities
-            })
+            const existingIds = new Set(entityCandidates.map(c => c.id))
+            const newEntities = allEntities.filter(c => !existingIds.has(c.id))
+            const knownNames = new Set(
+              catalogPasses.flatMap(p => p.candidates.map(c =>
+                String((c.payload as Record<string, unknown>).name ?? '').toLowerCase()
+              ))
+            )
+            setEntityCandidates(allEntities)
+            setCatalogPasses(prev => [...prev, buildGapPass(newEntities, knownNames, prev.length)])
           }
         } catch { /* keep polling */ }
       }, 2000)
