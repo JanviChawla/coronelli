@@ -72,8 +72,8 @@ export async function triggerCatalogExtraction(sectionId: string, force = false)
   return res.json()
 }
 
-export async function triggerEvidenceExtraction(sectionId: string, force = false): Promise<ExtractionRunResult> {
-  const url = `${BASE}/api/sections/${sectionId}/extract/evidence${force ? '?force=true' : ''}`
+export async function triggerEvidenceExtraction(sectionId: string): Promise<ExtractionRunResult> {
+  const url = `${BASE}/api/sections/${sectionId}/extract/evidence`
   const res = await fetch(url, { method: 'POST' })
   if (!res.ok) {
     let detail = `Evidence extraction failed (HTTP ${res.status})`
@@ -86,12 +86,7 @@ export async function triggerEvidenceExtraction(sectionId: string, force = false
 
   const job: { run_id: string; status: string } = await res.json()
 
-  // If already completed (cache hit), return immediately
-  if (job.status === 'completed') {
-    return { run: { id: job.run_id, status: 'completed' }, candidates: [], from_cache: true }
-  }
-
-  // Poll until the background job finishes (202 path)
+  // Poll until the background job finishes
   const POLL_MS = 2000
   const MAX_WAIT_MS = 10 * 60 * 1000 // 10 minutes
   const deadline = Date.now() + MAX_WAIT_MS

@@ -607,8 +607,8 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
     }
   }
 
-  // Pass 2: run the 7 evidence sub-passes for every section.
-  async function handleStartEvidence(force = false) {
+  // Pass 2: run the 7 evidence sub-passes for every section. Always fresh — no cache.
+  async function handleStartEvidence() {
     setEvidenceStale(false)
     setSynthesisStale(true)  // evidence re-run always invalidates synthesis until it completes
     setPhase('extracting')
@@ -635,7 +635,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
           } catch { /* ignore transient poll errors */ }
         }, 1500)
 
-        await triggerEvidenceExtraction(sectionId, force)
+        await triggerEvidenceExtraction(sectionId)
         if (evidencePollRef.current) clearInterval(evidencePollRef.current)
         const sectionCandidates = await fetchCandidates(sectionId)
         total += sectionCandidates.filter(c => c.kind !== 'entity').length
@@ -654,7 +654,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
       setAllCandidates(bySection)
       setTotalCandidates(grandTotal)
       // Auto-chain synthesis immediately after evidence is harvested
-      await handleSynthesize(force)
+      await handleSynthesize()
     } catch (e) {
       if (timerRef.current) clearInterval(timerRef.current)
       if (evidencePollRef.current) clearInterval(evidencePollRef.current)
@@ -1287,14 +1287,9 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
           detail={`${totalCandidates} candidate${totalCandidates !== 1 ? 's' : ''} across ${sections.length} sections${totalElapsedMs > 0 ? ` · ${(totalElapsedMs / 1000).toFixed(1)}s` : ''}`}
           action={
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <RerunCard
-                label="Re-harvest cost"
-                costLo={evidenceCostLo}
-                costHi={evidenceCostHi}
-                meta={`${sections.length} section${sections.length !== 1 ? 's' : ''} · 7 passes · clears cache`}
-                action="Re-harvest evidence"
-                onAction={() => handleStartEvidence(true)}
-              />
+              <button className="btn-secondary" type="button" onClick={() => handleStartEvidence()}>
+                Re-harvest evidence
+              </button>
               <details>
                 <summary style={{ fontSize: '0.88rem', color: 'var(--ink-muted)', cursor: 'pointer', listStyle: 'none' }}>
                   Inspect raw candidates ({totalCandidates})
@@ -1368,7 +1363,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
             }}>
               <span style={{ fontSize: '0.72rem', lineHeight: 1, marginTop: '0.18rem' }}>⚠</span>
               <span style={{ fontSize: '0.82rem', color: 'var(--ink-muted)', lineHeight: 1.5 }}>
-                Catalog has changed — previous evidence is outdated. Re-harvest to update.
+                Catalog has changed — re-harvest evidence to update.
               </span>
             </div>
           )}

@@ -415,10 +415,9 @@ def run_evidence_extraction(
     section_id: str,
     provider,
     global_catalog: list[dict],
-    force: bool = False,
     pre_created_run_id: str | None = None,
-) -> tuple["ExtractionRun", list["Candidate"], bool]:
-    """Global evidence pass: extracts claims/visual/routes using the full global catalog."""
+) -> tuple["ExtractionRun", list["Candidate"]]:
+    """Global evidence pass: always runs fresh — no caching of completed results."""
     section = session.get(SourceSection, section_id)
     if section is None:
         raise ExtractionError(f"Section '{section_id}' not found.")
@@ -442,43 +441,22 @@ def run_evidence_extraction(
     if stale:
         session.flush()
 
-    if not force:
-        existing = (
-            session.query(ExtractionRun)
-            .filter(
-                ExtractionRun.section_id == section_id,
-                ExtractionRun.status == "completed",
-                ExtractionRun.section_content_hash == content_hash,
-                ExtractionRun.prompt_version == GLOBAL_EVIDENCE_VERSION,
-            )
-            .order_by(ExtractionRun.completed_at.desc())
-            .first()
-        )
-        if existing:
-            cached = (
-                session.query(Candidate)
-                .filter(Candidate.extraction_run_id == existing.id)
-                .order_by(Candidate.ordinal)
-                .all()
-            )
-            return existing, cached, True
-    else:
-        # Wipe only evidence runs; leave catalog candidates intact
-        evidence_run_ids = [
-            r.id for r in session.query(ExtractionRun).filter(
-                ExtractionRun.section_id == section_id,
-                ExtractionRun.prompt_version == GLOBAL_EVIDENCE_VERSION,
-            ).all()
-        ]
-        if evidence_run_ids:
-            session.query(Candidate).filter(
-                Candidate.extraction_run_id.in_(evidence_run_ids),
-            ).delete(synchronize_session=False)
-        session.query(ExtractionRun).filter(
+    # Always wipe previous evidence results; leave catalog candidates intact
+    evidence_run_ids = [
+        r.id for r in session.query(ExtractionRun).filter(
             ExtractionRun.section_id == section_id,
             ExtractionRun.prompt_version == GLOBAL_EVIDENCE_VERSION,
-        ).update({"status": "superseded"}, synchronize_session=False)
-        session.flush()
+        ).all()
+    ]
+    if evidence_run_ids:
+        session.query(Candidate).filter(
+            Candidate.extraction_run_id.in_(evidence_run_ids),
+        ).delete(synchronize_session=False)
+    session.query(ExtractionRun).filter(
+        ExtractionRun.section_id == section_id,
+        ExtractionRun.prompt_version == GLOBAL_EVIDENCE_VERSION,
+    ).update({"status": "superseded"}, synchronize_session=False)
+    session.flush()
 
     if pre_created_run_id:
         run = session.get(ExtractionRun, pre_created_run_id)
@@ -508,4 +486,4 @@ def run_evidence_extraction(
     for c in candidates:
         session.refresh(c)
 
-    return run, candidates, False
+    return run, candidates

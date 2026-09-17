@@ -496,15 +496,6 @@ def confirm_catalog_review(
     if not section_ids:
         raise HTTPException(status_code=404, detail=f"Document '{document_id}' has no sections.")
     _write_catalog_confirmed(db, section_ids)
-
-    # Invalidate any stale evidence runs so the next "Harvest evidence" always
-    # does a fresh LLM call against the newly-confirmed catalog.
-    db.query(ExtractionRun).filter(
-        ExtractionRun.section_id.in_(section_ids),
-        ExtractionRun.prompt_version == GLOBAL_EVIDENCE_VERSION,
-    ).update({"status": "superseded"}, synchronize_session=False)
-    db.commit()
-
     return Response(status_code=204)
 
 
@@ -660,7 +651,7 @@ def _build_global_catalog(db: Session, document_id: str) -> list[dict]:
     return catalog
 
 
-def _evidence_worker(run_id: str, section_id: str, global_catalog: list[dict], force: bool) -> None:
+def _evidence_worker(run_id: str, section_id: str, global_catalog: list[dict]) -> None:
     """Background thread: runs evidence extraction with its own DB session."""
     db = SessionLocal()
     try:
@@ -671,7 +662,7 @@ def _evidence_worker(run_id: str, section_id: str, global_catalog: list[dict], f
             return
         run_evidence_extraction(
             db, section_id, provider, global_catalog,
-            force=force, pre_created_run_id=run_id,
+            pre_created_run_id=run_id,
         )
     except Exception as exc:
         _log.error("Evidence worker failed for section %s: %s", section_id, exc)
@@ -682,11 +673,10 @@ def _evidence_worker(run_id: str, section_id: str, global_catalog: list[dict], f
 @router.post("/api/sections/{section_id}/extract/evidence", response_model=ExtractJobResponse, status_code=202)
 def extract_section_evidence(
     section_id: str,
-    force: bool = Query(default=False, description="Re-run even if a cached result exists."),
     db: Session = Depends(get_db),
 ) -> ExtractJobResponse:
-    """Start evidence extraction as a background job. Returns 202 with run_id immediately.
-    Poll GET /api/extraction-runs/{run_id} for status (running → completed/failed).
+    """Start a fresh evidence extraction as a background job. Always re-runs — no cache.
+    Returns 202 with run_id immediately. Poll GET /api/extraction-runs/{run_id} for status.
     """
     try:
         get_provider()  # fail fast if not configured
@@ -696,23 +686,6 @@ def extract_section_evidence(
     section = db.get(SourceSection, section_id)
     if section is None:
         raise HTTPException(status_code=404, detail=f"Section '{section_id}' not found.")
-
-    # If cached result exists and force=False, return it synchronously (fast path)
-    if not force:
-        content_hash = _section_content_hash(section)
-        existing = (
-            db.query(ExtractionRun)
-            .filter(
-                ExtractionRun.section_id == section_id,
-                ExtractionRun.status == "completed",
-                ExtractionRun.section_content_hash == content_hash,
-                ExtractionRun.prompt_version == GLOBAL_EVIDENCE_VERSION,
-            )
-            .order_by(ExtractionRun.completed_at.desc())
-            .first()
-        )
-        if existing:
-            return ExtractJobResponse(run_id=existing.id, status="completed")
 
     global_catalog = _build_global_catalog(db, section.document_id)
 
@@ -724,7 +697,7 @@ def extract_section_evidence(
 
     thread = threading.Thread(
         target=_evidence_worker,
-        args=(run_id, section_id, global_catalog, force),
+        args=(run_id, section_id, global_catalog),
         daemon=True,
         name=f"evidence-{section_id[:8]}",
     )
