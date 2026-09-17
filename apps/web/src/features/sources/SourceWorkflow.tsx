@@ -203,6 +203,38 @@ const EVIDENCE_SUBPASSES: Array<{ key: string; label: string; detail: string }> 
 
 const SPATIAL_LEVEL_LABELS: Record<number, string> = { 0: 'Realm', 1: 'Territory', 2: 'Place', 3: 'Feature' }
 
+interface CatalogPass {
+  label: string
+  candidates: Candidate[]   // unique-named candidates for this pass
+  sectionIds: Set<string>   // sections where this pass found ANY candidate (for "no new places" display)
+}
+
+function buildFirstPass(entities: Candidate[], label: string): CatalogPass {
+  const sectionIds = new Set(entities.map(c => c.section_id))
+  const seen = new Set<string>()
+  const candidates: Candidate[] = []
+  for (const c of entities) {
+    const name = String((c.payload as Record<string, unknown>).name ?? '').toLowerCase()
+    if (name && !seen.has(name)) { seen.add(name); candidates.push(c) }
+  }
+  return { label, candidates, sectionIds }
+}
+
+function buildGapPass(
+  newEntities: Candidate[],
+  knownNames: Set<string>,
+  passNumber: number,
+): CatalogPass {
+  const sectionIds = new Set(newEntities.map(c => c.section_id))
+  const seen = new Set<string>()
+  const candidates: Candidate[] = []
+  for (const c of newEntities) {
+    const name = String((c.payload as Record<string, unknown>).name ?? '').toLowerCase()
+    if (name && !knownNames.has(name) && !seen.has(name)) { seen.add(name); candidates.push(c) }
+  }
+  return { label: `Gap pass ${passNumber}`, candidates, sectionIds }
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function SourceWorkflow({ document, sections, onEditSections, onSectionsChanged, onAtlasChanged, onViewAtlas, onEdit, onDelete }: Props) {
@@ -225,6 +257,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
   const [synthElapsedMs, setSynthElapsedMs] = useState(0)
   const [synthPhase, setSynthPhase] = useState<string | null>(null)
   const [entityCandidates, setEntityCandidates] = useState<Candidate[]>([])
+  const [catalogPasses, setCatalogPasses] = useState<CatalogPass[]>([])
   const [rejectedCandidateIds, setRejectedCandidateIds] = useState<Set<string>>(new Set())
   const [placeSuggestions, setPlaceSuggestions] = useState<string[]>([])
   const [addPlaceInput, setAddPlaceInput] = useState('')
@@ -421,6 +454,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
         fetchPlaceSuggestions(document.id),
       ])
       setEntityCandidates(entities)
+      setCatalogPasses([buildFirstPass(entities, 'Catalog')])
       setRejectedCandidateIds(new Set(entities.filter(e => e.review_state === 'rejected').map(e => e.id)))
       setPlaceSuggestions(suggestions)
       // If evidence candidates already exist from a previous run, mark them stale.
@@ -463,6 +497,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
       fetchPlaceSuggestions(document.id),
     ])
     setEntityCandidates(entities)
+    setCatalogPasses([buildFirstPass(entities, 'Initial catalog')])
     setPlaceSuggestions(suggestions)
     setAddPlaceInput('')
     setPhase('catalog-review')
@@ -474,6 +509,7 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
     setCurrentIdx(0)
     setWorkflowError(null)
     setEntityCandidates([])
+    setCatalogPasses([])
     setRejectedCandidateIds(new Set())
     // Re-cataloging invalidates all downstream results.
     if (force) { setEvidenceStale(true); setSynthesisStale(true) }
@@ -688,21 +724,10 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
   const synthCostLo = synthCostBase * 0.85
   const synthCostHi = synthCostBase * 1.15
 
-  // Entity review helpers
-  const uniqueEntityCandidates = entityCandidates.filter((c, idx, self) =>
-    idx === self.findIndex(x => (x.payload as Record<string, unknown>).name === (c.payload as Record<string, unknown>).name)
-  )
+  // Entity review helpers — uniqueEntityCandidates = all candidates across all passes (already deduped per-pass)
+  const uniqueEntityCandidates = catalogPasses.flatMap(p => p.candidates)
   const rejectedCount = rejectedCandidateIds.size
   const approvedCount = uniqueEntityCandidates.length - rejectedCount
-
-  // Per-section grouping for catalog review
-  const sectionsWithAnyCandidates = new Set(entityCandidates.map(c => c.section_id))
-  const uniqueCandidatesBySection = new Map<string, Candidate[]>()
-  for (const c of uniqueEntityCandidates) {
-    const bucket = uniqueCandidatesBySection.get(c.section_id) ?? []
-    bucket.push(c)
-    uniqueCandidatesBySection.set(c.section_id, bucket)
-  }
 
   // Add-missing-place helpers
   const existingCandidateNames = new Set(uniqueEntityCandidates.map(c => String((c.payload as Record<string, unknown>).name ?? '').toLowerCase()))
@@ -725,9 +750,20 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
             if (gapPollRef.current) clearInterval(gapPollRef.current)
             gapPollRef.current = null
             setRunningGapPass(false)
-            // Reload entity candidates
-            const entities = await fetchDocumentEntityCandidates(document.id)
-            setEntityCandidates(entities)
+            const allEntities = await fetchDocumentEntityCandidates(document.id)
+            setEntityCandidates(prev => {
+              const existingIds = new Set(prev.map(c => c.id))
+              const newEntities = allEntities.filter(c => !existingIds.has(c.id))
+              setCatalogPasses(passes => {
+                const knownNames = new Set(
+                  passes.flatMap(p => p.candidates.map(c =>
+                    String((c.payload as Record<string, unknown>).name ?? '').toLowerCase()
+                  ))
+                )
+                return [...passes, buildGapPass(newEntities, knownNames, passes.length)]
+              })
+              return allEntities
+            })
           }
         } catch { /* keep polling */ }
       }, 2000)
@@ -744,8 +780,25 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
     setDynamicSuggestions([])
     try {
       await addManualCandidate(document.id, name.trim())
-      const entities = await fetchDocumentEntityCandidates(document.id)
-      setEntityCandidates(entities)
+      const allEntities = await fetchDocumentEntityCandidates(document.id)
+      setEntityCandidates(prev => {
+        const existingIds = new Set(prev.map(c => c.id))
+        const newEntities = allEntities.filter(c => !existingIds.has(c.id))
+        if (newEntities.length > 0) {
+          setCatalogPasses(passes => {
+            if (passes.length === 0) return passes
+            const updated = [...passes]
+            const last = updated[updated.length - 1]
+            updated[updated.length - 1] = {
+              ...last,
+              candidates: [...last.candidates, ...newEntities],
+              sectionIds: new Set([...last.sectionIds, ...newEntities.map(c => c.section_id)]),
+            }
+            return updated
+          })
+        }
+        return allEntities
+      })
     } catch { /* ignore */ }
     setAddingPlace(false)
   }
@@ -961,131 +1014,148 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
             Reject any that are not real locations before running evidence passes.
           </p>
 
-          <div style={{
-            border: '1px solid var(--border-warm)',
-            borderRadius: '6px',
-            background: 'var(--parchment-card)',
-            overflow: 'hidden',
-            marginBottom: '0.85rem',
-          }}>
-            <div style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '0.55rem 0.9rem',
-              borderBottom: '1px solid var(--border-warm)',
-              fontSize: '0.72rem', color: 'var(--ink-muted)', letterSpacing: '0.12em', textTransform: 'uppercase',
+          {/* One card per catalog pass */}
+          {catalogPasses.map((pass, passIdx) => (
+            <div key={passIdx} style={{
+              border: '1px solid var(--border-warm)',
+              borderRadius: '6px',
+              background: 'var(--parchment-card)',
+              overflow: 'hidden',
+              marginBottom: '0.6rem',
             }}>
-              <span>{approvedCount} approved · {rejectedCount} rejected</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <button
-                  type="button"
-                  onClick={handleGapPass}
-                  disabled={runningGapPass}
-                  style={{
-                    background: 'none', border: '1px solid var(--border-warm)', borderRadius: '4px',
-                    padding: '0.15rem 0.5rem', cursor: runningGapPass ? 'default' : 'pointer',
-                    fontSize: '0.68rem', color: runningGapPass ? 'var(--ink-faint)' : 'var(--ink-muted)',
-                    letterSpacing: '0.08em', textTransform: 'uppercase',
-                    opacity: runningGapPass ? 0.6 : 1,
-                  }}
-                >
-                  {runningGapPass ? 'Scanning…' : '+ Find more'}
-                </button>
-                <span>Click to reject / restore</span>
+              {/* Pass header */}
+              <div style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '0.4rem 0.9rem',
+                borderBottom: '1px solid var(--border-warm)',
+                fontSize: '0.69rem', letterSpacing: '0.11em', textTransform: 'uppercase',
+              }}>
+                <span style={{ color: 'var(--ink-muted)', fontWeight: 600 }}>{pass.label}</span>
+                <span style={{ color: 'var(--ink-faint)' }}>
+                  {pass.candidates.filter(c => !rejectedCandidateIds.has(c.id)).length} place{pass.candidates.filter(c => !rejectedCandidateIds.has(c.id)).length !== 1 ? 's' : ''}
+                </span>
+              </div>
+              {/* Section-grouped candidates */}
+              <div style={{ maxHeight: '20rem', overflowY: 'auto' }}>
+                {sections.filter(s => pass.sectionIds.has(s.id)).map((s) => {
+                  const sectionCandidates = pass.candidates.filter(c => c.section_id === s.id)
+                  return (
+                    <div key={s.id}>
+                      <div style={{
+                        padding: '0.3rem 0.9rem',
+                        background: 'rgba(212,188,138,0.07)',
+                        borderBottom: '1px solid rgba(212,188,138,0.18)',
+                        fontSize: '0.67rem', color: 'var(--ink-faint)',
+                        letterSpacing: '0.09em', textTransform: 'uppercase',
+                      }}>
+                        {s.title || `Section ${s.ordinal}`}
+                      </div>
+                      {sectionCandidates.length === 0 ? (
+                        <div style={{
+                          padding: '0.38rem 0.9rem 0.38rem 1.1rem',
+                          fontSize: '0.75rem', color: 'var(--ink-faint)', fontStyle: 'italic',
+                          borderBottom: '1px solid rgba(212,188,138,0.1)',
+                        }}>
+                          No new places identified
+                        </div>
+                      ) : sectionCandidates.map((c) => {
+                        const p = c.payload as Record<string, unknown>
+                        const name = String(p.name ?? '')
+                        const type = String(p.type ?? '')
+                        const level = typeof p.spatial_level === 'number' ? p.spatial_level : null
+                        const levelLabel = level !== null ? SPATIAL_LEVEL_LABELS[level] : null
+                        const isRejected = rejectedCandidateIds.has(c.id)
+                        return (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => toggleReject(c.id)}
+                            style={{
+                              width: '100%', display: 'flex', flexDirection: 'column',
+                              alignItems: 'stretch', gap: 0, padding: '0.5rem 0.9rem',
+                              background: 'none', border: 'none',
+                              borderBottom: '1px solid rgba(212,188,138,0.15)',
+                              cursor: 'pointer', textAlign: 'left',
+                              opacity: isRejected ? 0.42 : 1,
+                              transition: 'opacity 0.15s, background 0.15s',
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', width: '100%' }}>
+                              <span style={{
+                                width: '1.1rem', height: '1.1rem', borderRadius: '50%', flexShrink: 0,
+                                border: isRejected ? '1.5px solid rgba(180,60,60,0.5)' : '1.5px solid var(--gold)',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontSize: '0.5rem', color: isRejected ? 'rgba(180,60,60,0.7)' : 'var(--gold)',
+                              }}>
+                                {isRejected ? '✕' : '◉'}
+                              </span>
+                              <span style={{ flex: 1, fontSize: '0.9rem', color: isRejected ? 'var(--ink-faint)' : 'var(--ink)', textDecoration: isRejected ? 'line-through' : 'none' }}>
+                                {name}
+                              </span>
+                              {levelLabel && (
+                                <span style={{
+                                  fontSize: '0.62rem', color: 'var(--ink-faint)', flexShrink: 0,
+                                  border: '1px solid rgba(212,188,138,0.35)', borderRadius: '3px',
+                                  padding: '0.05rem 0.3rem', fontVariantNumeric: 'tabular-nums',
+                                }}>
+                                  L{level} {levelLabel}
+                                </span>
+                              )}
+                              {type && (
+                                <span style={{ fontSize: '0.68rem', color: 'var(--ink-faint)', flexShrink: 0 }}>{type}</span>
+                              )}
+                              {(c as unknown as Record<string, unknown>).source === 'manual' ? (
+                                <span style={{ fontSize: '0.62rem', color: 'var(--ink-faint)', flexShrink: 0, border: '1px solid rgba(212,188,138,0.35)', borderRadius: '3px', padding: '0.05rem 0.3rem' }}>
+                                  added
+                                </span>
+                              ) : (
+                                <span style={{ fontSize: '0.72rem', color: 'var(--gold)', opacity: 0.65, flexShrink: 0 }}>
+                                  {(c.confidence * 100).toFixed(0)}%
+                                </span>
+                              )}
+                            </div>
+                            {c.excerpt && (
+                              <div style={{
+                                paddingLeft: '1.75rem', fontSize: '0.75rem', color: 'var(--ink-faint)',
+                                fontStyle: 'italic', lineHeight: 1.4, marginTop: '0.18rem',
+                                opacity: isRejected ? 0.6 : 1,
+                              }}>
+                                "{c.excerpt.length > 120 ? c.excerpt.slice(0, 120) + '…' : c.excerpt}"
+                              </div>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )
+                })}
               </div>
             </div>
-            <div style={{ maxHeight: '22rem', overflowY: 'auto' }}>
-              {sections.filter(s => sectionsWithAnyCandidates.has(s.id)).map((s) => {
-                const sectionCandidates = uniqueCandidatesBySection.get(s.id) ?? []
-                return (
-                  <div key={s.id}>
-                    <div style={{
-                      padding: '0.3rem 0.9rem',
-                      background: 'rgba(212,188,138,0.07)',
-                      borderBottom: '1px solid rgba(212,188,138,0.18)',
-                      fontSize: '0.67rem', color: 'var(--ink-faint)',
-                      letterSpacing: '0.09em', textTransform: 'uppercase',
-                    }}>
-                      {s.title || `Section ${s.ordinal}`}
-                    </div>
-                    {sectionCandidates.length === 0 ? (
-                      <div style={{
-                        padding: '0.38rem 0.9rem 0.38rem 1.1rem',
-                        fontSize: '0.75rem', color: 'var(--ink-faint)', fontStyle: 'italic',
-                        borderBottom: '1px solid rgba(212,188,138,0.1)',
-                      }}>
-                        No new places identified
-                      </div>
-                    ) : sectionCandidates.map((c) => {
-                      const p = c.payload as Record<string, unknown>
-                      const name = String(p.name ?? '')
-                      const type = String(p.type ?? '')
-                      const level = typeof p.spatial_level === 'number' ? p.spatial_level : null
-                      const levelLabel = level !== null ? SPATIAL_LEVEL_LABELS[level] : null
-                      const isRejected = rejectedCandidateIds.has(c.id)
-                      return (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onClick={() => toggleReject(c.id)}
-                          style={{
-                            width: '100%', display: 'flex', flexDirection: 'column',
-                            alignItems: 'stretch', gap: 0, padding: '0.5rem 0.9rem',
-                            background: 'none', border: 'none',
-                            borderBottom: '1px solid rgba(212,188,138,0.15)',
-                            cursor: 'pointer', textAlign: 'left',
-                            opacity: isRejected ? 0.42 : 1,
-                            transition: 'opacity 0.15s, background 0.15s',
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', width: '100%' }}>
-                            <span style={{
-                              width: '1.1rem', height: '1.1rem', borderRadius: '50%', flexShrink: 0,
-                              border: isRejected ? '1.5px solid rgba(180,60,60,0.5)' : '1.5px solid var(--gold)',
-                              display: 'flex', alignItems: 'center', justifyContent: 'center',
-                              fontSize: '0.5rem', color: isRejected ? 'rgba(180,60,60,0.7)' : 'var(--gold)',
-                            }}>
-                              {isRejected ? '✕' : '◉'}
-                            </span>
-                            <span style={{ flex: 1, fontSize: '0.9rem', color: isRejected ? 'var(--ink-faint)' : 'var(--ink)', textDecoration: isRejected ? 'line-through' : 'none' }}>
-                              {name}
-                            </span>
-                            {levelLabel && (
-                              <span style={{
-                                fontSize: '0.62rem', color: 'var(--ink-faint)', flexShrink: 0,
-                                border: '1px solid rgba(212,188,138,0.35)', borderRadius: '3px',
-                                padding: '0.05rem 0.3rem', fontVariantNumeric: 'tabular-nums',
-                              }}>
-                                L{level} {levelLabel}
-                              </span>
-                            )}
-                            {type && (
-                              <span style={{ fontSize: '0.68rem', color: 'var(--ink-faint)', flexShrink: 0 }}>{type}</span>
-                            )}
-                            {(c as unknown as Record<string, unknown>).source === 'manual' ? (
-                              <span style={{ fontSize: '0.62rem', color: 'var(--ink-faint)', flexShrink: 0, border: '1px solid rgba(212,188,138,0.35)', borderRadius: '3px', padding: '0.05rem 0.3rem' }}>
-                                added
-                              </span>
-                            ) : (
-                              <span style={{ fontSize: '0.72rem', color: 'var(--gold)', opacity: 0.65, flexShrink: 0 }}>
-                                {(c.confidence * 100).toFixed(0)}%
-                              </span>
-                            )}
-                          </div>
-                          {c.excerpt && (
-                            <div style={{
-                              paddingLeft: '1.75rem', fontSize: '0.75rem', color: 'var(--ink-faint)',
-                              fontStyle: 'italic', lineHeight: 1.4, marginTop: '0.18rem',
-                              opacity: isRejected ? 0.6 : 1,
-                            }}>
-                              "{c.excerpt.length > 120 ? c.excerpt.slice(0, 120) + '…' : c.excerpt}"
-                            </div>
-                          )}
-                        </button>
-                      )
-                    })}
-                  </div>
-                )
-              })}
+          ))}
+
+          {/* Bottom bar: total count + Find more */}
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            padding: '0.45rem 0', marginBottom: '0.65rem',
+            fontSize: '0.72rem', color: 'var(--ink-muted)', letterSpacing: '0.1em', textTransform: 'uppercase',
+          }}>
+            <span>{approvedCount} approved · {rejectedCount} rejected</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <button
+                type="button"
+                onClick={handleGapPass}
+                disabled={runningGapPass}
+                style={{
+                  background: 'none', border: '1px solid var(--border-warm)', borderRadius: '4px',
+                  padding: '0.15rem 0.5rem', cursor: runningGapPass ? 'default' : 'pointer',
+                  fontSize: '0.68rem', color: runningGapPass ? 'var(--ink-faint)' : 'var(--ink-muted)',
+                  letterSpacing: '0.08em', textTransform: 'uppercase',
+                  opacity: runningGapPass ? 0.6 : 1,
+                }}
+              >
+                {runningGapPass ? 'Scanning…' : '+ Find more'}
+              </button>
+              <span style={{ color: 'var(--ink-faint)' }}>Click to reject / restore</span>
             </div>
           </div>
 
