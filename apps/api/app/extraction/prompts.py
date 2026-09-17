@@ -24,8 +24,8 @@ Pipeline architecture:
 # Version constants — bump to invalidate the extraction cache
 # ---------------------------------------------------------------------------
 
-GLOBAL_CATALOG_VERSION           = "4.1-catalog"
-GLOBAL_CATALOG_GAP_VERSION       = "4.1-catalog-gap"
+GLOBAL_CATALOG_VERSION           = "4.2-catalog"
+GLOBAL_CATALOG_GAP_VERSION       = "4.2-catalog-gap"
 GLOBAL_EVIDENCE_VERSION          = "4.0-evidence"
 
 GLOBAL_EVIDENCE_SPATIAL_VERSION     = "4.0-spatial"
@@ -63,10 +63,17 @@ ENTITY TYPE  (choose exactly one — pick the most specific match)
   vessel           ship, boat, carriage, wagon, airship — any conveyance used as a named place
   tunnel           tunnel, mine shaft, underground passage bored through earth
   passage          corridor, hallway, alleyway, road, staircase — connector between places
-  portal           door, gate, arch, threshold — an opening rather than a path or enclosure
+  portal           door, gate, arch, window, threshold — an opening rather than a path or enclosure
   site             battlefield, excavation, named clearing, or ruin without surviving structure
   court            enclosed formal court (legal, royal); use 'grounds' for open courtyards
-  barrier          named wall, fence, or fortification treated as a location"""
+  barrier          named wall, fence, or fortification treated as a location
+
+  COMMON MISCLASSIFICATIONS — avoid these:
+  - A staircase, stairway, steps → passage  (NOT room; stairs are connectors, not enclosures)
+  - A hallway, corridor, passage → passage  (NOT room, NOT hall)
+  - "Hall" meaning a corridor or entrance hall → passage  (hall type is ONLY great halls / assembly chambers)
+  - A window, doorway, archway, threshold, gate opening → portal  (NOT room)
+  - A landing between stair flights → room  (it is a resting space, not a connector)"""
 
 _KIND_DESCRIPTOR_BLOCK = """\
 KIND DESCRIPTOR  (drives 3-D geometry in the world atlas — choose the single best match)
@@ -216,7 +223,19 @@ WORKED EXAMPLES
     → type: landmark  kind_descriptor: landmark  tier: surface  spatial_level: 2
 
   "The orchard" or "the lane" beside an estate (any text)
-    → type: grounds  kind_descriptor: grounds  tier: surface  spatial_level: 3\
+    → type: grounds  kind_descriptor: grounds  tier: surface  spatial_level: 3
+
+  "The staircase" or "the stairs" connecting floors (any text)
+    → type: passage  kind_descriptor: route  tier: surface (tier of the lower end)  spatial_level: 3
+    (stairs are connectors — never type: room)
+
+  "The hallway" or "the corridor" linking rooms (any text)
+    → type: passage  kind_descriptor: route  tier: surface  spatial_level: 3
+    (a corridor is a connector — never type: room; "hall" type is only for great halls / assembly chambers)
+
+  "The window" used as a spatial vantage point (The Yellow Wallpaper)
+    → type: portal  kind_descriptor: portal  tier: elevated  spatial_level: 3
+    (a window is an opening — never type: room)\
 """
 
 # ---------------------------------------------------------------------------
