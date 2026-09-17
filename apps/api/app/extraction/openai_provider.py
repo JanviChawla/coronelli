@@ -329,20 +329,31 @@ class OpenAIExtractionProvider:
                 parsed = json.loads(raw_text)
                 raw_list = parsed.get("candidates", [])
                 if not isinstance(raw_list, list):
+                    _log.warning("Evidence sub-pass %s: 'candidates' is not a list, got %r", label, type(raw_list).__name__)
                     raw_list = []
             except Exception as exc:
-                _log.warning("Evidence sub-pass %s failed: %s", version, exc)
+                _log.warning("Evidence sub-pass %s failed: %s", label, exc)
                 return [], 0, 0
 
+            if not raw_list:
+                _log.info(
+                    "Evidence sub-pass %s: model returned 0 raw candidates. Raw response: %.800s",
+                    label, raw_text,
+                )
+
             candidates: list[RawCandidate] = []
+            skipped_status: list[str] = []
+            skipped_kind: list[str] = []
             for raw in raw_list:
                 if not isinstance(raw, dict):
                     continue
                 status = raw.get("status", "")
                 if status not in _VALID_STATUSES:
+                    skipped_status.append(status or "(missing)")
                     continue
                 kind = raw.get("kind", "")
                 if kind not in allowed_kinds:
+                    skipped_kind.append(kind or "(missing)")
                     continue
                 temporal = raw.get("temporal_interpretation", "static")
                 if temporal not in _VALID_TEMPORAL:
@@ -356,6 +367,11 @@ class OpenAIExtractionProvider:
                     rationale=str(raw.get("rationale", "")),
                     temporal_interpretation=temporal,
                 ))
+
+            _log.info(
+                "Evidence sub-pass %s: %d raw → %d kept (skipped_status=%r, skipped_kind=%r)",
+                label, len(raw_list), len(candidates), skipped_status, skipped_kind,
+            )
             return candidates, in_tok, out_tok
 
         all_candidates: list[RawCandidate] = []
@@ -370,6 +386,10 @@ class OpenAIExtractionProvider:
                 total_in += in_tok
                 total_out += out_tok
 
+        _log.info(
+            "Evidence sub-passes complete: %d total candidates, %d input tokens, %d output tokens",
+            len(all_candidates), total_in, total_out,
+        )
         return all_candidates, total_in, total_out
 
     def extract_catalog_only(
@@ -545,6 +565,13 @@ class OpenAIExtractionProvider:
         phase_callback=None,
     ) -> ExtractionResult:
         """Global evidence pass: 7 focused sub-passes using the full global catalog."""
+        catalog_names = [e.get("name", "?") for e in global_catalog[:8]]
+        _log.info(
+            "Evidence extraction: section %s (%r), catalog=%d places, sample=%r",
+            section.id, section.title or "(untitled)", len(global_catalog), catalog_names,
+        )
+        if not global_catalog:
+            _log.warning("Evidence extraction: global catalog is EMPTY — all sub-passes will find 0 candidates")
         candidates, total_in, total_out = self._run_evidence_subpasses(
             section=section,
             full_catalog_list=global_catalog,

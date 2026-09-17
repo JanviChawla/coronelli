@@ -193,6 +193,7 @@ def _save_candidates(
     section_id: str,
     result: "ExtractionResult",
 ) -> list["Candidate"]:
+    _log.info("_save_candidates: received %d raw candidates from provider", len(result.candidates))
     candidates: list[Candidate] = []
     for i, rc in enumerate(result.candidates):
         has_kind = bool(rc.relation_kind)
@@ -226,6 +227,7 @@ def _save_candidates(
         )
         session.add(c)
         candidates.append(c)
+    _log.info("_save_candidates: saved %d / %d candidates", len(candidates), len(result.candidates))
     return candidates
 
 

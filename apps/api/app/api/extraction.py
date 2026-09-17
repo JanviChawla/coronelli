@@ -496,6 +496,15 @@ def confirm_catalog_review(
     if not section_ids:
         raise HTTPException(status_code=404, detail=f"Document '{document_id}' has no sections.")
     _write_catalog_confirmed(db, section_ids)
+
+    # Invalidate any stale evidence runs so the next "Harvest evidence" always
+    # does a fresh LLM call against the newly-confirmed catalog.
+    db.query(ExtractionRun).filter(
+        ExtractionRun.section_id.in_(section_ids),
+        ExtractionRun.prompt_version == GLOBAL_EVIDENCE_VERSION,
+    ).update({"status": "superseded"}, synchronize_session=False)
+    db.commit()
+
     return Response(status_code=204)
 
 
