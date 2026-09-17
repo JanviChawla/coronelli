@@ -1,5 +1,5 @@
 SYNTHESIS_PROMPT_VERSION = "1.2"  # kept for single-pass fallback
-THREE_PASS_SYNTHESIS_VERSION = "3.10"  # 3.10: text-explicit SAME_AS (Tarry Town=Greensburgh), buildings LOCATED_IN regions
+THREE_PASS_SYNTHESIS_VERSION = "3.11"  # 3.11: kind_descriptor/tier forwarded; type list synced to v4.0 _ALLOWED_ENTITY_TYPES
 
 SYNTHESIS_SYSTEM_PROMPT = """\
 CORONELLI ATLAS SYNTHESIS — Stage 2
@@ -31,8 +31,8 @@ Produce synthesis_items — consolidated world facts derived from the full evide
 ### 1. entity
 A consolidated place entity, merged across all sections where it appears.
 Payload: {"name": str, "type": str, "aliases": [str], "observations": [str]}
-- type must be one of: world, region, island, settlement, landmark, building, room, hall, tunnel,
-  shaft, passage, portal, door, exterior, terrain_feature, body_of_water, site, court, barrier
+- type must be one of: world, region, island, district, settlement, landmark, building, room, hall,
+  tunnel, passage, portal, grounds, vessel, terrain_feature, body_of_water, site, court, barrier
 - Merge duplicate entity candidates from different sections into ONE entity item.
 - Include aliases if the place is named differently across sections.
 - A wall, hedge, fence, gate, or physical barrier that separates regions is a barrier.
@@ -166,8 +166,8 @@ RULES:
    direct SAME_AS signals. Example: a village described as "called Greensburgh by some, but more
    generally known as Tarry Town" → merge into Tarry Town with Greensburgh as alias.
 2. Canonical name: the most specific, unambiguous, and complete name.
-3. type must be one of: world, region, island, settlement, landmark, building, room, hall,
-   tunnel, shaft, passage, portal, door, exterior, terrain_feature, body_of_water, site, court, barrier
+3. type must be one of: world, region, island, district, settlement, landmark, building, room, hall,
+   tunnel, passage, portal, grounds, vessel, terrain_feature, body_of_water, site, court, barrier
 3a. TYPE CORRECTIONS — apply by inspecting the entity's name, regardless of what extraction assigned.
     Look for these words IN the name (not just as the whole name) and assign accordingly:
     body_of_water  : name contains → spring, brook, stream, creek, run, river, pond, lake,
@@ -197,6 +197,12 @@ RULES:
    payload.name, payload.aliases, and any other phrasings used in the source. If you rename a place
    (e.g. "the lovely shaded lane" → "that lovely lane"), the original name MUST become an alias.
    Aliases are used downstream to match evidence claims, so completeness is critical.
+4b. kind_descriptor: inherit from the input record's payload. One of: tower, hall, settlement,
+    region, forest, water, portal, mountain, vessel, dungeon, room, landmark, grounds, building, route.
+    If multiple input records for the same merged place disagree, use the value from the
+    highest-confidence record. Omit if none of the input records carry this field.
+4c. tier: inherit from the input record's payload. One of: peak, elevated, surface, underground, deep.
+    Same merge rule as kind_descriptor. Omit if none of the input records carry this field.
 5. observations: one brief sentence PER ENTRY in section_mentions, in section_ordinal order.
    Draw from the excerpt to capture what is spatially or experientially distinctive about that
    section's encounter with this place — season, time of day, atmosphere, who is present, what happens.
@@ -217,6 +223,8 @@ OUTPUT: valid JSON only, no markdown.
       "payload": {
         "name": "Spring Court",
         "type": "region",
+        "kind_descriptor": "region",
+        "tier": "surface",
         "aliases": ["the Court", "Spring lands"],
         "observations": ["Vast sunlit territory ruled by Tamlin, always in perpetual bloom", "Rose gardens in full color, warm golden light at midday"]
       },
@@ -295,14 +303,17 @@ SELF-CHECK: For every claim, verify subject AND object match a canonical name or
 VISUAL_CLAIMS_SYNTHESIS_PROMPT = _SYNTH_PASS2_HEADER + """\
 YOUR TASK: Produce ONLY items of kind "visual_claim" — appearance and description facts about places.
 
-Payload: {"subject": "canonical place", "category": "...", "observation": "...", "section_title": "..."}
-category: architecture | terrain | light | weather | color | material | scale | atmosphere | other
+Payload: {"subject": "canonical place", "category": "...", "observation": "...", "section_title": "...", "palette": [...]}
+category: architecture | terrain | light | weather | color | material | texture | scale | atmosphere | decay | other
+palette: optional — include when the source candidate carries a palette array (structured color swatches).
+  Format: [{"color": "#RRGGBB", "label": "..."}]. Forward as-is; do not invent palette data.
 
 Rules:
 - "subject" must be in the canonical entity list.
 - Emit ONE visual_claim per distinct observation — never merge.
 - Different sections showing the same place in different conditions get separate items.
 - Include the section_title of the source candidate.
+- When the source candidate has a "palette" field, include it in the output payload.
 
 SELF-CHECK: For every visual_claim, verify subject is in the entity list. Remove if not.
 """
