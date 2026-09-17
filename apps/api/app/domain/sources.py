@@ -107,10 +107,51 @@ def list_documents(session: Session) -> list[SourceDocument]:
 
 
 def delete_document(session: Session, document_id: str) -> None:
+    from app.domain.world import EntityMention, MapClaim, MapEntity, MapTravelRule
+    from app.extraction.models import Candidate, ExtractionRun
+    from app.synthesis.models import SynthesisItem, SynthesisRun
+
     doc = session.get(SourceDocument, document_id)
     if doc is None:
         raise ValueError(f"Document '{document_id}' not found.")
-    for section in list_sections(session, document_id):
-        session.delete(section)
+
+    section_ids = [s.id for s in list_sections(session, document_id)]
+
+    # EntityMention references both MapEntity and SourceSection — delete first
+    session.query(EntityMention).filter(
+        EntityMention.document_id == document_id
+    ).delete(synchronize_session=False)
+
+    # MapClaim / MapTravelRule use SET NULL on provenance_document_id — must delete explicitly
+    session.query(MapClaim).filter(
+        MapClaim.provenance_document_id == document_id
+    ).delete(synchronize_session=False)
+    session.query(MapTravelRule).filter(
+        MapTravelRule.provenance_document_id == document_id
+    ).delete(synchronize_session=False)
+    session.query(MapEntity).filter(
+        MapEntity.provenance_document_id == document_id
+    ).delete(synchronize_session=False)
+
+    # Synthesis rows — CASCADE from source_documents but explicit for reliability
+    session.query(SynthesisItem).filter(
+        SynthesisItem.document_id == document_id
+    ).delete(synchronize_session=False)
+    session.query(SynthesisRun).filter(
+        SynthesisRun.document_id == document_id
+    ).delete(synchronize_session=False)
+
+    # Extraction rows — CASCADE from source_sections but explicit for reliability
+    if section_ids:
+        session.query(Candidate).filter(
+            Candidate.section_id.in_(section_ids)
+        ).delete(synchronize_session=False)
+        session.query(ExtractionRun).filter(
+            ExtractionRun.section_id.in_(section_ids)
+        ).delete(synchronize_session=False)
+
+    session.query(SourceSection).filter(
+        SourceSection.document_id == document_id
+    ).delete(synchronize_session=False)
     session.delete(doc)
     session.commit()
