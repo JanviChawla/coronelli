@@ -64,4 +64,4 @@ class Candidate(Base):
 
     @property
     def display_summary(self) -> str:
-        return candidate_display_summary(self.kind, self.payload)
+        return candidate_display_summary(self.kind, self.payload or {})

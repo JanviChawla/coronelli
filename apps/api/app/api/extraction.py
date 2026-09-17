@@ -633,6 +633,10 @@ def _build_global_catalog(db: Session, document_id: str) -> list[dict]:
             }
             if ec.payload.get("spatial_level") is not None:
                 entry["spatial_level"] = ec.payload["spatial_level"]
+            if ec.payload.get("kind_descriptor"):
+                entry["kind_descriptor"] = ec.payload["kind_descriptor"]
+            if ec.payload.get("tier"):
+                entry["tier"] = ec.payload["tier"]
             catalog.append(entry)
     for e in existing_entities:
         if e.name and e.name not in seen:
@@ -641,6 +645,8 @@ def _build_global_catalog(db: Session, document_id: str) -> list[dict]:
                 "name": e.name,
                 "type": e.place_kind or "",
                 "aliases": list(e.aliases or []),
+                "kind_descriptor": (e.payload or {}).get("kind_descriptor", ""),
+                "tier": (e.payload or {}).get("tier", ""),
             })
     return catalog
 

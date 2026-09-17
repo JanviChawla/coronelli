@@ -379,7 +379,12 @@ def run_catalog_gap_extraction(
         name = (c.payload.get("name") or "").strip()
         if name and name.lower() not in seen:
             seen.add(name.lower())
-            already_found.append({"name": name, "type": c.payload.get("type", "")})
+            entry: dict = {"name": name, "type": c.payload.get("type", "")}
+            if c.payload.get("kind_descriptor"):
+                entry["kind_descriptor"] = c.payload["kind_descriptor"]
+            if c.payload.get("tier"):
+                entry["tier"] = c.payload["tier"]
+            already_found.append(entry)
 
     content_hash = _section_content_hash(section)
     run = _make_run(session, section_id, content_hash)

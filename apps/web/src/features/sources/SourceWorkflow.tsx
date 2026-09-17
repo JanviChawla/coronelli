@@ -297,6 +297,35 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
 
     // ── Catalog confirmed → check for atlas (done) or evidence (inspecting/stale) ──
     if (catalogConfirmed) {
+      // ── Synthesis still running — re-attach ────────────────────────────────
+      try {
+        const synthProg = await getSynthesisProgress(document.id)
+        if (synthProg.status === 'running') {
+          setPhase('synthesizing')
+          if (synthProg.current_phase) setSynthPhase(synthProg.current_phase)
+          synthPollRef.current = setInterval(async () => {
+            try {
+              const prog = await getSynthesisProgress(document.id)
+              if (prog.current_phase) setSynthPhase(prog.current_phase)
+              if (prog.status !== 'running') {
+                clearInterval(synthPollRef.current!)
+                synthPollRef.current = null
+                try {
+                  const atlas = await fetchAtlas(document.id)
+                  setCanonicalEntityCount(atlas.entity_count)
+                  setCanonicalClaimCount(atlas.claim_count)
+                  setAtlasEntities(atlas.entities)
+                  setAtlasTravelRules(atlas.travel_rules)
+                  onAtlasChanged?.()
+                } catch { /* atlas may not be ready yet */ }
+                setPhase('done')
+              }
+            } catch { /* ignore transient poll errors */ }
+          }, 2000)
+          return
+        }
+      } catch { /* synthesis progress unavailable */ }
+
       try {
         const atlas = await fetchAtlas(document.id)
         if (atlas.entity_count > 0) {
@@ -328,6 +357,37 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
           }
         }
       } catch { /* no atlas yet */ }
+
+      // ── Evidence still running — re-attach ────────────────────────────────
+      try {
+        const progChecks = await Promise.all(
+          sections.map(s => getExtractionProgress(s.id).catch(() => ({ status: 'idle' as const, current_phase: null })))
+        )
+        if (progChecks.some(p => p.status === 'running')) {
+          setPhase('extracting')
+          evidencePollRef.current = setInterval(async () => {
+            try {
+              const checks = await Promise.all(
+                sections.map(s => getExtractionProgress(s.id).catch(() => ({ status: 'idle' as const, current_phase: null })))
+              )
+              if (!checks.some(p => p.status === 'running')) {
+                clearInterval(evidencePollRef.current!)
+                evidencePollRef.current = null
+                const bySection: Record<string, Candidate[]> = {}
+                let grandTotal = 0
+                await Promise.all(sections.map(async (s) => {
+                  bySection[s.id] = await fetchCandidates(s.id)
+                  grandTotal += bySection[s.id].length
+                }))
+                setAllCandidates(bySection)
+                setTotalCandidates(grandTotal)
+                setPhase('inspecting')
+              }
+            } catch { /* ignore transient poll errors */ }
+          }, 3000)
+          return
+        }
+      } catch { /* progress check unavailable */ }
 
       // Atlas not ready — check for evidence candidates mid-flight
       try {
