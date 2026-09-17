@@ -24,8 +24,8 @@ Pipeline architecture:
 # Version constants — bump to invalidate the extraction cache
 # ---------------------------------------------------------------------------
 
-GLOBAL_CATALOG_VERSION           = "4.0-catalog"
-GLOBAL_CATALOG_GAP_VERSION       = "4.0-catalog-gap"
+GLOBAL_CATALOG_VERSION           = "4.1-catalog"
+GLOBAL_CATALOG_GAP_VERSION       = "4.1-catalog-gap"
 GLOBAL_EVIDENCE_VERSION          = "4.0-evidence"
 
 GLOBAL_EVIDENCE_SPATIAL_VERSION     = "4.0-spatial"
@@ -124,7 +124,15 @@ CATALOG_SYSTEM_PROMPT = f"""\
 You are a cartographic intelligence extracting every distinct named place from a passage of literary fiction, for inclusion in a world atlas.
 
 TASK
-Read the passage and identify every PLACE — any named location, space, or geographic feature where events occur or which characters reference spatially. Include places that are described but not visited, places mentioned in dialogue, and background geography.
+Read the passage and identify every PLACE — any location, space, or geographic feature where events occur or which characters reference spatially. Cast a wide net:
+
+INCLUDE:
+  - Proper-named places ("Sleepy Hollow", "the Hudson River", "Van Tassel's estate")
+  - Descriptive interior spaces ("the cellar", "the dining room", "the upstairs hall", "the parlour")
+    even when they have no proper name — if the text treats them as a distinct space, capture them
+  - Waterfront and outdoor features ("the wharf", "the mill-pond", "the lane", "the orchard")
+  - Places described but not visited, mentioned in dialogue, or referenced as background geography
+  - Sub-locations nested inside larger places (a cellar inside a building, a chamber inside a castle)
 
 DO NOT include:
   - People, characters, animals, or organizations
@@ -195,7 +203,20 @@ WORKED EXAMPLES
     → type: terrain_feature  kind_descriptor: mountain  tier: peak  spatial_level: 1
 
   "The Hudson River" (The Legend of Sleepy Hollow)
-    → type: body_of_water  kind_descriptor: water  tier: surface  spatial_level: 1\
+    → type: body_of_water  kind_descriptor: water  tier: surface  spatial_level: 1
+
+  "The spacious parlour" or "the dining room" inside a manor (The Legend of Sleepy Hollow)
+    → type: room  kind_descriptor: room  tier: surface  spatial_level: 3
+    (interior rooms with no proper name still count — they are distinct spaces where events occur)
+
+  "The cellar" beneath a building (any text)
+    → type: room  kind_descriptor: room  tier: underground  spatial_level: 3
+
+  "The wharf" along a river or harbor (any text)
+    → type: landmark  kind_descriptor: landmark  tier: surface  spatial_level: 2
+
+  "The orchard" or "the lane" beside an estate (any text)
+    → type: grounds  kind_descriptor: grounds  tier: surface  spatial_level: 3\
 """
 
 # ---------------------------------------------------------------------------
@@ -219,11 +240,15 @@ SECTION {section_order} — {title}
 CATALOG_GAP_SYSTEM_PROMPT = f"""\
 You are reviewing a passage of literary fiction to find any named places that were MISSED in the first catalog pass.
 
-A first read already identified the places in the already_found list. Your job is to find what was overlooked:
-  - Generic references that are distinct places ("the room upstairs", "the hall below")
-  - Places implied by movement events but never directly named
+A first read already identified the places in the already_found list. Your job is to find what was overlooked.
+
+Focus especially on:
+  - Interior sub-spaces the first pass skipped: "the cellar", "the dining room", "the parlour",
+    "the attic", "the pantry", "the kitchen", "the hall below" — any room or space where the
+    narrative explicitly enters or describes
+  - Outdoor sub-locations: "the wharf", "the orchard", "the lane", "the mill-pond", "the yard"
+  - Places implied by movement events ("descended to the cellar", "crossed to the wharf")
   - Background geography mentioned in passing or in dialogue
-  - Nested sub-locations inside already-cataloged places
   - Places mentioned only once in a subordinate clause
 
 OUTPUT FORMAT — identical to the catalog pass:
