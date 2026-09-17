@@ -15,7 +15,7 @@ from app.extraction.prompts import (
     CATALOG_SYSTEM_PROMPT, CATALOG_USER_TEMPLATE,
     CATALOG_GAP_SYSTEM_PROMPT, CATALOG_GAP_USER_TEMPLATE,
     EVIDENCE_SYSTEM_PROMPT, EVIDENCE_USER_TEMPLATE,
-    GLOBAL_CATALOG_VERSION, GLOBAL_EVIDENCE_VERSION,
+    GLOBAL_CATALOG_VERSION, GLOBAL_CATALOG_GAP_VERSION, GLOBAL_EVIDENCE_VERSION,
     EVIDENCE_SUBPASS_USER_TEMPLATE,
     CATALOG_ONLY_USER_TEMPLATE,
     SPATIAL_CLAIMS_SYSTEM_PROMPT,
@@ -210,6 +210,10 @@ class OpenAIExtractionProvider:
                     payload["spatial_level"] = int(lvl)
                 except (TypeError, ValueError):
                     pass
+            if p.get("kind_descriptor"):
+                payload["kind_descriptor"] = str(p["kind_descriptor"]).strip().lower()
+            if p.get("tier"):
+                payload["tier"] = str(p["tier"]).strip().lower()
             aliases = [a for a in (p.get("aliases") or []) if not _BARE_POSSESSIVE_RE.search(a or "")]
             if aliases:
                 payload["aliases"] = aliases
@@ -226,7 +230,14 @@ class OpenAIExtractionProvider:
         # ── Pass 2: Evidence — 5 focused sub-passes ──────────────────────────
         cumulative_names = {e["name"] for e in cumulative_catalog}
         full_catalog_list = list(cumulative_catalog) + [
-            {"name": p["name"], "type": p.get("type", ""), "aliases": p.get("aliases", [])}
+            {
+                "name": p["name"],
+                "type": p.get("type", ""),
+                "kind_descriptor": p.get("kind_descriptor", ""),
+                "tier": p.get("tier", ""),
+                "spatial_level": p.get("spatial_level"),
+                "aliases": p.get("aliases", []),
+            }
             for p in new_places
             if p.get("name") and p["name"] not in cumulative_names
         ]
@@ -255,7 +266,17 @@ class OpenAIExtractionProvider:
         """Run all 5 focused evidence sub-passes and return merged candidates + token counts."""
 
         catalog_json = json.dumps(
-            [{"name": e["name"], "type": e.get("type", "")} for e in full_catalog_list],
+            [
+                {
+                    "name": e["name"],
+                    "type": e.get("type", ""),
+                    "kind_descriptor": e.get("kind_descriptor", ""),
+                    "tier": e.get("tier", ""),
+                    "spatial_level": e.get("spatial_level"),
+                    "aliases": e.get("aliases") or [],
+                }
+                for e in full_catalog_list
+            ],
             ensure_ascii=False,
         )
         user_content = EVIDENCE_SUBPASS_USER_TEMPLATE.format(
@@ -405,6 +426,10 @@ class OpenAIExtractionProvider:
                     payload["spatial_level"] = int(lvl)
                 except (TypeError, ValueError):
                     pass
+            if p.get("kind_descriptor"):
+                payload["kind_descriptor"] = str(p["kind_descriptor"]).strip().lower()
+            if p.get("tier"):
+                payload["tier"] = str(p["tier"]).strip().lower()
             aliases = [a for a in (p.get("aliases") or []) if not _BARE_POSSESSIVE_RE.search(a or "")]
             if aliases:
                 payload["aliases"] = aliases
@@ -486,6 +511,10 @@ class OpenAIExtractionProvider:
                     payload["spatial_level"] = int(lvl)
                 except (TypeError, ValueError):
                     pass
+            if p.get("kind_descriptor"):
+                payload["kind_descriptor"] = str(p["kind_descriptor"]).strip().lower()
+            if p.get("tier"):
+                payload["tier"] = str(p["tier"]).strip().lower()
             aliases = [a for a in (p.get("aliases") or []) if not _BARE_POSSESSIVE_RE.search(a or "")]
             if aliases:
                 payload["aliases"] = aliases
