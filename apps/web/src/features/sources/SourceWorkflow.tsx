@@ -695,6 +695,15 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
   const rejectedCount = rejectedCandidateIds.size
   const approvedCount = uniqueEntityCandidates.length - rejectedCount
 
+  // Per-section grouping for catalog review
+  const sectionsWithAnyCandidates = new Set(entityCandidates.map(c => c.section_id))
+  const uniqueCandidatesBySection = new Map<string, Candidate[]>()
+  for (const c of uniqueEntityCandidates) {
+    const bucket = uniqueCandidatesBySection.get(c.section_id) ?? []
+    bucket.push(c)
+    uniqueCandidatesBySection.set(c.section_id, bucket)
+  }
+
   // Add-missing-place helpers
   const existingCandidateNames = new Set(uniqueEntityCandidates.map(c => String((c.payload as Record<string, unknown>).name ?? '').toLowerCase()))
   const filteredSuggestions = addPlaceInput.length >= 1
@@ -985,72 +994,96 @@ export function SourceWorkflow({ document, sections, onEditSections, onSectionsC
               </div>
             </div>
             <div style={{ maxHeight: '22rem', overflowY: 'auto' }}>
-              {uniqueEntityCandidates.map((c) => {
-                const p = c.payload as Record<string, unknown>
-                const name = String(p.name ?? '')
-                const type = String(p.type ?? '')
-                const level = typeof p.spatial_level === 'number' ? p.spatial_level : null
-                const levelLabel = level !== null ? SPATIAL_LEVEL_LABELS[level] : null
-                const isRejected = rejectedCandidateIds.has(c.id)
+              {sections.filter(s => sectionsWithAnyCandidates.has(s.id)).map((s) => {
+                const sectionCandidates = uniqueCandidatesBySection.get(s.id) ?? []
                 return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => toggleReject(c.id)}
-                    style={{
-                      width: '100%', display: 'flex', flexDirection: 'column',
-                      alignItems: 'stretch', gap: 0, padding: '0.5rem 0.9rem',
-                      background: 'none', border: 'none',
-                      borderBottom: '1px solid rgba(212,188,138,0.15)',
-                      cursor: 'pointer', textAlign: 'left',
-                      opacity: isRejected ? 0.42 : 1,
-                      transition: 'opacity 0.15s, background 0.15s',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', width: '100%' }}>
-                      <span style={{
-                        width: '1.1rem', height: '1.1rem', borderRadius: '50%', flexShrink: 0,
-                        border: isRejected ? '1.5px solid rgba(180,60,60,0.5)' : '1.5px solid var(--gold)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: '0.5rem', color: isRejected ? 'rgba(180,60,60,0.7)' : 'var(--gold)',
-                      }}>
-                        {isRejected ? '✕' : '◉'}
-                      </span>
-                      <span style={{ flex: 1, fontSize: '0.9rem', color: isRejected ? 'var(--ink-faint)' : 'var(--ink)', textDecoration: isRejected ? 'line-through' : 'none' }}>
-                        {name}
-                      </span>
-                      {levelLabel && (
-                        <span style={{
-                          fontSize: '0.62rem', color: 'var(--ink-faint)', flexShrink: 0,
-                          border: '1px solid rgba(212,188,138,0.35)', borderRadius: '3px',
-                          padding: '0.05rem 0.3rem', fontVariantNumeric: 'tabular-nums',
-                        }}>
-                          L{level} {levelLabel}
-                        </span>
-                      )}
-                      {type && (
-                        <span style={{ fontSize: '0.68rem', color: 'var(--ink-faint)', flexShrink: 0 }}>{type}</span>
-                      )}
-                      {c.source === 'manual' ? (
-                        <span style={{ fontSize: '0.62rem', color: 'var(--ink-faint)', flexShrink: 0, border: '1px solid rgba(212,188,138,0.35)', borderRadius: '3px', padding: '0.05rem 0.3rem' }}>
-                          added
-                        </span>
-                      ) : (
-                        <span style={{ fontSize: '0.72rem', color: 'var(--gold)', opacity: 0.65, flexShrink: 0 }}>
-                          {(c.confidence * 100).toFixed(0)}%
-                        </span>
-                      )}
+                  <div key={s.id}>
+                    <div style={{
+                      padding: '0.3rem 0.9rem',
+                      background: 'rgba(212,188,138,0.07)',
+                      borderBottom: '1px solid rgba(212,188,138,0.18)',
+                      fontSize: '0.67rem', color: 'var(--ink-faint)',
+                      letterSpacing: '0.09em', textTransform: 'uppercase',
+                    }}>
+                      {s.title || `Section ${s.ordinal}`}
                     </div>
-                    {c.excerpt && (
+                    {sectionCandidates.length === 0 ? (
                       <div style={{
-                        paddingLeft: '1.75rem', fontSize: '0.75rem', color: 'var(--ink-faint)',
-                        fontStyle: 'italic', lineHeight: 1.4, marginTop: '0.18rem',
-                        opacity: isRejected ? 0.6 : 1,
+                        padding: '0.38rem 0.9rem 0.38rem 1.1rem',
+                        fontSize: '0.75rem', color: 'var(--ink-faint)', fontStyle: 'italic',
+                        borderBottom: '1px solid rgba(212,188,138,0.1)',
                       }}>
-                        "{c.excerpt.length > 120 ? c.excerpt.slice(0, 120) + '…' : c.excerpt}"
+                        No new places identified
                       </div>
-                    )}
-                  </button>
+                    ) : sectionCandidates.map((c) => {
+                      const p = c.payload as Record<string, unknown>
+                      const name = String(p.name ?? '')
+                      const type = String(p.type ?? '')
+                      const level = typeof p.spatial_level === 'number' ? p.spatial_level : null
+                      const levelLabel = level !== null ? SPATIAL_LEVEL_LABELS[level] : null
+                      const isRejected = rejectedCandidateIds.has(c.id)
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => toggleReject(c.id)}
+                          style={{
+                            width: '100%', display: 'flex', flexDirection: 'column',
+                            alignItems: 'stretch', gap: 0, padding: '0.5rem 0.9rem',
+                            background: 'none', border: 'none',
+                            borderBottom: '1px solid rgba(212,188,138,0.15)',
+                            cursor: 'pointer', textAlign: 'left',
+                            opacity: isRejected ? 0.42 : 1,
+                            transition: 'opacity 0.15s, background 0.15s',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', width: '100%' }}>
+                            <span style={{
+                              width: '1.1rem', height: '1.1rem', borderRadius: '50%', flexShrink: 0,
+                              border: isRejected ? '1.5px solid rgba(180,60,60,0.5)' : '1.5px solid var(--gold)',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              fontSize: '0.5rem', color: isRejected ? 'rgba(180,60,60,0.7)' : 'var(--gold)',
+                            }}>
+                              {isRejected ? '✕' : '◉'}
+                            </span>
+                            <span style={{ flex: 1, fontSize: '0.9rem', color: isRejected ? 'var(--ink-faint)' : 'var(--ink)', textDecoration: isRejected ? 'line-through' : 'none' }}>
+                              {name}
+                            </span>
+                            {levelLabel && (
+                              <span style={{
+                                fontSize: '0.62rem', color: 'var(--ink-faint)', flexShrink: 0,
+                                border: '1px solid rgba(212,188,138,0.35)', borderRadius: '3px',
+                                padding: '0.05rem 0.3rem', fontVariantNumeric: 'tabular-nums',
+                              }}>
+                                L{level} {levelLabel}
+                              </span>
+                            )}
+                            {type && (
+                              <span style={{ fontSize: '0.68rem', color: 'var(--ink-faint)', flexShrink: 0 }}>{type}</span>
+                            )}
+                            {(c as unknown as Record<string, unknown>).source === 'manual' ? (
+                              <span style={{ fontSize: '0.62rem', color: 'var(--ink-faint)', flexShrink: 0, border: '1px solid rgba(212,188,138,0.35)', borderRadius: '3px', padding: '0.05rem 0.3rem' }}>
+                                added
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: '0.72rem', color: 'var(--gold)', opacity: 0.65, flexShrink: 0 }}>
+                                {(c.confidence * 100).toFixed(0)}%
+                              </span>
+                            )}
+                          </div>
+                          {c.excerpt && (
+                            <div style={{
+                              paddingLeft: '1.75rem', fontSize: '0.75rem', color: 'var(--ink-faint)',
+                              fontStyle: 'italic', lineHeight: 1.4, marginTop: '0.18rem',
+                              opacity: isRejected ? 0.6 : 1,
+                            }}>
+                              "{c.excerpt.length > 120 ? c.excerpt.slice(0, 120) + '…' : c.excerpt}"
+                            </div>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
                 )
               })}
             </div>
