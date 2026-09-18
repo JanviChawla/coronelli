@@ -831,7 +831,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
     return 'locked'
   }
 
-  const spatialDone = phase === 'inspecting' || phase === 'synthesizing' || phase === 'done'
+  const spatialDone = phase === 'inspecting' || phase === 'synthesizing' || phase === 'done' || (phase === 'error' && errorInStep >= 3)
   const PIPELINE_STEPS = [
     { label: 'Catalog',     detail: catalogConfirmed ? `${approvedCount} approved · ${rejectedCount} rejected` : phase === 'cataloging' ? `${currentIdx} / ${sections.length} sections` : 'Find all named locations' },
     { label: 'Extract',     detail: spatialDone ? `${totalCandidates} claim${totalCandidates !== 1 ? 's' : ''} found` : catalogConfirmed ? 'Spatial + visual from text' : 'Unlock after catalog' },
