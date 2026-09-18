@@ -121,7 +121,10 @@ def get_atlas(document_id: str, db: Session = Depends(get_db)) -> AtlasResponse:
     claims_by_entity: dict[str, list[MapClaim]] = {}
     # Sort: manual claims first so they win over synthesis claims in containment resolution
     for claim in sorted(all_claims, key=lambda c: 0 if c.status == "manual" else 1):
-        if not claim.subject_ref or not claim.predicate:
+        if not claim.subject_ref:
+            continue
+        # Visual claims have no predicate — let them through; all others require one
+        if not claim.predicate and claim.claim_type != "visual":
             continue
         # Drop self-referencing claims
         if claim.object_refs and claim.subject_ref in claim.object_refs:
