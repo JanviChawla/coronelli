@@ -176,7 +176,7 @@ export function CandidatesTable({ sections, candidates: initialCandidates }: Pro
                           </span>
                         </td>
                         <td style={{ ...tdStyle, color: '#888', textAlign: 'right' }}>
-                          {Math.round(c.confidence * 100)}%
+                          {c.kind === 'entity' && c.review_state === 'rejected' ? '0%' : `${Math.round(c.confidence * 100)}%`}
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'right', color: '#bbb', fontSize: '0.7rem' }}>
                           {isTerminal ? (

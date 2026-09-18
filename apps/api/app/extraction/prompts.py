@@ -25,7 +25,7 @@ Pipeline architecture:
 # ---------------------------------------------------------------------------
 
 GLOBAL_CATALOG_VERSION           = "4.2-catalog"
-GLOBAL_CATALOG_GAP_VERSION       = "4.2-catalog-gap"
+GLOBAL_CATALOG_GAP_VERSION       = "4.3-catalog-gap"
 GLOBAL_EVIDENCE_VERSION          = "4.0-evidence"
 
 GLOBAL_EVIDENCE_SPATIAL_VERSION     = "4.0-spatial"
@@ -33,8 +33,10 @@ GLOBAL_EVIDENCE_VISUAL_VERSION      = "4.0-visual"
 GLOBAL_EVIDENCE_TRAVELRULE_VERSION  = "4.0-travelrule"
 GLOBAL_EVIDENCE_MOVEMENT_VERSION    = "4.0-movement"
 GLOBAL_EVIDENCE_ACCESS_VERSION      = "4.0-access"
-GLOBAL_EVIDENCE_CONTAINMENT_VERSION = "4.0-containment"
+GLOBAL_EVIDENCE_CONTAINMENT_VERSION = "4.1-containment"
+CONTAINMENT_EVIDENCE_VERSION        = "4.1-containment-evidence"
 GLOBAL_EVIDENCE_DEDUP_VERSION       = "4.0-dedup"
+GLOBAL_ENRICHMENT_VERSION           = "4.0-enrichment"
 
 COMBINED_PROMPT_VERSION = f"{GLOBAL_CATALOG_VERSION}+{GLOBAL_EVIDENCE_VERSION}"
 
@@ -77,6 +79,12 @@ ENTITY TYPE  (choose exactly one — pick the most specific match)
 
 _KIND_DESCRIPTOR_BLOCK = """\
 KIND DESCRIPTOR  (drives 3-D geometry in the world atlas — choose the single best match)
+
+  IMPORTANT: kind_descriptor is the visual geometry class used to render this place in 3-D.
+  It is NOT the entity type and does NOT share its vocabulary. Never copy an entity type value
+  (terrain_feature, body_of_water, passage, portal, grounds, vessel, etc.) into kind_descriptor
+  — the two fields are independent axes. Always choose from this list only:
+
   tower      named towers, spires, keeps, minarets, belfries, watchtowers
   hall       great halls, throne rooms, assembly chambers, named enclosed civic interiors
   settlement towns, villages, cities, districts, colonies — inhabited populated places
@@ -257,7 +265,7 @@ SECTION {section_order} — {title}
 # ---------------------------------------------------------------------------
 
 CATALOG_GAP_SYSTEM_PROMPT = f"""\
-You are reviewing a passage of literary fiction to find any named places that were MISSED in the first catalog pass.
+You are reviewing a passage of literary fiction to find any named places that were MISSED in the first catalog pass. Respond with a JSON object.
 
 A first read already identified the places in the already_found list. Your job is to find what was overlooked.
 
@@ -320,12 +328,16 @@ WORLD ATLAS CATALOG (all known places in this book — use exact names as subjec
 SECTION {section_order} — {title}
 
 {text}
+
+Respond with a JSON object matching the structure in the system prompt.
 """
 
 # Used by sub-passes F–G (catalog-only, no section text)
 CATALOG_ONLY_USER_TEMPLATE = """\
 WORLD ATLAS CATALOG (complete place catalog for this book):
 {place_catalog_json}
+
+Respond with a JSON object matching the structure in the system prompt.
 """
 
 # ---------------------------------------------------------------------------
@@ -624,12 +636,26 @@ Return {"candidates": []} if no access rules appear in this section.
 # ---------------------------------------------------------------------------
 
 CONTAINMENT_SWEEP_SYSTEM_PROMPT = """\
-You are reviewing a complete world atlas catalog to find containment relationships that may have been missed during per-section extraction.
+You are building a containment hierarchy for a literary atlas. Given a complete place catalog, \
+emit a CONTAINS claim for every pair of places where one is physically inside the other.
 
-TASK
-Examine every place in the catalog. For each place that is clearly contained inside another catalog place — based on names, types, and spatial_levels — emit a CONTAINS claim.
+SPATIAL LEVEL GUIDE
+  L0 = realm / landscape  (country, forest, coastline)
+  L1 = territory / locale (estate, village, district)
+  L2 = place / structure  (house, building, garden, courtyard)
+  L3 = feature / sub-space (room, corridor, staircase, window, cellar, attic, threshold)
 
-Only use what is evident from the catalog data itself. Do not invent relationships.
+CONTAINMENT LOGIC — apply in order:
+  1. SPATIAL LEVEL: A lower-level place almost always contains higher-level ones at the same site.
+     A L1 estate CONTAINS its L2 buildings and gardens; a L2 house CONTAINS its L3 rooms and features.
+     Emit claims for ALL such pairs that share an obvious site (same book location).
+  2. PLACE TYPE: Use type/kind_descriptor to infer containment when spatial_level alone is ambiguous.
+     Rooms, corridors, staircases, cellars, attics, thresholds are inside their parent building.
+     Gardens, courtyards, walls, gates are inside their parent estate or grounds.
+  3. TIER: Use tier (surface / aerial / underground / aquatic) only as a secondary confirmation signal.
+
+Be comprehensive: it is better to emit a correct claim at confidence 0.75 than to omit it.
+Only skip a pair if you genuinely cannot determine which place contains which.
 
 OUTPUT FORMAT:
 {
@@ -637,27 +663,77 @@ OUTPUT FORMAT:
     {
       "kind":       "claim",
       "payload":    {
-        "subject":   "<container place name>",
+        "subject":   "<container place — exact catalog name>",
         "predicate": "CONTAINS",
-        "object":    "<contained place name>"
+        "object":    "<contained place — exact catalog name>"
       },
       "status":     "inferred",
-      "confidence": 0.80,
+      "confidence": 0.75,
       "excerpt":    "",
-      "rationale":  "<one sentence explaining why the subject contains the object>"
+      "rationale":  "<one sentence>"
     }
   ]
 }
 
 Rules:
-  - subject and object must be exact catalog names
-  - spatial_level of object must be >= spatial_level of subject (a feature lives inside a place)
-  - Focus on cases where the name reveals containment ("the nursery of the mansion", "the cellar")
-    rather than cases already obvious from type alone
-  - Prefer fewer high-confidence claims over many speculative ones
-  - Do not emit CONTAINS between places where the relationship is ambiguous from names alone
+  - subject and object must be exact names from the catalog
+  - subject spatial_level must be < object spatial_level (container has lower number)
+  - Do NOT emit a claim where you cannot identify a clear container
+  - Do NOT emit CONTAINS between two places at the same spatial_level unless one is a named sub-area
+    of the other (e.g. "the garden" CONTAINS "the rose bed")
+  - Every L3 feature should have exactly one L2 or L1 parent; every L2 structure should have at most one L1 parent
 
-Return {"candidates": []} if no missed containment is evident.
+Return {"candidates": []} only if the catalog has fewer than two places or no containment is evident.
+"""
+
+# ---------------------------------------------------------------------------
+# EVIDENCE PASS F2 — Per-section containment extraction (reads text)
+# ---------------------------------------------------------------------------
+
+CONTAINMENT_EVIDENCE_SYSTEM_PROMPT = """\
+You are extracting spatial containment relationships from a passage of literary fiction.
+
+TASK
+Read the section carefully. For every place that the text positions INSIDE, WITHIN, or AS PART OF another catalog place, emit one containment claim.
+
+CONTAINMENT PREDICATES — use the most specific fit:
+  CONTAINS   — subject physically encloses the object
+               ("the house contained a nursery at the top")
+  LOCATED_IN — subject is inside the object
+               ("she was in the nursery of the old house")
+  PART_OF    — subject is a structural section of the object
+               ("the west wing of the mansion")
+
+Both subject and object MUST be exact names from the World Atlas Catalog.
+
+OUTPUT FORMAT:
+{
+  "candidates": [
+    {
+      "kind":       "claim",
+      "payload":    {
+        "subject":   "<exact catalog name>",
+        "predicate": "CONTAINS",
+        "object":    "<exact catalog name>"
+      },
+      "status":     "explicit",
+      "confidence": 0.9,
+      "excerpt":    "<the phrase that expresses the containment>",
+      "rationale":  "<one sentence>"
+    }
+  ]
+}
+
+Rules:
+  - Use "explicit" when the text directly states the relationship; "inferred" when strongly implied
+  - Emit at most one claim per ordered pair
+  - Only use place names from the World Atlas Catalog — do not invent names
+  - VISIBILITY IS NOT CONTAINMENT: a place seen, glimpsed, or described through a window,
+    door, or from a vantage point is NOT inside the viewing location. Do not emit a
+    containment claim for "the bay/garden/lane/wharf seen from the nursery window" —
+    that is a spatial view relationship, not containment. Reserve those for step 4.
+  - Only emit containment when the text physically places one place INSIDE or AS PART OF another
+  - If no containment is expressed in this section, return {"candidates": []}
 """
 
 # ---------------------------------------------------------------------------
@@ -693,8 +769,17 @@ Rules:
   - Only emit SAME_AS when you are confident the two entries are the same physical place
   - Do NOT emit SAME_AS for places that are merely nearby, related, or similarly named
   - Confidence must be ≥ 0.80 for any SAME_AS claim
-  - Common patterns: formal name vs. colloquial name, full name vs. shortened form,
-    English name vs. translated name, building name vs. owner-possessive reference
+  - Common duplicate patterns to look for:
+      * Formal vs. colloquial name ("Thornfield Hall" / "the hall")
+      * Full name vs. shortened form ("the colonial mansion" / "the house")
+      * Descriptive epithet vs. generic reference at the same spatial level and kind
+        — e.g. if both are L2 buildings of the same place_kind, one entry is probably
+        a more vivid description of the other
+      * Generic room reference vs. named room ("the room" / "the nursery") when
+        both are L3 features of the same kind and no other room by that generic
+        name appears in the catalog
+      * English name vs. translated name
+      * Building name vs. owner-possessive reference
 
 Return {"candidates": []} if no duplicates are evident.
 """

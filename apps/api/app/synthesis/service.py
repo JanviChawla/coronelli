@@ -8,15 +8,16 @@ from sqlalchemy.orm import Session
 from app.db.models import SourceSection
 from app.domain.world import MapClaim, MapEntity, MapTravelRule
 from app.extraction.models import Candidate
-from app.extraction.prompts import GLOBAL_CATALOG_VERSION, GLOBAL_CATALOG_GAP_VERSION, GLOBAL_EVIDENCE_VERSION
+from app.extraction.models import ExtractionRun
+from app.extraction.prompts import GLOBAL_CATALOG_VERSION, GLOBAL_CATALOG_GAP_VERSION, GLOBAL_EVIDENCE_VERSION, GLOBAL_EVIDENCE_DEDUP_VERSION, GLOBAL_EVIDENCE_CONTAINMENT_VERSION
 from app.synthesis.models import SynthesisItem, SynthesisRun
 from app.synthesis.prompts import THREE_PASS_SYNTHESIS_VERSION
 from app.synthesis.provider import SynthesisProvider
-from app.synthesis.review import canonicalize_synthesis_run
+from app.synthesis.review import canonicalize_synthesis_run, _approve_claim, _approve_visual_palette
 
 _log = logging.getLogger(__name__)
 
-_ALLOWED_KINDS = {"entity", "claim", "route", "visual_claim", "access", "movement", "same_as", "unresolved", "reveal_event"}
+_ALLOWED_KINDS = {"entity", "claim", "route", "visual_claim", "visual_palette", "access", "movement", "same_as", "unresolved", "reveal_event"}
 _STALE_RUN_MINUTES = 15
 
 
@@ -113,6 +114,76 @@ def _build_evidence_ledger(session: Session, document_id: str) -> list[dict]:
                 "review_state": c.review_state,
             })
 
+    # Add containment pass candidates (located_in claims) so they survive synthesis
+    containment_run = (
+        session.query(ExtractionRun)
+        .filter(
+            ExtractionRun.document_id == document_id,
+            ExtractionRun.section_id.is_(None),
+            ExtractionRun.status == "completed",
+            ExtractionRun.prompt_version == GLOBAL_EVIDENCE_CONTAINMENT_VERSION,
+        )
+        .order_by(ExtractionRun.completed_at.desc())
+        .first()
+    )
+    if containment_run:
+        containment_candidates = (
+            session.query(Candidate)
+            .filter(
+                Candidate.extraction_run_id == containment_run.id,
+                Candidate.section_id.is_(None),
+                Candidate.review_state != "rejected",
+            )
+            .all()
+        )
+        for c in containment_candidates:
+            ledger.append({
+                "section_title": "containment",
+                "section_ordinal": -3,
+                "kind": c.kind,
+                "payload": c.payload,
+                "confidence": c.confidence,
+                "excerpt": c.excerpt,
+                "status": c.status,
+                "review_state": c.review_state,
+            })
+        _log.info("Evidence ledger: added %d containment candidates", len(containment_candidates))
+
+    # Add confirmed dedup (SAME_AS) candidates so synthesis can apply them as merge hints
+    dedup_run = (
+        session.query(ExtractionRun)
+        .filter(
+            ExtractionRun.document_id == document_id,
+            ExtractionRun.section_id.is_(None),
+            ExtractionRun.status == "completed",
+            ExtractionRun.prompt_version == GLOBAL_EVIDENCE_DEDUP_VERSION,
+        )
+        .order_by(ExtractionRun.completed_at.desc())
+        .first()
+    )
+    if dedup_run:
+        dedup_candidates = (
+            session.query(Candidate)
+            .filter(
+                Candidate.extraction_run_id == dedup_run.id,
+                Candidate.section_id.is_(None),
+                Candidate.review_state != "rejected",
+            )
+            .all()
+        )
+        for c in dedup_candidates:
+            ledger.append({
+                "section_title": "dedup",
+                "section_ordinal": -2,
+                "kind": c.kind,
+                "payload": c.payload,
+                "confidence": c.confidence,
+                "excerpt": c.excerpt,
+                "status": c.status,
+                "review_state": c.review_state,
+            })
+        _log.info("Evidence ledger: added %d dedup candidates", len(dedup_candidates))
+
     # Deduplicate entity candidates in Python — merge all per-section occurrences
     # of the same place into ONE record. The merged record carries the best payload
     # (highest-confidence name/type/aliases) PLUS a section_mentions list so the
@@ -206,10 +277,13 @@ def _has_canonical_records(session: Session, document_id: str) -> bool:
 
 def _supersede_canonical_records(session: Session, document_id: str) -> None:
     for model in (MapEntity, MapClaim, MapTravelRule):
-        session.query(model).filter(
+        q = session.query(model).filter(
             model.provenance_document_id == document_id,
             model.state == "active",
-        ).update({"state": "superseded"}, synchronize_session=False)
+        )
+        if hasattr(model, "status"):
+            q = q.filter(model.status != "manual")
+        q.update({"state": "superseded"}, synchronize_session=False)
 
 
 def run_synthesis(
@@ -340,6 +414,161 @@ def run_synthesis(
         _log.info(
             "Synthesis completed for document %s: %d items, %d canonical records (prompt v%s)",
             document_id, len(items), canonical_count, result.synthesis_prompt_version,
+        )
+        return run, items
+
+    except Exception as exc:
+        run.status = "failed"
+        run.error = str(exc)
+        run.completed_at = datetime.now(timezone.utc)
+        session.commit()
+        raise
+
+
+def run_visual_synthesis(
+    session: Session,
+    document_id: str,
+    provider: SynthesisProvider,
+) -> tuple[SynthesisRun, list[SynthesisItem]]:
+    """Visual-only run: promote spatial candidates directly + LLM visual claims.
+
+    Does NOT supersede or re-create entity records.
+    Only supersedes and replaces MapClaim records.
+    """
+    # Clean up stale running runs
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=_STALE_RUN_MINUTES)
+    (
+        session.query(SynthesisRun)
+        .filter(
+            SynthesisRun.document_id == document_id,
+            SynthesisRun.status == "running",
+            SynthesisRun.started_at < cutoff,
+        )
+        .update(
+            {"status": "failed", "error": "Stale run cleaned up on next visual synthesis attempt"},
+            synchronize_session=False,
+        )
+    )
+    session.flush()
+
+    # Supersede only MapClaim records — entities stay intact
+    (
+        session.query(MapClaim)
+        .filter(
+            MapClaim.provenance_document_id == document_id,
+            MapClaim.state == "active",
+            MapClaim.status != "manual",
+        )
+        .update({"state": "superseded"}, synchronize_session=False)
+    )
+
+    run = SynthesisRun(
+        document_id=document_id,
+        status="running",
+        provider="openai",
+        model="gpt-4o-mini",
+        synthesis_prompt_version="",
+        evidence_hash="",
+        started_at=datetime.now(timezone.utc),
+    )
+    session.add(run)
+    session.commit()
+
+    def _phase_callback(phase: str) -> None:
+        run.current_phase = phase
+        session.commit()
+
+    try:
+        _phase_callback("visual")
+
+        ledger = _build_evidence_ledger(session, document_id)
+        evidence_candidates = [item for item in ledger if item["kind"] != "entity"]
+
+        # Canonical entity map from active records (not re-synthesized)
+        active_entities = (
+            session.query(MapEntity)
+            .filter(
+                MapEntity.provenance_document_id == document_id,
+                MapEntity.state == "active",
+            )
+            .all()
+        )
+        canonical_entity_map = [
+            {"name": e.name, "aliases": e.aliases or []}
+            for e in active_entities
+            if e.name
+        ]
+
+        items: list[SynthesisItem] = []
+        ordinal = 0
+
+        # Visual claims + palette sub-passes (run in parallel inside synthesize_visual)
+        if hasattr(provider, "synthesize_visual"):
+            result = provider.synthesize_visual(evidence_candidates, canonical_entity_map, _phase_callback)
+            for raw_item in result.items:
+                item = SynthesisItem(
+                    synthesis_run_id=run.id,
+                    document_id=document_id,
+                    kind=raw_item.kind,
+                    payload=raw_item.payload,
+                    confidence=raw_item.confidence,
+                    rationale=raw_item.rationale,
+                    ordinal=ordinal,
+                )
+                session.add(item)
+                items.append(item)
+                ordinal += 1
+                if raw_item.kind == "visual_claim":
+                    try:
+                        _approve_claim(session, document_id, raw_item.payload, "visual", raw_item.confidence)
+                    except Exception:
+                        _log.warning("Failed to approve visual claim %s", raw_item.payload, exc_info=True)
+                elif raw_item.kind == "visual_palette":
+                    try:
+                        _approve_visual_palette(session, document_id, raw_item.payload)
+                    except Exception:
+                        _log.warning("Failed to approve visual palette %s", raw_item.payload, exc_info=True)
+
+        # Promote spatial candidates directly (no LLM)
+        spatial_candidates = [
+            c for c in evidence_candidates
+            if c.get("kind") == "claim" and c.get("review_state") != "rejected"
+        ]
+        n_spatial = 0
+        for candidate in spatial_candidates:
+            payload = candidate.get("payload", {})
+            predicate = payload.get("predicate", "")
+            if not predicate or predicate == "SAME_AS":
+                continue
+            try:
+                _approve_claim(session, document_id, payload, "spatial", candidate.get("confidence"))
+                item = SynthesisItem(
+                    synthesis_run_id=run.id,
+                    document_id=document_id,
+                    kind="claim",
+                    payload=payload,
+                    confidence=candidate.get("confidence", 0.7),
+                    rationale="promoted from evidence",
+                    ordinal=ordinal,
+                )
+                session.add(item)
+                items.append(item)
+                ordinal += 1
+                n_spatial += 1
+            except Exception:
+                _log.warning("Failed to promote spatial claim %s", payload, exc_info=True)
+
+        session.flush()
+        run.status = "completed"
+        run.synthesis_prompt_version = result.synthesis_prompt_version if hasattr(provider, "synthesize_visual") else "visual-1.0"
+        run.completed_at = datetime.now(timezone.utc)
+        session.commit()
+
+        _log.info(
+            "Visual synthesis completed for document %s: %d visual claims, %d spatial claims promoted",
+            document_id,
+            sum(1 for i in items if i.kind == "visual_claim"),
+            n_spatial,
         )
         return run, items
 

@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from app.db.engine import get_db
 from app.db.models import SourceDocument, SourceSection
 from app.domain.world import EntityMention, MapClaim, MapEntity, MapTravelRule
+from app.extraction.models import Candidate, ExtractionRun
+from app.extraction.prompts import GLOBAL_EVIDENCE_CONTAINMENT_VERSION, GLOBAL_EVIDENCE_DEDUP_VERSION
 from app.evaluation.oracle import evaluate_atlas
 
 router = APIRouter(tags=["atlas"])
@@ -114,10 +116,20 @@ def get_atlas(document_id: str, db: Session = Depends(get_db)) -> AtlasResponse:
         .all()
     )
 
+    active_entity_ids = {e.id for e in entities}
+
     claims_by_entity: dict[str, list[MapClaim]] = {}
-    for claim in all_claims:
-        if claim.subject_ref:
-            claims_by_entity.setdefault(claim.subject_ref, []).append(claim)
+    # Sort: manual claims first so they win over synthesis claims in containment resolution
+    for claim in sorted(all_claims, key=lambda c: 0 if c.status == "manual" else 1):
+        if not claim.subject_ref or not claim.predicate:
+            continue
+        # Drop self-referencing claims
+        if claim.object_refs and claim.subject_ref in claim.object_refs:
+            continue
+        # Drop claims referencing deleted/non-existent entities as objects
+        if claim.object_refs and not all(oid in active_entity_ids for oid in claim.object_refs):
+            continue
+        claims_by_entity.setdefault(claim.subject_ref, []).append(claim)
 
     entity_outs = [
         AtlasEntityOut(
@@ -508,6 +520,421 @@ def add_manual_entity(document_id: str, body: ManualEntityRequest, db: Session =
     db.commit()
 
     return ManualEntityResponse(id=candidate.id, name=body.name.strip())
+
+
+# ── Claim CRUD ────────────────────────────────────────────────────────────────
+
+class ClaimPatchRequest(BaseModel):
+    predicate: str | None = None
+    object_refs: list[str] | None = None
+
+
+class ClaimCreateRequest(BaseModel):
+    claim_type: str = "spatial"
+    predicate: str
+    subject_ref: str
+    object_refs: list[str]
+
+
+@router.patch("/api/documents/{document_id}/atlas/claims/{claim_id}")
+def patch_atlas_claim(
+    document_id: str, claim_id: str, body: ClaimPatchRequest, db: Session = Depends(get_db)
+):
+    from fastapi import HTTPException
+
+    claim = db.get(MapClaim, claim_id)
+    if not claim or claim.provenance_document_id != document_id or claim.state != "active":
+        raise HTTPException(status_code=404, detail="Claim not found")
+    if body.predicate is not None:
+        claim.predicate = body.predicate
+    if body.object_refs is not None:
+        claim.object_refs = body.object_refs
+    claim.status = "manual"  # promote to manual so synthesis won't supersede it
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/api/documents/{document_id}/atlas/entities/{entity_id}/excerpts")
+def get_entity_excerpts(document_id: str, entity_id: str, db: Session = Depends(get_db)):
+    from fastapi import HTTPException
+
+    entity = db.get(MapEntity, entity_id)
+    if not entity or entity.provenance_document_id != document_id:
+        raise HTTPException(status_code=404, detail="Entity not found")
+
+    # Collect all name variants to search
+    names = {entity.name.lower()}
+    for alias in (entity.aliases or []):
+        names.add(alias.lower())
+
+    # Collect section ids for this document so we can scope the candidate query
+    section_ids = {s.id for s in db.query(SourceSection.id).filter(SourceSection.document_id == document_id).all()}
+
+    all_candidates = (
+        db.query(Candidate, SourceSection)
+        .join(SourceSection, Candidate.section_id == SourceSection.id, isouter=True)
+        .filter(
+            Candidate.kind == "entity",
+            Candidate.status != "rejected",
+            Candidate.excerpt != "",
+            Candidate.section_id.in_(section_ids),
+        )
+        .all()
+    )
+
+    seen_excerpts: set[str] = set()
+    results = []
+    for candidate, section in all_candidates:
+        cname = (candidate.payload or {}).get("name", "")
+        if cname.lower() not in names:
+            continue
+        exc = (candidate.excerpt or "").strip()
+        if not exc or exc in seen_excerpts:
+            continue
+        seen_excerpts.add(exc)
+        results.append({
+            "excerpt": exc,
+            "section_title": section.title if section else None,
+            "section_ordinal": section.ordinal if section else None,
+        })
+
+    results.sort(key=lambda r: r["section_ordinal"] or 0)
+    return results
+
+
+class EntityPatchRequest(BaseModel):
+    place_kind: str | None = None
+    tier: str | None = None  # set to "" to clear
+
+
+@router.patch("/api/documents/{document_id}/atlas/entities/{entity_id}")
+def patch_atlas_entity(
+    document_id: str, entity_id: str, body: EntityPatchRequest, db: Session = Depends(get_db)
+):
+    from fastapi import HTTPException
+    from sqlalchemy.orm.attributes import flag_modified
+
+    entity = db.get(MapEntity, entity_id)
+    if not entity or entity.provenance_document_id != document_id:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    if body.place_kind is not None:
+        entity.place_kind = body.place_kind
+    if body.tier is not None:
+        payload = dict(entity.payload or {})
+        if body.tier:
+            payload["tier"] = body.tier
+        else:
+            payload.pop("tier", None)
+        entity.payload = payload
+        flag_modified(entity, "payload")
+    entity.status = "manual"
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/api/documents/{document_id}/atlas/entities/{entity_id}")
+def delete_atlas_entity(
+    document_id: str, entity_id: str, db: Session = Depends(get_db)
+):
+    from fastapi import HTTPException
+
+    entity = db.get(MapEntity, entity_id)
+    if not entity or entity.provenance_document_id != document_id:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    entity.state = "deleted"
+    # Cascade-delete claims where this entity is the subject
+    for claim in db.query(MapClaim).filter(
+        MapClaim.subject_ref == entity_id,
+        MapClaim.state == "active",
+    ).all():
+        claim.state = "deleted"
+    # Also cascade-delete claims on other entities that reference this entity as an object
+    # (e.g. "A CONTAINS deleted_entity" — otherwise those orphan references linger)
+    for claim in db.query(MapClaim).filter(
+        MapClaim.provenance_document_id == document_id,
+        MapClaim.state == "active",
+    ).all():
+        if claim.object_refs and entity_id in claim.object_refs:
+            claim.state = "deleted"
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/api/documents/{document_id}/atlas/claims/{claim_id}")
+def delete_atlas_claim(
+    document_id: str, claim_id: str, db: Session = Depends(get_db)
+):
+    from fastapi import HTTPException
+
+    claim = db.get(MapClaim, claim_id)
+    if not claim or claim.provenance_document_id != document_id:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    claim.state = "deleted"
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/api/documents/{document_id}/atlas/claims", response_model=ClaimOut)
+def create_atlas_claim(
+    document_id: str, body: ClaimCreateRequest, db: Session = Depends(get_db)
+):
+    claim = MapClaim(
+        id=str(uuid.uuid4()),
+        claim_type=body.claim_type,
+        predicate=body.predicate,
+        subject_ref=body.subject_ref,
+        object_refs=body.object_refs,
+        provenance_document_id=document_id,
+        provenance_section_id=None,
+        payload={},
+        confidence=1.0,
+        excerpt="",
+        status="manual",
+        state="active",
+    )
+    db.add(claim)
+    db.commit()
+    db.refresh(claim)
+    return ClaimOut(
+        id=claim.id,
+        claim_type=claim.claim_type,
+        predicate=claim.predicate,
+        subject_ref=claim.subject_ref,
+        object_refs=claim.object_refs,
+        payload=claim.payload,
+        confidence=claim.confidence,
+        excerpt=claim.excerpt,
+        status=claim.status,
+        provenance=_provenance(claim.provenance_document_id, claim.provenance_section_id),
+    )
+
+
+# ── Assign containment (promote enrichment containment candidates → MapClaims) ─
+
+@router.post("/api/documents/{document_id}/assign-containment")
+def assign_containment(document_id: str, db: Session = Depends(get_db)):
+    from app.extraction.prompts import CONTAINMENT_EVIDENCE_VERSION
+    # Collect all completed per-section containment runs for this document
+    section_ids = [
+        s.id for s in db.query(SourceSection)
+        .filter(SourceSection.document_id == document_id)
+        .all()
+    ]
+    if not section_ids:
+        return {"status": "no_enrichment_candidates", "claims_created": 0}
+
+    runs = (
+        db.query(ExtractionRun)
+        .filter(
+            ExtractionRun.section_id.in_(section_ids),
+            ExtractionRun.status == "completed",
+            ExtractionRun.prompt_version == CONTAINMENT_EVIDENCE_VERSION,
+        )
+        .all()
+    )
+    if not runs:
+        # Fallback: try old global-run approach
+        run = (
+            db.query(ExtractionRun)
+            .filter(
+                ExtractionRun.document_id == document_id,
+                ExtractionRun.section_id.is_(None),
+                ExtractionRun.status == "completed",
+                ExtractionRun.prompt_version == GLOBAL_EVIDENCE_CONTAINMENT_VERSION,
+            )
+            .order_by(ExtractionRun.completed_at.desc())
+            .first()
+        )
+        if run is None:
+            return {"status": "no_enrichment_candidates", "claims_created": 0}
+        run_ids = [run.id]
+    else:
+        run_ids = [r.id for r in runs]
+
+    containment_candidates = (
+        db.query(Candidate)
+        .filter(
+            Candidate.extraction_run_id.in_(run_ids),
+            Candidate.kind == "claim",
+            Candidate.review_state != "rejected",
+        )
+        .all()
+    )
+    containment_candidates = [
+        c for c in containment_candidates
+        if (c.payload or {}).get("predicate") in {"CONTAINS", "LOCATED_IN", "PART_OF"}
+    ]
+
+    if not containment_candidates:
+        return {"status": "no_enrichment_candidates", "claims_created": 0}
+
+    # Build name→id lookup from active MapEntity records
+    entities = (
+        db.query(MapEntity)
+        .filter(MapEntity.provenance_document_id == document_id, MapEntity.state == "active")
+        .all()
+    )
+    name_to_id: dict[str, str] = {}
+    for e in entities:
+        name_to_id[e.name.lower()] = e.id
+        for alias in (e.aliases or []):
+            if alias.lower() not in name_to_id:
+                name_to_id[alias.lower()] = e.id
+
+    # Build set of existing active containment claims to avoid dupes
+    existing: set[tuple[str, str]] = set()
+    for claim in (
+        db.query(MapClaim)
+        .filter(
+            MapClaim.provenance_document_id == document_id,
+            MapClaim.predicate.in_(["LOCATED_IN", "CONTAINS", "PART_OF"]),
+            MapClaim.state == "active",
+        )
+        .all()
+    ):
+        if claim.subject_ref and claim.object_refs:
+            existing.add((claim.subject_ref, claim.object_refs[0]))
+
+    created = 0
+    for cand in containment_candidates:
+        payload = cand.payload or {}
+        predicate = str(payload.get("predicate", "")).upper()
+        subject_name = str(payload.get("subject", "")).lower()
+        object_name = str(payload.get("object", "")).lower()
+
+        if predicate == "CONTAINS":
+            # CONTAINS(subject=container, object=contained) → contained LOCATED_IN container
+            contained_id = name_to_id.get(object_name)
+            container_id = name_to_id.get(subject_name)
+        else:
+            # LOCATED_IN / PART_OF: subject is inside object
+            contained_id = name_to_id.get(subject_name)
+            container_id = name_to_id.get(object_name)
+
+        if not container_id or not contained_id or container_id == contained_id:
+            continue
+        if (contained_id, container_id) in existing:
+            continue
+
+        claim = MapClaim(
+            id=str(uuid.uuid4()),
+            claim_type="spatial",
+            predicate="LOCATED_IN",
+            subject_ref=contained_id,
+            object_refs=[container_id],
+            provenance_document_id=document_id,
+            provenance_section_id=cand.section_id,
+            payload={},
+            confidence=cand.confidence or 0.85,
+            excerpt=cand.excerpt or "",
+            status="explicit",
+            state="active",
+        )
+        db.add(claim)
+        existing.add((contained_id, container_id))
+        created += 1
+
+    db.commit()
+    return {"status": "ok", "claims_created": created}
+
+
+# ── Promote dedup candidates → entity merges ─────────────────────────────────
+
+@router.post("/api/documents/{document_id}/promote-dedup")
+def promote_dedup(document_id: str, db: Session = Depends(get_db)):
+    from fastapi import HTTPException
+
+    # Find the most recent completed dedup run for this document
+    run = (
+        db.query(ExtractionRun)
+        .filter(
+            ExtractionRun.document_id == document_id,
+            ExtractionRun.section_id.is_(None),
+            ExtractionRun.status == "completed",
+            ExtractionRun.prompt_version == GLOBAL_EVIDENCE_DEDUP_VERSION,
+        )
+        .order_by(ExtractionRun.completed_at.desc())
+        .first()
+    )
+    if run is None:
+        return {"status": "no_dedup_candidates", "merges_performed": 0}
+
+    # Fetch SAME_AS candidates
+    dedup_candidates = (
+        db.query(Candidate)
+        .filter(
+            Candidate.extraction_run_id == run.id,
+            Candidate.kind == "claim",
+        )
+        .all()
+    )
+    dedup_candidates = [
+        c for c in dedup_candidates
+        if (c.payload or {}).get("predicate") == "SAME_AS"
+    ]
+
+    if not dedup_candidates:
+        return {"status": "no_dedup_candidates", "merges_performed": 0}
+
+    # Build name→entity lookup from active MapEntity records
+    entities = (
+        db.query(MapEntity)
+        .filter(MapEntity.provenance_document_id == document_id, MapEntity.state == "active")
+        .all()
+    )
+    name_to_entity: dict[str, MapEntity] = {}
+    for e in entities:
+        name_to_entity[e.name.lower()] = e
+        for alias in (e.aliases or []):
+            if alias.lower() not in name_to_entity:
+                name_to_entity[alias.lower()] = e
+
+    merges = 0
+    merged_ids: set[str] = set()
+
+    for cand in dedup_candidates:
+        payload = cand.payload or {}
+        # SAME_AS: subject=canonical, object=alias/duplicate
+        canonical_name = str(payload.get("subject", "")).lower()
+        alias_name = str(payload.get("object", "")).lower()
+        keep = name_to_entity.get(canonical_name)
+        drop = name_to_entity.get(alias_name)
+        if not keep or not drop:
+            continue
+        if keep.id == drop.id:
+            continue
+        if keep.id in merged_ids or drop.id in merged_ids:
+            continue
+        if keep.state != "active" or drop.state != "active":
+            continue
+
+        # Absorb drop into keep
+        new_aliases = list(keep.aliases or [])
+        for name in [drop.name, *(drop.aliases or [])]:
+            if name and name != keep.name and name not in new_aliases:
+                new_aliases.append(name)
+        keep.aliases = new_aliases
+
+        db.query(MapClaim).filter(
+            MapClaim.subject_ref == drop.id,
+            MapClaim.state == "active",
+        ).update({"subject_ref": keep.id}, synchronize_session=False)
+
+        object_claims = db.query(MapClaim).filter(MapClaim.state == "active").all()
+        for c in object_claims:
+            if c.object_refs and drop.id in c.object_refs:
+                c.object_refs = [keep.id if r == drop.id else r for r in c.object_refs]
+
+        drop.state = "merged"
+        merged_ids.add(drop.id)
+        # Update lookup so subsequent merges see the new state
+        for k, v in list(name_to_entity.items()):
+            if v.id == drop.id:
+                name_to_entity[k] = keep
+        merges += 1
+
+    db.commit()
+    return {"status": "ok", "merges_performed": merges}
 
 
 # ── Entity merge ──────────────────────────────────────────────────────────────

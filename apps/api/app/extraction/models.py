@@ -13,8 +13,11 @@ class ExtractionRun(Base):
     __tablename__ = "extraction_runs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    section_id: Mapped[str] = mapped_column(
-        String, ForeignKey("source_sections.id", ondelete="CASCADE"), nullable=False
+    section_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("source_sections.id", ondelete="CASCADE"), nullable=True
+    )
+    document_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("source_documents.id", ondelete="CASCADE"), nullable=True
     )
     status: Mapped[str] = mapped_column(String, nullable=False)  # "completed" | "failed"
     provider: Mapped[str] = mapped_column(String, nullable=False)
@@ -40,8 +43,8 @@ class Candidate(Base):
     extraction_run_id: Mapped[str] = mapped_column(
         String, ForeignKey("extraction_runs.id", ondelete="CASCADE"), nullable=False
     )
-    section_id: Mapped[str] = mapped_column(
-        String, ForeignKey("source_sections.id", ondelete="CASCADE"), nullable=False
+    section_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("source_sections.id", ondelete="CASCADE"), nullable=True
     )
     kind: Mapped[str] = mapped_column(String, nullable=False)  # entity|claim|travel_rule|visual_claim
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)

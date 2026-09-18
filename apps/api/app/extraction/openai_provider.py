@@ -24,6 +24,8 @@ from app.extraction.prompts import (
     MOVEMENT_SYSTEM_PROMPT,
     ACCESS_SYSTEM_PROMPT,
     CONTAINMENT_SWEEP_SYSTEM_PROMPT,
+    CONTAINMENT_EVIDENCE_SYSTEM_PROMPT,
+    CONTAINMENT_EVIDENCE_VERSION,
     ENTITY_DEDUP_SYSTEM_PROMPT,
     GLOBAL_EVIDENCE_SPATIAL_VERSION,
     GLOBAL_EVIDENCE_VISUAL_VERSION,
@@ -32,6 +34,7 @@ from app.extraction.prompts import (
     GLOBAL_EVIDENCE_ACCESS_VERSION,
     GLOBAL_EVIDENCE_CONTAINMENT_VERSION,
     GLOBAL_EVIDENCE_DEDUP_VERSION,
+    GLOBAL_ENRICHMENT_VERSION,
 )
 
 # Bare possessive: ends with "'s" with no following place noun.
@@ -291,16 +294,11 @@ class OpenAIExtractionProvider:
         )
 
         # (version, label, system_prompt, user_content, allowed_kinds)
+        # C (travel rules), D (movement), E (access) omitted — feed inspector panel, not atlas explorer.
+        # F (containment) and G (dedup) omitted — run once globally post-catalog, not per section.
         _SUBPASSES: list[tuple[str, str, str, str, set[str]]] = [
-            # Text + catalog passes
-            (GLOBAL_EVIDENCE_SPATIAL_VERSION,    "spatial",     SPATIAL_CLAIMS_SYSTEM_PROMPT,    user_content,         {"claim", "scene_anchor"}),
-            (GLOBAL_EVIDENCE_VISUAL_VERSION,     "visual",      VISUAL_CLAIMS_SYSTEM_PROMPT,     user_content,         {"visual_claim"}),
-            (GLOBAL_EVIDENCE_TRAVELRULE_VERSION, "routes",      TRAVELRULE_SYSTEM_PROMPT,        user_content,         {"travel_rule"}),
-            (GLOBAL_EVIDENCE_MOVEMENT_VERSION,   "movement",    MOVEMENT_SYSTEM_PROMPT,          user_content,         {"movement"}),
-            (GLOBAL_EVIDENCE_ACCESS_VERSION,     "access",      ACCESS_SYSTEM_PROMPT,            user_content,         {"access"}),
-            # Catalog-only passes (no section text needed)
-            (GLOBAL_EVIDENCE_CONTAINMENT_VERSION, "containment", CONTAINMENT_SWEEP_SYSTEM_PROMPT, catalog_only_content, {"claim"}),
-            (GLOBAL_EVIDENCE_DEDUP_VERSION,       "dedup",       ENTITY_DEDUP_SYSTEM_PROMPT,      catalog_only_content, {"claim"}),
+            (GLOBAL_EVIDENCE_SPATIAL_VERSION, "spatial", SPATIAL_CLAIMS_SYSTEM_PROMPT, user_content, {"claim", "scene_anchor"}),
+            (GLOBAL_EVIDENCE_VISUAL_VERSION,  "visual",  VISUAL_CLAIMS_SYSTEM_PROMPT,  user_content, {"visual_claim"}),
         ]
 
         # Signal that all passes are starting in parallel (session-safe: single call on caller thread)
@@ -583,6 +581,192 @@ class OpenAIExtractionProvider:
             provider="openai",
             model=self._model,
             prompt_version=GLOBAL_EVIDENCE_VERSION,
+            input_tokens=total_in,
+            output_tokens=total_out,
+        )
+
+    def extract_containment_evidence(
+        self,
+        section: SourceSection,
+        global_catalog: list[dict],
+    ) -> ExtractionResult:
+        """Per-section containment pass: reads text to find CONTAINS/LOCATED_IN/PART_OF claims."""
+        catalog_json = json.dumps(
+            [
+                {
+                    "name": e["name"],
+                    "type": e.get("type", ""),
+                    "kind_descriptor": e.get("kind_descriptor", ""),
+                    "spatial_level": e.get("spatial_level"),
+                    "aliases": e.get("aliases") or [],
+                }
+                for e in global_catalog
+            ],
+            ensure_ascii=False,
+        )
+        user_content = EVIDENCE_SUBPASS_USER_TEMPLATE.format(
+            section_order=section.ordinal,
+            title=section.title or "(untitled)",
+            text=section.text or "",
+            place_catalog_json=catalog_json,
+        )
+        _CONTAINMENT_PREDICATES = {"CONTAINS", "LOCATED_IN", "PART_OF"}
+        try:
+            resp = self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": CONTAINMENT_EVIDENCE_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                ],
+                response_format={"type": "json_object"},
+                max_tokens=2048,
+            )
+            raw_text = resp.choices[0].message.content
+            try:
+                in_tok = int(resp.usage.prompt_tokens)
+                out_tok = int(resp.usage.completion_tokens)
+            except (AttributeError, TypeError, ValueError):
+                in_tok = out_tok = 0
+            parsed = json.loads(raw_text)
+            raw_list = parsed.get("candidates", [])
+            if not isinstance(raw_list, list):
+                raw_list = []
+        except Exception as exc:
+            _log.warning("Containment evidence section %s failed: %s", section.id, exc)
+            return ExtractionResult(
+                candidates=[], raw_response={}, provider="openai",
+                model=self._model, prompt_version=CONTAINMENT_EVIDENCE_VERSION,
+                input_tokens=0, output_tokens=0,
+            )
+
+        candidates: list[RawCandidate] = []
+        for raw in raw_list:
+            if not isinstance(raw, dict):
+                continue
+            status = raw.get("status", "")
+            if status not in _VALID_STATUSES:
+                continue
+            if raw.get("kind") != "claim":
+                continue
+            payload = raw.get("payload", {})
+            if payload.get("predicate") not in _CONTAINMENT_PREDICATES:
+                continue
+            candidates.append(RawCandidate(
+                kind="claim",
+                payload=payload,
+                status=status,
+                confidence=float(raw.get("confidence", 0.75)),
+                excerpt=str(raw.get("excerpt", "")),
+                rationale=str(raw.get("rationale", "")),
+                temporal_interpretation="static",
+            ))
+        _log.info(
+            "Containment evidence section %s: %d raw → %d kept",
+            section.id, len(raw_list), len(candidates),
+        )
+        return ExtractionResult(
+            candidates=candidates,
+            raw_response={},
+            provider="openai",
+            model=self._model,
+            prompt_version=CONTAINMENT_EVIDENCE_VERSION,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+        )
+
+    def run_global_enrichment(
+        self,
+        global_catalog: list[dict],
+        phase_callback=None,
+        passes: list[str] | None = None,
+    ) -> ExtractionResult:
+        """Global enrichment: containment sweep + dedup, once per document using full catalog."""
+        if not global_catalog:
+            _log.warning("Global enrichment: catalog is EMPTY — skipping")
+            return ExtractionResult(
+                candidates=[], raw_response={}, provider="openai",
+                model=self._model, prompt_version=GLOBAL_ENRICHMENT_VERSION,
+                input_tokens=0, output_tokens=0,
+            )
+
+        catalog_json = json.dumps(global_catalog, ensure_ascii=False)
+        catalog_only_content = CATALOG_ONLY_USER_TEMPLATE.format(place_catalog_json=catalog_json)
+
+        _ALL_ENRICHMENT_PASSES: list[tuple[str, str, str]] = [
+            (GLOBAL_EVIDENCE_CONTAINMENT_VERSION, "containment", CONTAINMENT_SWEEP_SYSTEM_PROMPT),
+            (GLOBAL_EVIDENCE_DEDUP_VERSION,        "dedup",       ENTITY_DEDUP_SYSTEM_PROMPT),
+        ]
+        _ENRICHMENT_PASSES = [p for p in _ALL_ENRICHMENT_PASSES if passes is None or p[1] in passes]
+
+        if phase_callback:
+            phase_callback("enrichment")
+
+        def _run_one(subpass: tuple) -> tuple[list[RawCandidate], int, int]:
+            version, label, system_prompt = subpass
+            try:
+                resp = self._client.chat.completions.create(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": catalog_only_content},
+                    ],
+                    response_format={"type": "json_object"},
+                    max_tokens=4096,
+                )
+                raw_text = resp.choices[0].message.content
+                try:
+                    in_tok = int(resp.usage.prompt_tokens)
+                    out_tok = int(resp.usage.completion_tokens)
+                except (AttributeError, TypeError, ValueError):
+                    in_tok = out_tok = 0
+                parsed = json.loads(raw_text)
+                raw_list = parsed.get("candidates", [])
+                if not isinstance(raw_list, list):
+                    raw_list = []
+            except Exception as exc:
+                _log.warning("Global enrichment sub-pass %s failed: %s", label, exc)
+                return [], 0, 0
+
+            candidates: list[RawCandidate] = []
+            for raw in raw_list:
+                if not isinstance(raw, dict):
+                    continue
+                status = raw.get("status", "")
+                if status not in _VALID_STATUSES:
+                    continue
+                kind = raw.get("kind", "")
+                if kind not in {"claim"}:
+                    continue
+                candidates.append(RawCandidate(
+                    kind=kind,
+                    payload=raw.get("payload", {}),
+                    status=status,
+                    confidence=float(raw.get("confidence", 0.5)),
+                    excerpt=str(raw.get("excerpt", "")),
+                    rationale=str(raw.get("rationale", "")),
+                    temporal_interpretation="static",
+                ))
+            _log.info("Global enrichment %s: %d raw → %d kept", label, len(raw_list), len(candidates))
+            return candidates, in_tok, out_tok
+
+        all_candidates: list[RawCandidate] = []
+        total_in = total_out = 0
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = {pool.submit(_run_one, sp): sp for sp in _ENRICHMENT_PASSES}
+            for future in as_completed(futures):
+                cands, in_tok, out_tok = future.result()
+                all_candidates.extend(cands)
+                total_in += in_tok
+                total_out += out_tok
+
+        _log.info("Global enrichment complete: %d candidates, %d in / %d out tokens",
+                  len(all_candidates), total_in, total_out)
+        return ExtractionResult(
+            candidates=all_candidates,
+            raw_response={},
+            provider="openai",
+            model=self._model,
+            prompt_version=GLOBAL_ENRICHMENT_VERSION,
             input_tokens=total_in,
             output_tokens=total_out,
         )

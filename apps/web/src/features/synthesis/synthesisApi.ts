@@ -52,3 +52,14 @@ export async function triggerSynthesis(documentId: string, force = false): Promi
   }
   return res.json()
 }
+
+export async function triggerVisualSynthesis(documentId: string): Promise<SynthesisResponse> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/synthesize-visual`, {
+    method: 'POST',
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(`Visual claims failed: ${text}`)
+  }
+  return res.json()
+}

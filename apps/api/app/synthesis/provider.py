@@ -13,10 +13,11 @@ from app.synthesis.prompts import (
     ENTITY_CONSOLIDATION_SYSTEM_PROMPT,
     SPATIAL_CLAIMS_SYNTHESIS_PROMPT,
     VISUAL_CLAIMS_SYNTHESIS_PROMPT,
-    ROUTES_SYNTHESIS_PROMPT,
-    ACCESS_SYNTHESIS_PROMPT,
-    MOVEMENT_SYNTHESIS_PROMPT,
+    VISUAL_PALETTE_SYNTHESIS_PROMPT,
+    VISUAL_PALETTE_VERSION,
 )
+
+VISUAL_ONLY_VERSION = "visual-1.0"
 
 _log = logging.getLogger(__name__)
 
@@ -227,11 +228,8 @@ class OpenAISynthesisProvider:
 
         # ── Pass 2: 5 focused evidence sub-passes (run in parallel) ─────────
         _SUBPASSES: list[tuple[str, str, set[str], set[str]]] = [
-            ("spatial",  SPATIAL_CLAIMS_SYNTHESIS_PROMPT,  {"claim", "scene_anchor"}, {"claim"}),
-            ("visual",   VISUAL_CLAIMS_SYNTHESIS_PROMPT,   {"visual_claim"},           {"visual_claim"}),
-            ("routes",   ROUTES_SYNTHESIS_PROMPT,           {"travel_rule"},            {"route"}),
-            ("access",   ACCESS_SYNTHESIS_PROMPT,           {"access"},                 {"access"}),
-            ("movement", MOVEMENT_SYNTHESIS_PROMPT,         {"movement"},               {"movement"}),
+            ("spatial", SPATIAL_CLAIMS_SYNTHESIS_PROMPT, {"claim", "scene_anchor"}, {"claim"}),
+            ("visual",  VISUAL_CLAIMS_SYNTHESIS_PROMPT,  {"visual_claim"},           {"visual_claim"}),
         ]
 
         # Spatial pass gets structured alias map; others get a flat name list
@@ -324,6 +322,160 @@ class OpenAISynthesisProvider:
             provider="openai",
             model=self._model,
             synthesis_prompt_version=THREE_PASS_SYNTHESIS_VERSION,
+        )
+
+
+    def _run_visual_claims_pass(
+        self,
+        visual_candidates: list[dict],
+        entity_names_json: str,
+        entity_names: list[str],
+    ) -> list[RawSynthesisItem]:
+        """LLM sub-pass: visual_claim items from evidence."""
+        sub_user = (
+            f"Canonical entity list ({len(entity_names)} names):\n{entity_names_json}\n\n"
+            f"Evidence candidates ({len(visual_candidates)} items):\n"
+            f"{json.dumps(visual_candidates, indent=2, ensure_ascii=False)}\n\n"
+            "Produce synthesis items of kind ['visual_claim'] only."
+        )
+        resp = self._client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": VISUAL_CLAIMS_SYNTHESIS_PROMPT},
+                {"role": "user", "content": sub_user},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=8192,
+        )
+        items: list[RawSynthesisItem] = []
+        try:
+            parsed = json.loads(resp.choices[0].message.content)
+            for raw in parsed.get("synthesis_items", []):
+                if isinstance(raw, dict) and raw.get("kind") == "visual_claim":
+                    items.append(RawSynthesisItem(
+                        kind="visual_claim",
+                        payload=raw.get("payload", {}),
+                        confidence=float(raw.get("confidence", 0.7)),
+                        rationale=str(raw.get("rationale", "")),
+                    ))
+        except (json.JSONDecodeError, KeyError, ValueError) as exc:
+            _log.warning("Visual claims sub-pass failed to parse JSON: %s", exc)
+        _log.info("Visual claims sub-pass: %d input → %d output items", len(visual_candidates), len(items))
+        return items
+
+    def synthesize_palette(
+        self,
+        evidence_ledger: list[dict],
+        canonical_entity_map: list[dict],
+    ) -> SynthesisResult:
+        """Synthesize a 3-hex colour palette per entity from visual evidence."""
+        visual_candidates = [item for item in evidence_ledger if item.get("kind") == "visual_claim"]
+
+        if not visual_candidates:
+            return SynthesisResult(
+                items=[],
+                raw_response={},
+                provider="openai",
+                model=self._model,
+                synthesis_prompt_version=VISUAL_PALETTE_VERSION,
+            )
+
+        entity_names: list[str] = []
+        for e in canonical_entity_map:
+            if e.get("name"):
+                entity_names.append(e["name"])
+            entity_names.extend(a for a in (e.get("aliases") or []) if a)
+
+        user_content = (
+            f"Canonical entity list ({len(entity_names)} names):\n"
+            f"{json.dumps(entity_names, ensure_ascii=False)}\n\n"
+            f"Visual evidence candidates ({len(visual_candidates)} items):\n"
+            f"{json.dumps(visual_candidates, indent=2, ensure_ascii=False)}\n\n"
+            "Produce one visual_palette item per entity that has colour evidence."
+        )
+
+        resp = self._client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": VISUAL_PALETTE_SYNTHESIS_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=4096,
+        )
+
+        items: list[RawSynthesisItem] = []
+        try:
+            parsed = json.loads(resp.choices[0].message.content)
+            for raw in parsed.get("synthesis_items", []):
+                if isinstance(raw, dict) and raw.get("kind") == "visual_palette":
+                    items.append(RawSynthesisItem(
+                        kind="visual_palette",
+                        payload=raw.get("payload", {}),
+                        confidence=float(raw.get("confidence", 0.75)),
+                        rationale=str(raw.get("rationale", "")),
+                    ))
+        except (json.JSONDecodeError, KeyError, ValueError) as exc:
+            _log.warning("Palette sub-pass failed to parse JSON: %s", exc)
+
+        _log.info("Palette sub-pass: %d input → %d output items", len(visual_candidates), len(items))
+        return SynthesisResult(
+            items=items,
+            raw_response={},
+            provider="openai",
+            model=self._model,
+            synthesis_prompt_version=VISUAL_PALETTE_VERSION,
+        )
+
+    def synthesize_visual(
+        self,
+        evidence_ledger: list[dict],
+        canonical_entity_map: list[dict],
+        phase_callback: Callable[[str], None] | None = None,
+    ) -> SynthesisResult:
+        """Run visual claims + palette sub-passes in parallel."""
+        if phase_callback:
+            phase_callback("visual")
+
+        visual_candidates = [item for item in evidence_ledger if item.get("kind") == "visual_claim"]
+
+        if not visual_candidates:
+            _log.info("No visual_claim candidates found — skipping visual sub-passes")
+            return SynthesisResult(
+                items=[],
+                raw_response={},
+                provider="openai",
+                model=self._model,
+                synthesis_prompt_version=VISUAL_ONLY_VERSION,
+            )
+
+        entity_names: list[str] = []
+        for e in canonical_entity_map:
+            if e.get("name"):
+                entity_names.append(e["name"])
+            entity_names.extend(a for a in (e.get("aliases") or []) if a)
+        entity_names_json = json.dumps(entity_names, ensure_ascii=False)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            f_claims = executor.submit(
+                self._run_visual_claims_pass, visual_candidates, entity_names_json, entity_names
+            )
+            f_palette = executor.submit(self.synthesize_palette, evidence_ledger, canonical_entity_map)
+            claim_items = f_claims.result()
+            palette_result = f_palette.result()
+
+        all_items = claim_items + palette_result.items
+        _log.info(
+            "Visual synthesis: %d visual_claim + %d visual_palette",
+            len(claim_items),
+            len(palette_result.items),
+        )
+        return SynthesisResult(
+            items=all_items,
+            raw_response={},
+            provider="openai",
+            model=self._model,
+            synthesis_prompt_version=VISUAL_ONLY_VERSION,
         )
 
 

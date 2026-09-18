@@ -1,4 +1,7 @@
+import logging
 import re
+
+_log = logging.getLogger(__name__)
 
 _VALID_SCENE_ROLES = {"opening", "primary", "ending"}
 
@@ -34,6 +37,33 @@ _ALLOWED_KIND_DESCRIPTORS = frozenset({
     "landmark", "grounds", "building", "route",
 })
 
+_KIND_DESCRIPTOR_ALIASES: dict[str, str] = {
+    "ground": "grounds",
+    "yard": "grounds",
+    "garden": "grounds",
+    "road": "route",
+    "path": "route",
+    "street": "route",
+    "gate": "portal",
+    "door": "portal",
+    "manor": "building",
+    "house": "building",
+    "castle": "building",
+    "palace": "building",
+    "hill": "mountain",
+    "cliff": "mountain",
+    "river": "water",
+    "lake": "water",
+    "sea": "water",
+    "ocean": "water",
+    "pond": "water",
+    "brook": "water",
+    "body_of_water": "water",
+    "city": "settlement",
+    "town": "settlement",
+    "village": "settlement",
+}
+
 _ALLOWED_TIERS = frozenset({
     "peak", "elevated", "surface", "underground", "deep",
 })
@@ -64,7 +94,26 @@ def _looks_like_prop_not_place(name: str) -> bool:
     return bool(_PROP_WORDS_RE.search(name) or _CARD_CHARACTER_RE.match(name))
 
 
-def validate_candidate_payload(kind: str, payload: dict) -> None:
+_EXCERPT_STOP_WORDS = frozenset({
+    "the", "a", "an", "of", "in", "on", "at", "to", "by", "from",
+    "with", "and", "or", "for", "its", "this", "that", "old", "new",
+    "great", "little", "small", "large", "big", "dark", "light",
+})
+
+
+def _name_words_in_excerpt(name: str, excerpt: str) -> bool:
+    """Return True if at least one significant word from name appears in excerpt."""
+    if not excerpt:
+        return True  # no excerpt provided — no penalty
+    excerpt_lower = excerpt.lower()
+    tokens = [w.strip(".,;:\"'()[]—-") for w in name.lower().split()]
+    significant = [w for w in tokens if len(w) > 3 and w not in _EXCERPT_STOP_WORDS]
+    if not significant:
+        return True  # name is all stop words — can't check
+    return any(w in excerpt_lower for w in significant)
+
+
+def validate_candidate_payload(kind: str, payload: dict, excerpt: str = "") -> None:
     """Raise ValueError if a required payload field is missing or invalid.
 
     Called before persisting a Candidate. A candidate that fails this check
@@ -92,12 +141,21 @@ def validate_candidate_payload(kind: str, payload: dict) -> None:
                 f"entity.name '{payload.get('name', '')}' matches an excluded non-place pattern"
             )
 
+        name = payload.get("name", "")
+        if excerpt and not _name_words_in_excerpt(name, excerpt):
+            raise ValueError(
+                f"entity.name '{name}' has no significant word in excerpt — likely hallucinated"
+            )
+
         # v4.0 fields — validated when present, not required
         kind_desc = (payload.get("kind_descriptor") or "").strip().lower()
-        if kind_desc and kind_desc not in _ALLOWED_KIND_DESCRIPTORS:
-            raise ValueError(
-                f"entity.kind_descriptor '{kind_desc}' is not an allowed descriptor"
-            )
+        if kind_desc:
+            kind_desc = _KIND_DESCRIPTOR_ALIASES.get(kind_desc, kind_desc)
+            if kind_desc in _ALLOWED_KIND_DESCRIPTORS:
+                payload["kind_descriptor"] = kind_desc
+            else:
+                _log.warning("entity.kind_descriptor '%s' is not allowed — field stripped", kind_desc)
+                payload.pop("kind_descriptor", None)
 
         tier = (payload.get("tier") or "").strip().lower()
         if tier and tier not in _ALLOWED_TIERS:

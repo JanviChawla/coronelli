@@ -76,6 +76,28 @@ def _find_or_create_entity(session: Session, document_id: str, name: str, place_
     )
     session.add(entity)
     session.flush()
+
+    # Preserve containment hierarchy (located_in) set during assign-containment step.
+    # Synthesis supersedes the stub entities before recreating them, so we copy
+    # located_in from the most recent superseded stub with the same name (or alias).
+    name_lower = name.strip().lower()
+    aliases_lower = {a.strip().lower() for a in (payload.get("aliases") or []) if a}
+    superseded_stub = (
+        session.query(MapEntity)
+        .filter(
+            MapEntity.provenance_document_id == document_id,
+            MapEntity.state == "superseded",
+            MapEntity.located_in.isnot(None),
+        )
+        .all()
+    )
+    for stub in superseded_stub:
+        stub_name = (stub.name or "").strip().lower()
+        stub_aliases = {(a or "").strip().lower() for a in (stub.aliases or [])}
+        if stub_name == name_lower or stub_name in aliases_lower or name_lower in stub_aliases:
+            entity.located_in = stub.located_in
+            break
+
     return entity
 
 
@@ -196,6 +218,22 @@ def _approve_same_as(session: Session, document_id: str, payload: dict) -> MapEn
     return canonical
 
 
+def _approve_visual_palette(session: Session, document_id: str, payload: dict) -> None:
+    entity_name = (payload.get("entity_name") or "").strip()
+    colors = payload.get("colors")
+    if not entity_name or not isinstance(colors, dict):
+        return
+    entity_id = _resolve_entity_id(session, document_id, entity_name)
+    if not entity_id:
+        _log.warning("visual_palette: could not resolve entity '%s' — skipping", entity_name)
+        return
+    entity = session.query(MapEntity).filter(MapEntity.id == entity_id).first()
+    if entity is None:
+        return
+    entity.payload = {**(entity.payload or {}), "colors": colors}
+    session.flush()
+
+
 def _approve_reveal_event(session: Session, document_id: str, payload: dict) -> None:
     entity_name = (payload.get("entity_name") or "").strip()
     section_ordinal = payload.get("section_ordinal")
@@ -294,6 +332,82 @@ def _write_entity_mentions(session: Session, document_id: str) -> None:
 
 # ── Public canonicalization function ─────────────────────────────────────────
 
+def _fill_entity_gaps(session: Session, document_id: str) -> int:
+    """Guarantee every non-rejected catalog entity appears as a canonical record.
+
+    Synthesis may drop low-evidence entities. This deterministic pass mints
+    minimal MapEntity records for any approved candidate not already covered
+    by a canonical entity name or alias.
+    """
+    sections = (
+        session.query(SourceSection)
+        .filter(SourceSection.document_id == document_id)
+        .all()
+    )
+    section_ids = [s.id for s in sections]
+
+    candidates = (
+        session.query(Candidate)
+        .filter(
+            Candidate.section_id.in_(section_ids),
+            Candidate.kind == "entity",
+            Candidate.review_state != "rejected",
+        )
+        .all()
+    )
+
+    active_entities = (
+        session.query(MapEntity)
+        .filter(
+            MapEntity.provenance_document_id == document_id,
+            MapEntity.state == "active",
+        )
+        .all()
+    )
+
+    covered: set[str] = set()
+    for e in active_entities:
+        if e.name:
+            covered.add(e.name.strip().lower())
+        for alias in (e.aliases or []):
+            if alias:
+                covered.add(alias.strip().lower())
+
+    filled = 0
+    seen: set[str] = set()
+    for c in candidates:
+        name = (c.payload.get("name") or "").strip()
+        if not name:
+            continue
+        norm = name.lower()
+        if norm in covered or norm in seen:
+            continue
+        seen.add(norm)
+        entity = MapEntity(
+            name=name,
+            entity_kind="place",
+            place_kind=c.payload.get("type"),
+            status="explicit",
+            state="active",
+            provenance_document_id=document_id,
+            provenance_section_id=c.section_id,
+            candidate_id=c.id,
+            aliases=list(c.payload.get("aliases") or []),
+            payload=c.payload,
+        )
+        session.add(entity)
+        covered.add(norm)
+        filled += 1
+
+    if filled:
+        session.flush()
+        _log.info(
+            "Gap-fill: minted %d canonical entities dropped by synthesis for document %s",
+            filled, document_id,
+        )
+    return filled
+
+
 def canonicalize_synthesis_run(
     session: Session,
     items: list[SynthesisItem],
@@ -306,13 +420,31 @@ def canonicalize_synthesis_run(
     """
     sorted_items = sorted(items, key=lambda i: _CANONICALIZE_PRIORITY.get(i.kind, 50))
     canonical_count = 0
+
+    # Pass 1: entities only — must exist before any claim resolution runs
     for item in sorted_items:
+        if item.kind != "entity":
+            continue
         payload = item.payload or {}
         try:
-            if item.kind == "entity":
-                _approve_entity(session, document_id, payload)
-                canonical_count += 1
-            elif item.kind == "claim":
+            _approve_entity(session, document_id, payload)
+            canonical_count += 1
+            item.review_state = "approved"
+        except Exception:
+            _log.warning(
+                "Auto-canonicalize failed for entity item (id=%s)", item.id, exc_info=True,
+            )
+
+    # Gap-fill: mint any catalog entity synthesis dropped, so claim resolution can reference them
+    canonical_count += _fill_entity_gaps(session, document_id)
+
+    # Pass 2: claims, routes, same_as, reveal_events — all entities now exist
+    for item in sorted_items:
+        if item.kind == "entity":
+            continue
+        payload = item.payload or {}
+        try:
+            if item.kind == "claim":
                 _approve_claim(session, document_id, payload, "spatial", item.confidence)
                 canonical_count += 1
             elif item.kind == "route":
@@ -337,5 +469,6 @@ def canonicalize_synthesis_run(
             _log.warning(
                 "Auto-canonicalize failed for %s item (id=%s)", item.kind, item.id, exc_info=True,
             )
+
     _write_entity_mentions(session, document_id)
     return canonical_count

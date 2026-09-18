@@ -246,10 +246,21 @@ def list_document_entity_candidates(document_id: str, db: Session = Depends(get_
     )
 
     existing_ids = {c.id for c in candidates}
-    candidates.extend(c for c in gap_candidates if c.id not in existing_ids)
+    gap_ids: set[str] = set()
+    for c in gap_candidates:
+        if c.id not in existing_ids:
+            candidates.append(c)
+            gap_ids.add(c.id)
+            existing_ids.add(c.id)
     candidates.extend(c for c in manual_candidates if c.id not in existing_ids)
 
-    return [CandidateOut.model_validate(c) for c in candidates]
+    result: list[CandidateOut] = []
+    for c in candidates:
+        out = CandidateOut.model_validate(c)
+        if c.id in gap_ids:
+            out = out.model_copy(update={"source": "gap"})
+        result.append(out)
+    return result
 
 
 @router.patch("/api/candidates/{candidate_id}/review-state", response_model=CandidateOut)

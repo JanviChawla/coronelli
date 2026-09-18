@@ -13,6 +13,10 @@ from app.extraction.prompts import (
     COMBINED_PROMPT_VERSION as _CURRENT_PROMPT_VERSION,
     GLOBAL_CATALOG_VERSION,
     GLOBAL_EVIDENCE_VERSION,
+    GLOBAL_ENRICHMENT_VERSION,
+    GLOBAL_EVIDENCE_CONTAINMENT_VERSION,
+    GLOBAL_EVIDENCE_DEDUP_VERSION,
+    CONTAINMENT_EVIDENCE_VERSION,
 )
 from app.extraction.provider import ExtractionProvider
 from app.extraction.validation import validate_candidate_payload
@@ -152,7 +156,7 @@ def run_extraction(
             continue
 
         try:
-            validate_candidate_payload(rc.kind, rc.payload)
+            validate_candidate_payload(rc.kind, rc.payload, rc.excerpt or "")
         except ValueError as exc:
             _log.warning(
                 "Candidate %d skipped: invalid %s payload — %s. Raw payload: %s",
@@ -205,7 +209,7 @@ def _save_candidates(
             )
             continue
         try:
-            validate_candidate_payload(rc.kind, rc.payload)
+            validate_candidate_payload(rc.kind, rc.payload, rc.excerpt or "")
         except ValueError as exc:
             _log.warning("Candidate %d skipped: invalid %s payload — %s", i, rc.kind, exc)
             continue
@@ -486,4 +490,150 @@ def run_evidence_extraction(
     for c in candidates:
         session.refresh(c)
 
+    return run, candidates
+
+
+def run_containment_extraction(
+    session: Session,
+    section_id: str,
+    provider,
+    global_catalog: list[dict],
+) -> tuple["ExtractionRun", list["Candidate"]]:
+    """Per-section containment pass: reads text to find CONTAINS/LOCATED_IN/PART_OF claims."""
+    section = session.get(SourceSection, section_id)
+    if section is None:
+        raise ExtractionError(f"Section '{section_id}' not found.")
+
+    content_hash = _section_content_hash(section)
+
+    # Supersede any previous containment runs for this section
+    prev_run_ids = [
+        r.id for r in session.query(ExtractionRun).filter(
+            ExtractionRun.section_id == section_id,
+            ExtractionRun.prompt_version == CONTAINMENT_EVIDENCE_VERSION,
+        ).all()
+    ]
+    if prev_run_ids:
+        session.query(Candidate).filter(
+            Candidate.extraction_run_id.in_(prev_run_ids),
+        ).delete(synchronize_session=False)
+    session.query(ExtractionRun).filter(
+        ExtractionRun.section_id == section_id,
+        ExtractionRun.prompt_version == CONTAINMENT_EVIDENCE_VERSION,
+    ).update({"status": "superseded"}, synchronize_session=False)
+    session.flush()
+
+    run = _make_run(session, section_id, content_hash)
+    session.commit()
+
+    try:
+        result = provider.extract_containment_evidence(section, global_catalog)
+    except Exception as exc:
+        run.status = "failed"
+        run.error = str(exc)
+        run.completed_at = datetime.now(timezone.utc)
+        session.commit()
+        raise ExtractionError(str(exc)) from exc
+
+    _finish_run(run, result, CONTAINMENT_EVIDENCE_VERSION)
+    candidates = _save_candidates(session, run, section_id, result)
+    session.commit()
+    session.refresh(run)
+    for c in candidates:
+        session.refresh(c)
+
+    return run, candidates
+
+
+def run_global_enrichment(
+    session: Session,
+    document_id: str,
+    provider,
+    global_catalog: list[dict],
+    passes: list[str] | None = None,
+) -> tuple["ExtractionRun", list["Candidate"]]:
+    """Document-scoped enrichment: containment sweep + dedup, run once after catalog is complete."""
+    # Determine the prompt_version to use for this run
+    if passes == ["containment"]:
+        run_version = GLOBAL_EVIDENCE_CONTAINMENT_VERSION
+    elif passes == ["dedup"]:
+        run_version = GLOBAL_EVIDENCE_DEDUP_VERSION
+    else:
+        run_version = GLOBAL_ENRICHMENT_VERSION
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=_STALE_RUN_MINUTES)
+    stale = (
+        session.query(ExtractionRun)
+        .filter(
+            ExtractionRun.document_id == document_id,
+            ExtractionRun.section_id.is_(None),
+            ExtractionRun.status == "running",
+            ExtractionRun.prompt_version == run_version,
+            ExtractionRun.started_at < cutoff,
+        )
+        .all()
+    )
+    for sr in stale:
+        sr.status = "failed"
+        sr.error = "Stale run cleaned up"
+    if stale:
+        session.flush()
+
+    # Supersede previous runs of the same version for this document
+    session.query(ExtractionRun).filter(
+        ExtractionRun.document_id == document_id,
+        ExtractionRun.section_id.is_(None),
+        ExtractionRun.prompt_version == run_version,
+    ).update({"status": "superseded"}, synchronize_session=False)
+    session.flush()
+
+    run = ExtractionRun(
+        document_id=document_id,
+        section_id=None,
+        status="running",
+        provider="",
+        model="",
+        prompt_version="",
+        started_at=datetime.now(timezone.utc),
+    )
+    session.add(run)
+    session.commit()
+
+    try:
+        result = provider.run_global_enrichment(global_catalog, passes=passes)
+    except Exception as exc:
+        run.status = "failed"
+        run.error = str(exc)
+        run.completed_at = datetime.now(timezone.utc)
+        session.commit()
+        raise ExtractionError(str(exc)) from exc
+
+    _finish_run(run, result, run_version)
+
+    candidates: list[Candidate] = []
+    for i, rc in enumerate(result.candidates):
+        try:
+            validate_candidate_payload(rc.kind, rc.payload, rc.excerpt or "")
+        except ValueError as exc:
+            _log.warning("Enrichment candidate %d skipped: %s", i, exc)
+            continue
+        c = Candidate(
+            extraction_run_id=run.id,
+            section_id=None,
+            kind=rc.kind,
+            payload=rc.payload,
+            status=rc.status,
+            confidence=rc.confidence,
+            excerpt=rc.excerpt,
+            rationale=rc.rationale,
+            review_state="proposed",
+            ordinal=i,
+            temporal_interpretation="static",
+        )
+        session.add(c)
+        candidates.append(c)
+
+    session.commit()
+    session.refresh(run)
+    _log.info("Global enrichment saved %d candidates for document %s", len(candidates), document_id)
     return run, candidates

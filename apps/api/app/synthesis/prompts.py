@@ -1,5 +1,5 @@
 SYNTHESIS_PROMPT_VERSION = "1.2"  # kept for single-pass fallback
-THREE_PASS_SYNTHESIS_VERSION = "3.11"  # 3.11: kind_descriptor/tier forwarded; type list synced to v4.0 _ALLOWED_ENTITY_TYPES
+THREE_PASS_SYNTHESIS_VERSION = "3.12"  # 3.12: tighter spatial nesting rules — portals need both sides, passages inside buildings, regional containers
 
 SYNTHESIS_SYSTEM_PROMPT = """\
 CORONELLI ATLAS SYNTHESIS — Stage 2
@@ -116,10 +116,9 @@ rationale: one sentence explaining what evidence supports this item.
 3. INCLUDE INFERRED CLAIMS: Emit inferred claims with confidence ≥ 0.55 even from a single section. Mark their confidence accordingly. Do not require two-section corroboration.
 4. SURFACE CONTRADICTIONS: If evidence conflicts, emit an unresolved item rather than guessing.
 5. TEMPORAL FIRST MENTION: Emit a reveal_event for every entity item you produce, at its earliest section_ordinal.
-6. ROUTES OVER RULES: Consolidate travel_rule candidates into route items.
-7. SCENE ANCHORS: Use scene_anchor candidates (especially role=opening or role=ending) as reveal_event signals.
-8. MINIMUM COVERAGE: If the ledger contains evidence for entity, claim, route, and visual_claim, produce at least one of each. Consolidate access and movement candidates from the ledger when present.
-9. PRESERVE VISUAL OBSERVATIONS: Never collapse multiple visual_claim candidates into one. Each distinct observation gets its own visual_claim item. Volume beats brevity here.
+6. SCENE ANCHORS: Use scene_anchor candidates (especially role=opening or role=ending) as reveal_event signals.
+7. MINIMUM COVERAGE: If the ledger contains evidence for entity, claim, and visual_claim, produce at least one of each.
+8. PRESERVE VISUAL OBSERVATIONS: Never collapse multiple visual_claim candidates into one. Each distinct observation gets its own visual_claim item. Volume beats brevity here.
 
 ## FINAL CHECK
 
@@ -297,6 +296,25 @@ Rules:
 - If an evidence candidate has predicate PART_OF or VISIBLE_FROM and both places are in the entity list (or aliases), always emit it.
 - Do NOT change predicates from the evidence — if evidence says LOCATED_IN, emit LOCATED_IN (not NEAR or CONTAINS).
 
+ARCHITECTURAL NESTING — infer these even when evidence is sparse:
+- Interior passages and structural features (stairs, staircase, corridor, hallway, cellar, attic, porch,
+  vestibule, landing) belong inside the building they serve. Emit "passage LOCATED_IN building" whenever
+  context makes the relationship evident, even from a single evidence mention.
+- A front door / entrance portal has TWO sides: an inside connection and an outside connection.
+  Emit BOTH — e.g. "front door LEADS_TO exterior path" and something LEADS_TO or LOCATED_IN front door
+  from the interior. Without both sides the portal cannot dissolve into a passage edge in the visualizer.
+
+REGIONAL CONTAINMENT — infer from narrative context:
+- When a building is described as standing "in the country", "in the countryside", "in a valley",
+  "on the moors", or any named rural/regional setting, emit "building LOCATED_IN [region entity]".
+  Do the same for grounds/gardens that share that rural setting.
+- A country or countryside entity should be the outermost container holding both the primary
+  building AND its associated grounds/gardens when the text supports this.
+
+WATERFRONT CONNECTIONS:
+- Wharfs, docks, landings, and piers sit on the edge of a body of water. Always emit
+  "wharf ON_BANK_OF water_body" (preferred) or "wharf LEADS_TO water_body" for every such landmark.
+
 SELF-CHECK: For every claim, verify subject AND object match a canonical name or alias. Rewrite to canonical names. Remove only if neither side can be resolved to any entity.
 """
 
@@ -305,7 +323,7 @@ YOUR TASK: Produce ONLY items of kind "visual_claim" — appearance and descript
 
 Payload: {"subject": "canonical place", "category": "...", "observation": "...", "section_title": "...", "palette": [...]}
 category: architecture | terrain | light | weather | color | material | texture | scale | atmosphere | decay | other
-palette: optional — include when the source candidate carries a palette array (structured color swatches).
+palette: REQUIRED when the source candidate carries a palette array — do not drop it. Omit only when the source candidate has no palette.
   Format: [{"color": "#RRGGBB", "label": "..."}]. Forward as-is; do not invent palette data.
 
 Rules:
@@ -354,4 +372,58 @@ Rules:
 - "stops" lists any intermediate canonical places visited along the way.
 
 SELF-CHECK: For every movement item, verify both from_place and to_place are in the entity list. Remove if either fails.
+"""
+
+# ── Visual palette pass ────────────────────────────────────────────────────────
+
+VISUAL_PALETTE_VERSION = "palette-1.0"
+
+VISUAL_PALETTE_SYNTHESIS_PROMPT = """\
+CORONELLI ATLAS — Visual Palette Pass
+
+You receive visual_claim evidence candidates for named places in a literary work.
+Each candidate may carry a "palette" array of extracted hex-color hints from the source text.
+
+YOUR TASK: For each entity that has color-relevant evidence, produce a "visual_palette" item —
+a single 3-hex color identity summarising the place's visual character.
+
+OUTPUT FORMAT:
+{
+  "synthesis_items": [
+    {
+      "kind": "visual_palette",
+      "payload": {
+        "entity_name": "canonical place name",
+        "colors": {
+          "primary":    "#RRGGBB",
+          "atmosphere": "#RRGGBB",
+          "accent":     "#RRGGBB"
+        }
+      },
+      "confidence": 0.85,
+      "rationale": "one sentence"
+    }
+  ]
+}
+
+COLOR ROLES:
+- primary    — the dominant surface material or texture of the place itself
+               (e.g. old limestone #8A8070, dark water #1C2B3A, weathered timber #6B4A30)
+- atmosphere — the ambient light quality or prevailing weather that characterises the place
+               (e.g. grey morning fog #9AABB0, warm candlelight interior #D4A85C, cold moonlight #C0C8D0)
+- accent     — a secondary highlight: ornamental detail, seasonal colour, lantern glow, stained glass
+               (e.g. rust-red door #7A3B2A, ivy green #4A6B3A, amber lantern #E0A040)
+
+RULES:
+1. Produce EXACTLY ONE visual_palette item per entity — even if many candidates exist.
+2. When candidates carry palette hex arrays, use those values as your primary source.
+   Prefer attested hex values over inference. Blend multiple hints toward the dominant impression.
+3. When palette hints are sparse, infer colours from the observation text
+   (materials, light quality, weather, decay state, season).
+4. Skip entities that have NO colour-relevant candidates and NO descriptive observation text.
+   Do not invent colours for featureless or structurally-named places with no visual description.
+5. All three colour fields are required on every item you emit.
+   If one role has no evidence, choose a neutral that complements the other two.
+6. Only emit items of kind "visual_palette". Do not emit any other kind.
+7. entity_name must exactly match one of the canonical names provided.
 """

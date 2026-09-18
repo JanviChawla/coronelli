@@ -76,7 +76,7 @@ export async function triggerEvidenceExtraction(sectionId: string): Promise<Extr
   const url = `${BASE}/api/sections/${sectionId}/extract/evidence`
   const res = await fetch(url, { method: 'POST' })
   if (!res.ok) {
-    let detail = `Evidence extraction failed (HTTP ${res.status})`
+    let detail = `Spatial claims failed (HTTP ${res.status})`
     try {
       const body = await res.json()
       if (body?.detail) detail = body.detail
@@ -99,11 +99,11 @@ export async function triggerEvidenceExtraction(sectionId: string): Promise<Extr
       return { run: { id: run.id, status: 'completed' }, candidates: [], from_cache: false }
     }
     if (run.status === 'failed') {
-      throw new Error(`Evidence extraction failed: ${run.error ?? 'unknown error'}`)
+      throw new Error(`Spatial claims failed: ${run.error ?? 'unknown error'}`)
     }
     // still running — keep polling
   }
-  throw new Error('Evidence extraction timed out after 10 minutes')
+  throw new Error('Spatial claims timed out after 10 minutes')
 }
 
 export type ExtractionProgress = {
@@ -135,6 +135,12 @@ export async function getDocumentCatalogGapStatus(documentId: string): Promise<C
   return res.json()
 }
 
+export type EnrichmentStatus = {
+  document_id: string
+  status: 'running' | 'completed' | 'not_run'
+  candidate_count: number
+}
+
 export async function fetchPlaceSuggestions(documentId: string, q?: string): Promise<string[]> {
   const url = q
     ? `${BASE}/api/documents/${documentId}/place-suggestions?q=${encodeURIComponent(q)}`
@@ -155,5 +161,56 @@ export async function addManualCandidate(
     body: JSON.stringify({ name, type: type || null }),
   })
   if (!res.ok) throw new Error('Failed to add manual place')
+  return res.json()
+}
+
+export async function triggerContainmentAssignment(documentId: string): Promise<{ status: string; claims_created: number }> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/assign-containment`, { method: 'POST' })
+  if (!res.ok) throw new Error('Containment assignment failed')
+  return res.json()
+}
+
+export async function triggerContainmentPass(documentId: string): Promise<EnrichmentStatus> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/extract/containment`, { method: 'POST' })
+  if (!res.ok) throw new Error('Containment pass failed')
+  return res.json()
+}
+
+export async function getContainmentStatus(documentId: string): Promise<EnrichmentStatus> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/extract/containment/status`)
+  if (!res.ok) throw new Error('Failed to get containment status')
+  return res.json()
+}
+
+export async function triggerDedupPass(documentId: string): Promise<EnrichmentStatus> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/extract/dedup`, { method: 'POST' })
+  if (!res.ok) throw new Error('Dedup pass failed')
+  return res.json()
+}
+
+export async function getDedupStatus(documentId: string): Promise<EnrichmentStatus> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/extract/dedup/status`)
+  if (!res.ok) throw new Error('Failed to get dedup status')
+  return res.json()
+}
+
+export async function promoteDedup(documentId: string): Promise<{ status: string; merges_performed: number }> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/promote-dedup`, { method: 'POST' })
+  if (!res.ok) throw new Error('Dedup promotion failed')
+  return res.json()
+}
+
+export type DedupCandidate = {
+  id: string
+  subject: string
+  object: string
+  confidence: number
+  rationale: string
+  review_state: string
+}
+
+export async function fetchDedupCandidates(documentId: string): Promise<DedupCandidate[]> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/extract/dedup/candidates`)
+  if (!res.ok) throw new Error(`Fetch dedup candidates failed: ${res.statusText}`)
   return res.json()
 }

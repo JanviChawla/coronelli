@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.db.engine import get_db
 from app.synthesis.models import SynthesisItem, SynthesisRun
 from app.synthesis.provider import SynthesisNotConfiguredError, get_synthesis_provider
-from app.synthesis.service import run_synthesis
+from app.synthesis.service import run_synthesis, run_visual_synthesis
 
 router = APIRouter(tags=["synthesis"])
 _log = logging.getLogger(__name__)
@@ -121,6 +121,41 @@ def synthesize_document(
         items=[SynthesisItemOut.model_validate(item) for item in items],
         item_count=len(items),
         from_cache=from_cache,
+    )
+
+
+@router.post("/api/documents/{document_id}/synthesize-visual", response_model=SynthesisResponse, status_code=201)
+def synthesize_visual_document(
+    document_id: str,
+    db: Session = Depends(get_db),
+) -> SynthesisResponse:
+    try:
+        provider = get_synthesis_provider()
+    except SynthesisNotConfiguredError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    try:
+        run, items = run_visual_synthesis(db, document_id, provider)
+    except Exception as exc:
+        _log.exception("Visual synthesis failed for document %s", document_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return SynthesisResponse(
+        run=SynthesisRunOut(
+            id=run.id,
+            document_id=run.document_id,
+            status=run.status,
+            provider=run.provider,
+            model=run.model,
+            synthesis_prompt_version=run.synthesis_prompt_version,
+            evidence_hash=run.evidence_hash,
+            started_at=run.started_at,
+            completed_at=run.completed_at,
+            from_cache=False,
+        ),
+        items=[SynthesisItemOut.model_validate(item) for item in items],
+        item_count=len(items),
+        from_cache=False,
     )
 
 

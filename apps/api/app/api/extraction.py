@@ -20,6 +20,8 @@ from app.extraction.prompts import (
     CATALOG_SYSTEM_PROMPT, CATALOG_USER_TEMPLATE,
     EVIDENCE_SYSTEM_PROMPT, EVIDENCE_USER_TEMPLATE,
     GLOBAL_CATALOG_VERSION, GLOBAL_EVIDENCE_VERSION,
+    GLOBAL_EVIDENCE_CONTAINMENT_VERSION, GLOBAL_EVIDENCE_DEDUP_VERSION,
+    CONTAINMENT_EVIDENCE_VERSION,
 )
 from app.extraction.service import (
     ExtractionError,
@@ -30,6 +32,7 @@ from app.extraction.service import (
     run_catalog_extraction,
     run_catalog_gap_extraction,
     run_evidence_extraction,
+    run_global_enrichment,
 )
 
 router = APIRouter(tags=["extraction"])
@@ -40,6 +43,9 @@ _PREFLIGHT_OUTPUT_TOKEN_ESTIMATE = 200  # conservative output estimate for cost 
 # Used only for status reporting; accuracy is best-effort (lost on server restart).
 _active_catalog_batches: set[str] = set()
 _active_catalog_gap_batches: set[str] = set()
+_active_enrichment_runs: set[str] = set()
+_active_containment_runs: set[str] = set()
+_active_dedup_runs: set[str] = set()
 
 
 class RunResponse(BaseModel):
@@ -343,13 +349,22 @@ def _write_catalog_confirmed(db: Session, section_ids: list[str]) -> None:
 
 
 def _clear_catalog_confirmed(db: Session, section_ids: list[str]) -> None:
-    """Remove the confirmation sentinel (called when forcing a re-catalog)."""
+    """Remove the confirmation sentinel and supersede any catalog-stub entities."""
     if not section_ids:
         return
     db.query(ExtractionRun).filter(
         ExtractionRun.section_id == section_ids[0],
         ExtractionRun.prompt_version == _CATALOG_CONFIRMED_VERSION,
     ).delete(synchronize_session=False)
+    # Supersede stub MapEntity records promoted at catalog-confirm time so they
+    # don't linger when the user re-catalogs. Synthesis will recreate proper ones.
+    section = db.query(SourceSection).filter(SourceSection.id == section_ids[0]).first()
+    if section:
+        db.query(MapEntity).filter(
+            MapEntity.provenance_document_id == section.document_id,
+            MapEntity.state == "active",
+            MapEntity.status != "manual",
+        ).update({"state": "superseded"}, synchronize_session=False)
     db.commit()
 
 
@@ -486,7 +501,11 @@ def confirm_catalog_review(
     document_id: str,
     db: Session = Depends(get_db),
 ) -> Response:
-    """Persist the user's decision to confirm the catalog review for a document."""
+    """Persist the user's decision to confirm the catalog review for a document.
+
+    Also promotes every approved catalog Candidate to a stub MapEntity so the
+    atlas editor can display the entity list immediately (before synthesis runs).
+    """
     section_ids = [
         s.id for s in db.query(SourceSection)
         .filter(SourceSection.document_id == document_id)
@@ -495,7 +514,48 @@ def confirm_catalog_review(
     ]
     if not section_ids:
         raise HTTPException(status_code=404, detail=f"Document '{document_id}' has no sections.")
+
     _write_catalog_confirmed(db, section_ids)
+
+    # Promote approved candidates → MapEntity stubs
+    candidates = (
+        db.query(Candidate)
+        .filter(
+            Candidate.section_id.in_(section_ids),
+            Candidate.kind == "entity",
+            Candidate.review_state != "rejected",
+        )
+        .all()
+    )
+    existing_names: set[str] = {
+        (e.name or "").strip().lower()
+        for e in db.query(MapEntity)
+        .filter(MapEntity.provenance_document_id == document_id, MapEntity.state == "active")
+        .all()
+    }
+    seen: set[str] = set()
+    for c in candidates:
+        name = (c.payload.get("name") or "").strip()
+        if not name:
+            continue
+        norm = name.lower()
+        if norm in existing_names or norm in seen:
+            continue
+        seen.add(norm)
+        db.add(MapEntity(
+            name=name,
+            entity_kind="place",
+            place_kind=c.payload.get("type"),
+            status="explicit",
+            state="active",
+            provenance_document_id=document_id,
+            provenance_section_id=c.section_id,
+            candidate_id=c.id,
+            aliases=list(c.payload.get("aliases") or []),
+            payload=c.payload,
+        ))
+    db.commit()
+
     return Response(status_code=204)
 
 
@@ -592,6 +652,240 @@ def get_catalog_gap_status(
         sections_total=len(section_ids),
         status=status,
     )
+
+
+class EnrichmentResponse(BaseModel):
+    document_id: str
+    status: str  # "running" | "completed" | "not_run"
+    candidate_count: int = 0
+
+
+def _enrichment_worker(document_id: str) -> None:
+    from app.extraction.service import run_global_enrichment as _run_enrichment
+    db = SessionLocal()
+    try:
+        try:
+            provider = get_provider()
+        except ExtractionNotConfiguredError as exc:
+            _log.error("Global enrichment: provider not configured: %s", exc)
+            return
+        catalog = _build_global_catalog(db, document_id)
+        try:
+            _run_enrichment(db, document_id, provider, catalog)
+        except Exception as exc:
+            _log.error("Global enrichment failed for document %s: %s", document_id, exc)
+    finally:
+        _active_enrichment_runs.discard(document_id)
+        db.close()
+
+
+@router.post(
+    "/api/documents/{document_id}/extract/enrichment",
+    response_model=EnrichmentResponse,
+    status_code=202,
+)
+def trigger_enrichment(
+    document_id: str,
+    db: Session = Depends(get_db),  # noqa: ARG001
+) -> EnrichmentResponse:
+    """Run containment sweep + dedup once globally after catalog is complete."""
+    if document_id in _active_enrichment_runs:
+        return EnrichmentResponse(document_id=document_id, status="running")
+    _active_enrichment_runs.add(document_id)
+    thread = threading.Thread(
+        target=_enrichment_worker,
+        args=(document_id,),
+        daemon=True,
+        name=f"enrichment-{document_id[:8]}",
+    )
+    thread.start()
+    return EnrichmentResponse(document_id=document_id, status="running")
+
+
+@router.get(
+    "/api/documents/{document_id}/extract/enrichment/status",
+    response_model=EnrichmentResponse,
+)
+def get_enrichment_status(
+    document_id: str,
+    db: Session = Depends(get_db),
+) -> EnrichmentResponse:
+    from app.extraction.models import ExtractionRun
+    from app.extraction.prompts import GLOBAL_ENRICHMENT_VERSION
+    if document_id in _active_enrichment_runs:
+        return EnrichmentResponse(document_id=document_id, status="running")
+    run = (
+        db.query(ExtractionRun)
+        .filter(
+            ExtractionRun.document_id == document_id,
+            ExtractionRun.section_id.is_(None),
+            ExtractionRun.status == "completed",
+            ExtractionRun.prompt_version == GLOBAL_ENRICHMENT_VERSION,
+        )
+        .order_by(ExtractionRun.completed_at.desc())
+        .first()
+    )
+    if run is None:
+        return EnrichmentResponse(document_id=document_id, status="not_run")
+    from app.extraction.models import Candidate
+    count = db.query(Candidate).filter(
+        Candidate.extraction_run_id == run.id,
+    ).count()
+    return EnrichmentResponse(document_id=document_id, status="completed", candidate_count=count)
+
+
+def _containment_worker(document_id: str) -> None:
+    from app.extraction.service import run_containment_extraction
+    db = SessionLocal()
+    try:
+        try:
+            provider = get_provider()
+        except ExtractionNotConfiguredError as exc:
+            _log.error("Containment pass: provider not configured: %s", exc)
+            return
+        catalog = _build_global_catalog(db, document_id)
+        sections = (
+            db.query(SourceSection)
+            .filter(SourceSection.document_id == document_id)
+            .order_by(SourceSection.ordinal)
+            .all()
+        )
+        for section in sections:
+            try:
+                run_containment_extraction(db, section.id, provider, catalog)
+            except Exception as exc:
+                _log.error("Containment pass failed for section %s: %s", section.id, exc)
+    finally:
+        _active_containment_runs.discard(document_id)
+        db.close()
+
+
+def _dedup_worker(document_id: str) -> None:
+    from app.extraction.service import run_global_enrichment as _run_enrichment
+    db = SessionLocal()
+    try:
+        try:
+            provider = get_provider()
+        except ExtractionNotConfiguredError as exc:
+            _log.error("Dedup pass: provider not configured: %s", exc)
+            return
+        catalog = _build_global_catalog(db, document_id)
+        try:
+            _run_enrichment(db, document_id, provider, catalog, passes=["dedup"])
+        except Exception as exc:
+            _log.error("Dedup pass failed for document %s: %s", document_id, exc)
+    finally:
+        _active_dedup_runs.discard(document_id)
+        db.close()
+
+
+@router.post("/api/documents/{document_id}/extract/containment", response_model=EnrichmentResponse, status_code=202)
+def trigger_containment_pass(document_id: str, db: Session = Depends(get_db)) -> EnrichmentResponse:  # noqa: ARG001
+    if document_id in _active_containment_runs:
+        return EnrichmentResponse(document_id=document_id, status="running")
+    _active_containment_runs.add(document_id)
+    thread = threading.Thread(target=_containment_worker, args=(document_id,), daemon=True, name=f"containment-{document_id[:8]}")
+    thread.start()
+    return EnrichmentResponse(document_id=document_id, status="running")
+
+
+@router.get("/api/documents/{document_id}/extract/containment/status", response_model=EnrichmentResponse)
+def get_containment_status(document_id: str, db: Session = Depends(get_db)) -> EnrichmentResponse:
+    if document_id in _active_containment_runs:
+        return EnrichmentResponse(document_id=document_id, status="running")
+    section_ids = [
+        s.id for s in db.query(SourceSection)
+        .filter(SourceSection.document_id == document_id)
+        .all()
+    ]
+    if not section_ids:
+        return EnrichmentResponse(document_id=document_id, status="not_run")
+    runs = (
+        db.query(ExtractionRun)
+        .filter(
+            ExtractionRun.section_id.in_(section_ids),
+            ExtractionRun.status == "completed",
+            ExtractionRun.prompt_version == CONTAINMENT_EVIDENCE_VERSION,
+        )
+        .all()
+    )
+    if not runs:
+        return EnrichmentResponse(document_id=document_id, status="not_run")
+    run_ids = [r.id for r in runs]
+    count = db.query(Candidate).filter(Candidate.extraction_run_id.in_(run_ids)).count()
+    return EnrichmentResponse(document_id=document_id, status="completed", candidate_count=count)
+
+
+@router.get("/api/documents/{document_id}/extract/dedup/candidates")
+def get_dedup_candidates(document_id: str, db: Session = Depends(get_db)):
+    """Return the SAME_AS candidates from the most recent completed dedup run."""
+    run = (
+        db.query(ExtractionRun)
+        .filter(
+            ExtractionRun.document_id == document_id,
+            ExtractionRun.section_id.is_(None),
+            ExtractionRun.status == "completed",
+            ExtractionRun.prompt_version == GLOBAL_EVIDENCE_DEDUP_VERSION,
+        )
+        .order_by(ExtractionRun.completed_at.desc())
+        .first()
+    )
+    if run is None:
+        return []
+    candidates = (
+        db.query(Candidate)
+        .filter(
+            Candidate.extraction_run_id == run.id,
+            Candidate.kind == "claim",
+        )
+        .all()
+    )
+    result = []
+    for c in candidates:
+        payload = c.payload or {}
+        if payload.get("predicate") != "SAME_AS":
+            continue
+        result.append({
+            "id": c.id,
+            "subject": payload.get("subject", ""),
+            "object": payload.get("object", ""),
+            "confidence": c.confidence or 0.0,
+            "rationale": c.rationale or "",
+            "review_state": c.review_state or "proposed",
+        })
+    return result
+
+
+@router.post("/api/documents/{document_id}/extract/dedup", response_model=EnrichmentResponse, status_code=202)
+def trigger_dedup_pass(document_id: str, db: Session = Depends(get_db)) -> EnrichmentResponse:  # noqa: ARG001
+    if document_id in _active_dedup_runs:
+        return EnrichmentResponse(document_id=document_id, status="running")
+    _active_dedup_runs.add(document_id)
+    thread = threading.Thread(target=_dedup_worker, args=(document_id,), daemon=True, name=f"dedup-{document_id[:8]}")
+    thread.start()
+    return EnrichmentResponse(document_id=document_id, status="running")
+
+
+@router.get("/api/documents/{document_id}/extract/dedup/status", response_model=EnrichmentResponse)
+def get_dedup_status(document_id: str, db: Session = Depends(get_db)) -> EnrichmentResponse:
+    if document_id in _active_dedup_runs:
+        return EnrichmentResponse(document_id=document_id, status="running")
+    run = (
+        db.query(ExtractionRun)
+        .filter(
+            ExtractionRun.document_id == document_id,
+            ExtractionRun.section_id.is_(None),
+            ExtractionRun.status == "completed",
+            ExtractionRun.prompt_version == GLOBAL_EVIDENCE_DEDUP_VERSION,
+        )
+        .order_by(ExtractionRun.completed_at.desc())
+        .first()
+    )
+    if run is None:
+        return EnrichmentResponse(document_id=document_id, status="not_run")
+    from app.extraction.models import Candidate
+    count = db.query(Candidate).filter(Candidate.extraction_run_id == run.id).count()
+    return EnrichmentResponse(document_id=document_id, status="completed", candidate_count=count)
 
 
 def _build_global_catalog(db: Session, document_id: str) -> list[dict]:
@@ -704,6 +998,13 @@ def extract_section_evidence(
     thread.start()
 
     return ExtractJobResponse(run_id=run_id, status="running")
+
+
+@router.get("/api/documents/{document_id}/evidence-catalog")
+def get_evidence_catalog(document_id: str, db: Session = Depends(get_db)) -> dict:
+    """Diagnostic: return the global catalog that would be used for evidence extraction."""
+    catalog = _build_global_catalog(db, document_id)
+    return {"count": len(catalog), "places": catalog}
 
 
 @router.get("/api/extraction-runs/{run_id}", response_model=RunResponse)

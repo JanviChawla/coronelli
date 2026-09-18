@@ -87,6 +87,67 @@ export async function mergeEntities(keepId: string, dropId: string): Promise<{ m
   return res.json()
 }
 
+export async function patchAtlasClaim(
+  documentId: string,
+  claimId: string,
+  body: { predicate?: string; object_refs?: string[] },
+): Promise<void> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/atlas/claims/${claimId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error('Failed to update claim')
+}
+
+export type EntityExcerpt = {
+  excerpt: string
+  section_title: string | null
+  section_ordinal: number | null
+}
+
+export async function fetchEntityExcerpts(documentId: string, entityId: string): Promise<EntityExcerpt[]> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/atlas/entities/${entityId}/excerpts`)
+  if (!res.ok) return []
+  return res.json()
+}
+
+export async function patchAtlasEntity(documentId: string, entityId: string, body: { place_kind?: string; tier?: string }): Promise<void> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/atlas/entities/${entityId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error('Failed to update entity')
+}
+
+export async function deleteAtlasEntity(documentId: string, entityId: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/atlas/entities/${entityId}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) throw new Error('Failed to delete entity')
+}
+
+export async function deleteAtlasClaim(documentId: string, claimId: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/atlas/claims/${claimId}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) throw new Error('Failed to delete claim')
+}
+
+export async function createAtlasClaim(
+  documentId: string,
+  body: { claim_type?: string; predicate: string; subject_ref: string; object_refs: string[] },
+): Promise<AtlasClaim> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/atlas/claims`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ claim_type: 'spatial', ...body }),
+  })
+  if (!res.ok) throw new Error('Failed to create claim')
+  return res.json()
+}
+
 export async function downloadAtlasPackage(documentId: string, documentTitle: string): Promise<void> {
   const res = await fetch(`${BASE}/api/documents/${documentId}/atlas-package`)
   if (!res.ok) throw new Error('Failed to export atlas package')
