@@ -227,21 +227,22 @@ def export_atlas_json(document_id: str, db: Session = Depends(get_db)) -> JSONRe
     entity_by_id = {e.id: e for e in entities}
 
     # located_in: non-manual first, then manual overwrites so manual wins.
-    # Canonical form is LOCATED_IN(subject=contained, object=container).
-    # PART_OF has the same direction; CONTAINS is the inverse (subject=container).
+    # Canonical form is CONTAINS(subject=container, object=contained).
+    # LOCATED_IN and PART_OF are legacy / denormalized — handled as safety net.
     located_in: dict[str, str] = {}
     for claim in sorted(all_claims, key=lambda c: 1 if c.status == "manual" else 0):
-        if claim.predicate == "LOCATED_IN" or claim.predicate == "PART_OF":
-            if claim.subject_ref in active_entity_ids and claim.object_refs:
-                container_id = claim.object_refs[0]
-                if container_id in entity_by_id:
-                    located_in[claim.subject_ref] = entity_by_id[container_id].name
-        elif claim.predicate == "CONTAINS":
-            # CONTAINS(subject=container, object_refs[0]=contained) — flip to build located_in
+        if claim.predicate == "CONTAINS":
+            # CONTAINS(subject=container, object_refs[0]=contained)
             if claim.object_refs and claim.object_refs[0] in active_entity_ids:
                 contained_id = claim.object_refs[0]
                 if claim.subject_ref in entity_by_id:
                     located_in[contained_id] = entity_by_id[claim.subject_ref].name
+        elif claim.predicate == "LOCATED_IN" or claim.predicate == "PART_OF":
+            # Legacy: LOCATED_IN/PART_OF(subject=contained, object=container)
+            if claim.subject_ref in active_entity_ids and claim.object_refs:
+                container_id = claim.object_refs[0]
+                if container_id in entity_by_id:
+                    located_in[claim.subject_ref] = entity_by_id[container_id].name
 
     # excerpt map: lowercased canonical name → first excerpt from entity candidates
     section_ids = {
@@ -935,19 +936,24 @@ def assign_containment(document_id: str, db: Session = Depends(get_db)):
             if alias.lower() not in name_to_id:
                 name_to_id[alias.lower()] = e.id
 
-    # Build set of existing active containment claims to avoid dupes
+    # Build set of existing active containment claims to avoid dupes.
+    # Track as (container_id, contained_id) — canonical CONTAINS direction.
     existing: set[tuple[str, str]] = set()
     for claim in (
         db.query(MapClaim)
         .filter(
             MapClaim.provenance_document_id == document_id,
-            MapClaim.predicate.in_(["LOCATED_IN", "CONTAINS", "PART_OF"]),
+            MapClaim.predicate.in_(["CONTAINS", "LOCATED_IN", "PART_OF"]),
             MapClaim.state == "active",
         )
         .all()
     ):
         if claim.subject_ref and claim.object_refs:
-            existing.add((claim.subject_ref, claim.object_refs[0]))
+            if claim.predicate == "CONTAINS":
+                existing.add((claim.subject_ref, claim.object_refs[0]))
+            else:
+                # LOCATED_IN / PART_OF legacy: subject=contained, object=container — flip
+                existing.add((claim.object_refs[0], claim.subject_ref))
 
     created = 0
     for cand in containment_candidates:
@@ -957,9 +963,8 @@ def assign_containment(document_id: str, db: Session = Depends(get_db)):
         object_name = str(payload.get("object", "")).lower()
 
         if predicate == "CONTAINS":
-            # CONTAINS(subject=container, object=contained) → contained LOCATED_IN container
-            contained_id = name_to_id.get(object_name)
             container_id = name_to_id.get(subject_name)
+            contained_id = name_to_id.get(object_name)
         else:
             # LOCATED_IN / PART_OF: subject is inside object
             contained_id = name_to_id.get(subject_name)
@@ -967,15 +972,15 @@ def assign_containment(document_id: str, db: Session = Depends(get_db)):
 
         if not container_id or not contained_id or container_id == contained_id:
             continue
-        if (contained_id, container_id) in existing:
+        if (container_id, contained_id) in existing:
             continue
 
         claim = MapClaim(
             id=str(uuid.uuid4()),
             claim_type="spatial",
-            predicate="LOCATED_IN",
-            subject_ref=contained_id,
-            object_refs=[container_id],
+            predicate="CONTAINS",
+            subject_ref=container_id,
+            object_refs=[contained_id],
             provenance_document_id=document_id,
             provenance_section_id=cand.section_id,
             payload={},
@@ -985,7 +990,7 @@ def assign_containment(document_id: str, db: Session = Depends(get_db)):
             state="active",
         )
         db.add(claim)
-        existing.add((contained_id, container_id))
+        existing.add((container_id, contained_id))
         created += 1
 
     db.commit()

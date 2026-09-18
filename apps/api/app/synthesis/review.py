@@ -142,20 +142,18 @@ _CONTAINMENT_PREDICATES = {"CONTAINS", "LOCATED_IN", "PART_OF"}
 
 
 def _normalize_containment(payload: dict) -> dict:
-    """Normalize CONTAINS / PART_OF → LOCATED_IN with correct subject/object direction.
+    """Normalize LOCATED_IN / PART_OF → CONTAINS with correct subject/object direction.
 
-    Canonical form: LOCATED_IN(subject=contained, object=container).
-    - LOCATED_IN: already canonical, no change.
-    - PART_OF(A, B):  A is structurally part of B → LOCATED_IN(A, B), same direction.
-    - CONTAINS(A, B): A contains B → LOCATED_IN(B, A), flip subject and object.
+    Canonical form: CONTAINS(subject=container, object=contained).
+    - CONTAINS(A, B): A contains B — already canonical, no change.
+    - LOCATED_IN(A, B): A is inside B → CONTAINS(B, A), flip subject and object.
+    - PART_OF(A, B): A is part of B → CONTAINS(B, A), flip subject and object.
     """
     predicate = (payload.get("predicate") or "").upper()
-    if predicate not in _CONTAINMENT_PREDICATES or predicate == "LOCATED_IN":
+    if predicate not in _CONTAINMENT_PREDICATES or predicate == "CONTAINS":
         return payload
-    if predicate == "CONTAINS":
-        return {**payload, "predicate": "LOCATED_IN", "subject": payload.get("object"), "object": payload.get("subject")}
-    # PART_OF — same direction, just rename
-    return {**payload, "predicate": "LOCATED_IN"}
+    # LOCATED_IN and PART_OF: subject is the contained thing, object is the container — flip both
+    return {**payload, "predicate": "CONTAINS", "subject": payload.get("object"), "object": payload.get("subject")}
 
 
 def _approve_claim(
