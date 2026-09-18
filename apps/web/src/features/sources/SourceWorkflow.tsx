@@ -311,7 +311,9 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
           const evidenceTotal = Object.values(bySection).reduce(
             (sum, cands) => sum + cands.filter(c => c.kind !== 'entity').length, 0
           )
-          if (evidenceTotal > 0) {
+          // Only 'done' when synthesis has run (claim_count > 0) AND extraction has run (evidenceTotal > 0).
+          // atlas.entity_count alone is not sufficient — stubs are created at catalog-confirm time.
+          if (evidenceTotal > 0 && atlas.claim_count > 0) {
             setCanonicalEntityCount(atlas.entity_count)
             setCanonicalClaimCount(atlas.claim_count)
             setAllCandidates(bySection)
