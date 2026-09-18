@@ -1067,6 +1067,25 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
           })
           .filter(c => c.subject && c.predicate && c.object)
       : []
+    const pendingVisualClaims = !atlasDone
+      ? Object.entries(allCandidates).flatMap(([sectionId, candidates]) => {
+          const section = sections.find(s => s.id === sectionId)
+          return candidates
+            .filter(c => c.kind === 'visual_claim')
+            .map(c => {
+              const p = c.payload as Record<string, unknown>
+              return {
+                id: c.id,
+                subject: String(p.subject ?? ''),
+                category: String(p.category ?? ''),
+                observation: String(p.observation ?? ''),
+                excerpt: c.excerpt ?? null,
+                section_title: section?.title ?? null,
+              }
+            })
+            .filter(c => c.subject && c.observation)
+        })
+      : []
     if (showExplorer) {
       return (
         <AtlasExplorer
@@ -1084,6 +1103,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
         readOnly={isReadOnly}
         canExplore={phase === 'done'}
         pendingClaims={pendingClaims}
+        pendingVisualClaims={pendingVisualClaims}
         catalogCandidates={phase === 'catalog-review' ? uniqueEntityCandidates.map(c => ({
           id: c.id,
           name: String((c.payload as Record<string, unknown>).name ?? ''),
