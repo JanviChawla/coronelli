@@ -387,7 +387,7 @@ Each candidate may carry a "palette" array of extracted hex-color hints from the
 YOUR TASK: For each entity that has color-relevant evidence, produce a "visual_palette" item —
 a single 3-hex color identity summarising the place's visual character.
 
-OUTPUT FORMAT:
+OUTPUT FORMAT (valid JSON only, no markdown):
 {
   "synthesis_items": [
     {
