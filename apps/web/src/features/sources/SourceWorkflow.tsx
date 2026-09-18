@@ -1,7 +1,7 @@
 ﻿import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { CandidatesTable } from '../candidates/CandidatesTable'
 import { type Candidate, fetchCandidates, fetchDocumentEntityCandidates, patchCandidateReviewState } from '../candidates/candidateApi'
-import { fetchPreflight, triggerDocumentCatalog, getDocumentCatalogStatus, confirmDocumentCatalog, triggerEvidenceExtraction, getExtractionProgress, fetchPlaceSuggestions, addManualCandidate, triggerDocumentCatalogGap, getDocumentCatalogGapStatus, triggerDedupPass, getDedupStatus, promoteDedup, fetchDedupCandidates, type DedupCandidate } from './extractionApi'
+import { fetchPreflight, triggerDocumentCatalog, getDocumentCatalogStatus, confirmDocumentCatalog, triggerEvidenceExtraction, getExtractionProgress, fetchPlaceSuggestions, addManualCandidate, triggerDocumentCatalogGap, getDocumentCatalogGapStatus, triggerDedupPass, getDedupStatus, promoteDedup, fetchDedupCandidates, triggerCatalogExtraction, triggerSectionCatalogGap, confirmSectionCatalog, type DedupCandidate } from './extractionApi'
 import type { Document, Section } from './sourceApi'
 import { fetchAtlas } from '../atlas/atlasApi'
 import { triggerVisualSynthesis, getSynthesisProgress } from '../synthesis/synthesisApi'
@@ -204,6 +204,20 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
   const [confirmingDedup, setConfirmingDedup] = useState(false)
 
   const [gapFindings, setGapFindings] = useState<string[] | null>(null) // null=not run, []=none found, [...]=names
+  const [gapReviewPending, setGapReviewPending] = useState(false) // true while gap entities need confirm
+
+  const [perSectionMode, setPerSectionMode] = useState(false)
+  const [catalogSectionIdx, setCatalogSectionIdx] = useState(0)
+  const [currentSectionCandidates, setCurrentSectionCandidates] = useState<Candidate[]>([])
+  const [totalApprovedAcrossSections, setTotalApprovedAcrossSections] = useState(0)
+
+  // ── Toast notifications ───────────────────────────────────────────────────
+  const [toasts, setToasts] = useState<Array<{ id: string; message: string; kind: 'info' | 'success' | 'warn' }>>([])
+  function addToast(message: string, kind: 'info' | 'success' | 'warn' = 'info') {
+    const id = Math.random().toString(36).slice(2)
+    setToasts(prev => [...prev, { id, message, kind }])
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4500)
+  }
 
   // ── New navigation state ──────────────────────────────────────────────────
   const [activeStep, setActiveStep] = useState<number>(1)
@@ -445,48 +459,44 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
     setPhase('catalog-review')
   }
 
-  async function handleRunCatalog(force = false) {
-    setPhase('cataloging')
-    setCurrentIdx(0)
-    setWorkflowError(null)
-    setEntityCandidates([])
-    setCatalogPasses([])
-    setRejectedCandidateIds(new Set())
-    if (force) { setEvidenceStale(true); setAtlasStale(true) }
-
+  async function _runCatalogForSection(idx: number, force = false) {
+    if (timerRef.current) clearInterval(timerRef.current)
     const startTime = Date.now()
     timerRef.current = setInterval(() => setElapsedMs(Date.now() - startTime), 100)
 
+    const section = sections[idx]
+    setCatalogSectionIdx(idx)
+    setCurrentIdx(idx + 1)
+    setCurrentTitle(section.title)
+    setPhase('cataloging')
+    setRejectedCandidateIds(new Set())
+    setCurrentSectionCandidates([])
+
+    await triggerCatalogExtraction(section.id, force)
+    await triggerSectionCatalogGap(section.id)
+
+    const allCands = await fetchCandidates(section.id)
+    const entityCands = allCands.filter(c => c.kind === 'entity')
+    setCurrentSectionCandidates(entityCands)
+    if (timerRef.current) clearInterval(timerRef.current)
+    setPhase('catalog-review')
+  }
+
+  async function handleRunCatalog(force = false) {
+    setPerSectionMode(true)
+    setCurrentIdx(0)
+    setCatalogSectionIdx(0)
+    setWorkflowError(null)
+    setEntityCandidates([])
+    setCatalogPasses([])
+    setCurrentSectionCandidates([])
+    setRejectedCandidateIds(new Set())
+    setTotalApprovedAcrossSections(0)
+    if (force) { setEvidenceStale(true); setAtlasStale(true) }
     try {
-      const job = await triggerDocumentCatalog(document.id, force)
-      if (job.status === 'completed') {
-        if (timerRef.current) clearInterval(timerRef.current)
-        await _finishCatalogAndReview()
-        return
-      }
-      setCurrentIdx(job.sections_done)
-      await new Promise<void>((resolve, reject) => {
-        catalogPollRef.current = setInterval(async () => {
-          try {
-            const status = await getDocumentCatalogStatus(document.id)
-            setCurrentIdx(status.sections_done)
-            if (status.status === 'completed' || status.sections_done === status.sections_total) {
-              clearInterval(catalogPollRef.current!)
-              catalogPollRef.current = null
-              resolve()
-            }
-          } catch (e) {
-            clearInterval(catalogPollRef.current!)
-            catalogPollRef.current = null
-            reject(e)
-          }
-        }, 2000)
-      })
-      if (timerRef.current) clearInterval(timerRef.current)
-      await _finishCatalogAndReview()
+      await _runCatalogForSection(0, force)
     } catch (e) {
       if (timerRef.current) clearInterval(timerRef.current)
-      if (catalogPollRef.current) { clearInterval(catalogPollRef.current); catalogPollRef.current = null }
       setWorkflowError(e instanceof Error ? e.message : 'Catalog failed.')
       setErrorInStep(1)
       setPhase('error')
@@ -534,9 +544,44 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
       }
       await confirmDocumentCatalog(document.id)
       setAtlasKey(k => k + 1)
+      setGapReviewPending(false)
+      setGapFindings(null)
       setPhase('evidence-ready')
+      addToast('Catalog confirmed — run Extract to include new places.', 'success')
     } catch (e) {
       setWorkflowError(e instanceof Error ? e.message : 'Failed to confirm catalog.')
+    } finally {
+      setConfirmingCatalog(false)
+    }
+  }
+
+  async function handleConfirmSection() {
+    setConfirmingCatalog(true)
+    setWorkflowError(null)
+    try {
+      if (rejectedCandidateIds.size > 0) {
+        await Promise.all([...rejectedCandidateIds].map(id => patchCandidateReviewState(id, 'rejected')))
+      }
+      await confirmSectionCatalog(sections[catalogSectionIdx].id)
+      const approvedInSection = currentSectionCandidates.filter(c => !rejectedCandidateIds.has(c.id)).length
+      const newTotal = totalApprovedAcrossSections + approvedInSection
+      setTotalApprovedAcrossSections(newTotal)
+      setAtlasKey(k => k + 1)
+
+      const nextIdx = catalogSectionIdx + 1
+      if (nextIdx < sections.length) {
+        await _runCatalogForSection(nextIdx)
+      } else {
+        await confirmDocumentCatalog(document.id)
+        setCurrentSectionCandidates([])
+        setGapReviewPending(false)
+        setGapFindings(null)
+        setPhase('evidence-ready')
+        addToast(`Catalog confirmed — ${newTotal} place${newTotal !== 1 ? 's' : ''} across ${sections.length} section${sections.length !== 1 ? 's' : ''}.`, 'success')
+      }
+    } catch (e) {
+      if (timerRef.current) clearInterval(timerRef.current)
+      setWorkflowError(e instanceof Error ? e.message : 'Failed to confirm section.')
     } finally {
       setConfirmingCatalog(false)
     }
@@ -658,7 +703,16 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
             )
             setEntityCandidates(allEntities)
             setCatalogPasses(prev => [...prev, buildGapPass(newEntities, knownNames, prev.length)])
-            setGapFindings(newEntities.map(c => String((c.payload as Record<string, unknown>).name ?? '')))
+            const foundNames = newEntities.map(c => String((c.payload as Record<string, unknown>).name ?? ''))
+            setGapFindings(foundNames)
+            if (phase !== 'catalog-review') {
+              setGapReviewPending(true)
+              if (foundNames.length > 0) {
+                addToast(`Gap scan found ${foundNames.length} new place${foundNames.length !== 1 ? 's' : ''}: ${foundNames.slice(0, 3).join(', ')}${foundNames.length > 3 ? ` +${foundNames.length - 3} more` : ''}`, 'success')
+              } else {
+                addToast('Gap scan complete — no new locations found. You can still add places manually.', 'info')
+              }
+            }
           }
         } catch { /* keep polling */ }
       }, 2000)
@@ -746,24 +800,30 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
     setDynamicSuggestions([])
     try {
       await addManualCandidate(document.id, name.trim())
-      const allEntities = await fetchDocumentEntityCandidates(document.id)
-      // Compute new entries before touching state — avoids StrictMode double-invoke bug
-      // where nesting setCatalogPasses inside setEntityCandidates' updater causes double-append
-      const existingIds = new Set(entityCandidates.map(c => c.id))
-      const newEntities = allEntities.filter(c => !existingIds.has(c.id))
-      setEntityCandidates(allEntities)
-      if (newEntities.length > 0) {
-        setCatalogPasses(passes => {
-          if (passes.length === 0) return passes
-          const updated = [...passes]
-          const last = updated[updated.length - 1]
-          updated[updated.length - 1] = {
-            ...last,
-            candidates: [...last.candidates, ...newEntities],
-            sectionIds: new Set([...last.sectionIds, ...newEntities.map(c => c.section_id)]),
-          }
-          return updated
-        })
+      if (perSectionMode) {
+        const allEntities = await fetchDocumentEntityCandidates(document.id)
+        const existingIds = new Set(currentSectionCandidates.map(c => c.id))
+        const newEntities = allEntities.filter(c => !existingIds.has(c.id))
+        setCurrentSectionCandidates(prev => [...prev, ...newEntities])
+      } else {
+        const allEntities = await fetchDocumentEntityCandidates(document.id)
+        // Compute new entries before touching state — avoids StrictMode double-invoke bug
+        const existingIds = new Set(entityCandidates.map(c => c.id))
+        const newEntities = allEntities.filter(c => !existingIds.has(c.id))
+        setEntityCandidates(allEntities)
+        if (newEntities.length > 0) {
+          setCatalogPasses(passes => {
+            if (passes.length === 0) return passes
+            const updated = [...passes]
+            const last = updated[updated.length - 1]
+            updated[updated.length - 1] = {
+              ...last,
+              candidates: [...last.candidates, ...newEntities],
+              sectionIds: new Set([...last.sectionIds, ...newEntities.map(c => c.section_id)]),
+            }
+            return updated
+          })
+        }
       }
     } catch { /* ignore */ }
     setAddingPlace(false)
@@ -793,6 +853,9 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
   const uniqueEntityCandidates = catalogPasses.flatMap(p => p.candidates)
   const rejectedCount = rejectedCandidateIds.size
   const approvedCount = uniqueEntityCandidates.length - rejectedCount
+
+  const currentSectionApproved = currentSectionCandidates.filter(c => !rejectedCandidateIds.has(c.id)).length
+  const currentSectionRejected = rejectedCandidateIds.size
 
   // Enrichment passes (containment + dedup) cost — scales with approved entity count
   const enrichInputTokens = approvedCount * 120 + 1500
@@ -839,7 +902,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
 
   const spatialDone = phase === 'inspecting' || phase === 'synthesizing' || phase === 'done' || (phase === 'error' && errorInStep >= 3)
   const PIPELINE_STEPS = [
-    { label: 'Catalog',     detail: catalogConfirmed ? `${approvedCount} approved · ${rejectedCount} rejected` : phase === 'cataloging' ? `${currentIdx + 1} / ${sections.length} sections` : 'Find all named locations' },
+    { label: 'Catalog',     detail: catalogConfirmed ? `${totalApprovedAcrossSections || approvedCount} confirmed` : phase === 'cataloging' ? `§${catalogSectionIdx + 1} / ${sections.length}` : phase === 'catalog-review' && perSectionMode ? `§${catalogSectionIdx + 1} of ${sections.length} · ${currentSectionApproved} placed` : 'Find all named locations' },
     { label: 'Extract',     detail: spatialDone ? `${totalCandidates} claim${totalCandidates !== 1 ? 's' : ''} found` : catalogConfirmed ? 'Spatial + visual from text' : 'Unlock after catalog' },
     { label: 'Synthesize',  detail: atlasDone && !atlasStale && dedupDone ? `${canonicalClaimCount} relationship${canonicalClaimCount !== 1 ? 's' : ''} · ${canonicalEntityCount} entities` : spatialDone ? 'Dedup · containment · visual' : 'Unlock after extraction' },
   ]
@@ -883,11 +946,23 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
       )
       if (phase === 'catalog-review') return (
         <div style={row}>
-          <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-muted)' }}>{approvedCount} approved · {rejectedCount} rejected</span>
-          <button type="button" onClick={handleGapPass} disabled={runningGapPass}
-            style={{ background: 'none', border: '1px solid var(--sidebar-border)', borderRadius: '3px', cursor: runningGapPass ? 'default' : 'pointer', fontSize: '0.72rem', color: 'var(--gold)', opacity: runningGapPass ? 0.5 : 1, padding: '0.25rem 0.6rem' }}>
-            {runningGapPass ? 'Scanning…' : '+ Gap pass'}
-          </button>
+          {perSectionMode && (
+            <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-text)', fontFamily: 'monospace' }}>
+              §{catalogSectionIdx + 1} / {sections.length}{sections[catalogSectionIdx]?.title ? ` — ${sections[catalogSectionIdx].title}` : ''}
+            </span>
+          )}
+          <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-muted)' }}>
+            {perSectionMode
+              ? `${currentSectionApproved} kept · ${currentSectionRejected} rejected`
+              : `${approvedCount} approved · ${rejectedCount} rejected`
+            }
+          </span>
+          {!perSectionMode && (
+            <button type="button" onClick={handleGapPass} disabled={runningGapPass}
+              style={{ background: 'none', border: '1px solid var(--sidebar-border)', borderRadius: '3px', cursor: runningGapPass ? 'default' : 'pointer', fontSize: '0.72rem', color: 'var(--gold)', opacity: runningGapPass ? 0.5 : 1, padding: '0.25rem 0.6rem' }}>
+              {runningGapPass ? 'Scanning…' : '+ Gap pass'}
+            </button>
+          )}
           <div ref={addPlaceRef} style={{ position: 'relative' }}>
             <input type="text" placeholder="Add place…" value={addPlaceInput} disabled={addingPlace}
               onChange={e => {
@@ -919,8 +994,13 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
               </div>
             )}
           </div>
-          <button className="btn-cta" type="button" onClick={handleConfirmCatalog} disabled={confirmingCatalog} style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>
-            {confirmingCatalog ? 'Confirming…' : 'Confirm catalog →'}
+          <button className="btn-cta" type="button"
+            onClick={perSectionMode ? handleConfirmSection : handleConfirmCatalog}
+            disabled={confirmingCatalog}
+            style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>
+            {confirmingCatalog ? 'Confirming…' : perSectionMode
+              ? (catalogSectionIdx + 1 < sections.length ? `Confirm §${catalogSectionIdx + 1} →` : 'Confirm catalog →')
+              : 'Confirm catalog →'}
           </button>
           {workflowError && <span style={{ fontSize: '0.72rem', color: 'var(--error-text)' }}>{workflowError}</span>}
         </div>
@@ -1115,13 +1195,25 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
         canExplore={phase === 'done'}
         pendingClaims={pendingClaims}
         pendingVisualClaims={pendingVisualClaims}
-        catalogCandidates={phase === 'catalog-review' ? uniqueEntityCandidates.map(c => ({
-          id: c.id,
-          name: String((c.payload as Record<string, unknown>).name ?? ''),
-          excerpt: c.excerpt ?? null,
-          source: c.source ?? 'catalog',
-          isRejected: rejectedCandidateIds.has(c.id),
-        })) : []}
+        catalogCandidates={(() => {
+          const _src: Candidate[] =
+            perSectionMode && phase === 'catalog-review' ? currentSectionCandidates :
+            gapReviewPending && phase !== 'catalog-review' ? (catalogPasses[catalogPasses.length - 1]?.candidates ?? []) :
+            phase === 'catalog-review' ? uniqueEntityCandidates :
+            []
+          return _src.map(c => ({
+            id: c.id,
+            name: String((c.payload as Record<string, unknown>).name ?? ''),
+            excerpt: c.excerpt ?? null,
+            source: c.source ?? 'catalog',
+            isRejected: rejectedCandidateIds.has(c.id),
+            parentContext: ((c.payload as Record<string, unknown>).parent_context as string | null) ?? null,
+            note: ((c.payload as Record<string, unknown>).note as string | null) ?? null,
+            sectionTitle: sections.find(s => s.id === c.section_id)?.title ?? null,
+            spatialLevel: ((c.payload as Record<string, unknown>).spatial_level as number | null) ?? null,
+            placeType: ((c.payload as Record<string, unknown>).type as string | null) ?? null,
+          }))
+        })()}
         onToggleCatalogReject={toggleReject}
         dedupProposals={dedupCandidates.length > 0 && !dedupDone ? dedupCandidates.map(c => ({
           id: c.id,
@@ -1137,9 +1229,9 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
           return next
         })}
         hideHeader={true}
-        onConfirmCatalog={handleConfirmCatalog}
+        onConfirmCatalog={(phase === 'catalog-review' || gapReviewPending) ? (perSectionMode ? handleConfirmSection : handleConfirmCatalog) : undefined}
         confirmingCatalog={confirmingCatalog}
-        confirmCatalogSlot={phase === 'catalog-review' ? (
+        confirmCatalogSlot={phase === 'catalog-review' || gapReviewPending ? (
           <div ref={addPlaceRef} style={{ position: 'relative' }}>
             <input
               type="text" placeholder="+ Add place…" value={addPlaceInput} disabled={addingPlace}
@@ -1354,13 +1446,6 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
                   ({catalogCostLo.toFixed(2)}–{catalogCostHi.toFixed(2)})
                 </span>}
               </button>
-              {gapFindings !== null && !runningGapPass && (
-                <span style={{ fontSize: '0.72rem', color: gapFindings.length > 0 ? 'var(--gold)' : 'var(--sidebar-muted)', whiteSpace: 'nowrap' }}>
-                  {gapFindings.length > 0
-                    ? `+${gapFindings.length} new: ${gapFindings.slice(0, 3).join(', ')}${gapFindings.length > 3 ? ` +${gapFindings.length - 3} more` : ''} — re-extract to include`
-                    : 'No new locations found'}
-                </span>
-              )}
             </>
           )
         })()}
@@ -1450,6 +1535,28 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
       <main style={{ flex: 1, overflow: 'hidden', backgroundColor: 'var(--parchment)', display: 'flex', flexDirection: 'column' }}>
         {renderStepContent(activeStep)}
       </main>
+
+      {/* ── Toast notifications ──────────────────────────────────────────────── */}
+      {toasts.length > 0 && (
+        <div style={{ position: 'fixed', bottom: '1.5rem', right: '1.5rem', zIndex: 9999, display: 'flex', flexDirection: 'column', gap: '0.5rem', pointerEvents: 'none' }}>
+          {toasts.map(t => (
+            <div key={t.id} style={{
+              padding: '0.7rem 1rem',
+              borderRadius: '6px',
+              fontSize: '0.78rem',
+              lineHeight: 1.45,
+              maxWidth: '340px',
+              boxShadow: '0 4px 18px rgba(0,0,0,0.35)',
+              pointerEvents: 'auto',
+              background: t.kind === 'success' ? 'rgba(30,42,22,0.97)' : t.kind === 'warn' ? 'rgba(42,30,10,0.97)' : 'rgba(18,24,36,0.97)',
+              border: `1px solid ${t.kind === 'success' ? 'rgba(100,160,60,0.4)' : t.kind === 'warn' ? 'rgba(180,120,20,0.4)' : 'rgba(100,120,160,0.3)'}`,
+              color: t.kind === 'success' ? '#a8d080' : t.kind === 'warn' ? '#d4a040' : '#a0b8d8',
+            }}>
+              {t.message}
+            </div>
+          ))}
+        </div>
+      )}
 
     </div>
   )

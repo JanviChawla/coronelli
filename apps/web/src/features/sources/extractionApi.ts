@@ -215,3 +215,19 @@ export async function fetchDedupCandidates(documentId: string): Promise<DedupCan
   if (!res.ok) throw new Error(`Fetch dedup candidates failed: ${res.statusText}`)
   return res.json()
 }
+
+export async function triggerSectionCatalogGap(sectionId: string): Promise<ExtractionRunResult> {
+  const res = await fetch(`${BASE}/api/sections/${sectionId}/extract/catalog-gap`, { method: 'POST' })
+  if (!res.ok) {
+    let detail = `Section gap pass failed (HTTP ${res.status})`
+    try { const body = await res.json(); if (body?.detail) detail = body.detail } catch { /* ignore */ }
+    throw new Error(detail)
+  }
+  return res.json()
+}
+
+export async function confirmSectionCatalog(sectionId: string): Promise<{ section_id: string; entities_created: number }> {
+  const res = await fetch(`${BASE}/api/sections/${sectionId}/extract/catalog/confirm`, { method: 'POST' })
+  if (!res.ok) throw new Error(`Section catalog confirm failed: ${res.statusText}`)
+  return res.json()
+}

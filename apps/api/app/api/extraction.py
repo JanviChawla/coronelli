@@ -298,6 +298,105 @@ def extract_section_catalog(
     )
 
 
+@router.post("/api/sections/{section_id}/extract/catalog-gap", response_model=ExtractResponse, status_code=201)
+def extract_section_catalog_gap(
+    section_id: str,
+    db: Session = Depends(get_db),
+) -> ExtractResponse:
+    """Per-section gap pass: find places missed by the catalog pass. Runs synchronously."""
+    try:
+        provider = get_provider()
+    except ExtractionNotConfiguredError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    try:
+        run, candidates = run_catalog_gap_extraction(db, section_id, provider)
+    except ExtractionError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=500, detail=msg) from exc
+
+    return ExtractResponse(
+        run=RunResponse.model_validate(run),
+        candidates=[CandidateResponse.model_validate(c) for c in candidates],
+        from_cache=False,
+    )
+
+
+class SectionConfirmResponse(BaseModel):
+    section_id: str
+    entities_created: int
+
+
+@router.post(
+    "/api/sections/{section_id}/extract/catalog/confirm",
+    response_model=SectionConfirmResponse,
+    status_code=201,
+)
+def confirm_section_catalog(
+    section_id: str,
+    db: Session = Depends(get_db),
+) -> SectionConfirmResponse:
+    """Promote approved candidates for a single section to MapEntity stubs.
+    Does NOT write the document-level catalog-confirmed sentinel — that happens
+    only after the last section is confirmed via the document-level confirm endpoint.
+    """
+    section = db.get(SourceSection, section_id)
+    if section is None:
+        raise HTTPException(status_code=404, detail=f"Section '{section_id}' not found.")
+
+    candidates = (
+        db.query(Candidate)
+        .filter(
+            Candidate.section_id == section_id,
+            Candidate.kind == "entity",
+            Candidate.review_state != "rejected",
+        )
+        .all()
+    )
+
+    _all_entities = (
+        db.query(MapEntity)
+        .filter(MapEntity.provenance_document_id == section.document_id)
+        .all()
+    )
+    existing_names: set[str] = set()
+    for _e in _all_entities:
+        if _e.name:
+            existing_names.add(_e.name.strip().lower())
+        for _alias in (_e.aliases or []):
+            if _alias:
+                existing_names.add(_alias.strip().lower())
+
+    seen: set[str] = set()
+    created = 0
+    for c in candidates:
+        name = (c.payload.get("name") or "").strip()
+        if not name:
+            continue
+        norm = name.lower()
+        if norm in existing_names or norm in seen:
+            continue
+        seen.add(norm)
+        db.add(MapEntity(
+            name=name,
+            entity_kind="place",
+            place_kind=c.payload.get("type"),
+            status="explicit",
+            state="active",
+            provenance_document_id=section.document_id,
+            provenance_section_id=section_id,
+            candidate_id=c.id,
+            aliases=list(c.payload.get("aliases") or []),
+            payload=c.payload,
+        ))
+        created += 1
+    db.commit()
+
+    return SectionConfirmResponse(section_id=section_id, entities_created=created)
+
+
 class CatalogBatchResponse(BaseModel):
     document_id: str
     sections_total: int
@@ -528,12 +627,21 @@ def confirm_catalog_review(
         )
         .all()
     )
-    existing_names: set[str] = {
-        (e.name or "").strip().lower()
-        for e in db.query(MapEntity)
-        .filter(MapEntity.provenance_document_id == document_id, MapEntity.state == "active")
+    # Include all states — deleted and merged entities must not be re-stubbed.
+    # Also cover aliases so that absorbed entities (whose name became an alias
+    # of the canonical entity) are not re-created as independent stubs.
+    _all_entities = (
+        db.query(MapEntity)
+        .filter(MapEntity.provenance_document_id == document_id)
         .all()
-    }
+    )
+    existing_names: set[str] = set()
+    for _e in _all_entities:
+        if _e.name:
+            existing_names.add(_e.name.strip().lower())
+        for _alias in (_e.aliases or []):
+            if _alias:
+                existing_names.add(_alias.strip().lower())
     seen: set[str] = set()
     for c in candidates:
         name = (c.payload.get("name") or "").strip()

@@ -196,6 +196,7 @@ def _save_candidates(
     run: "ExtractionRun",
     section_id: str,
     result: "ExtractionResult",
+    fallback_text: str = "",
 ) -> list["Candidate"]:
     _log.info("_save_candidates: received %d raw candidates from provider", len(result.candidates))
     candidates: list[Candidate] = []
@@ -211,8 +212,22 @@ def _save_candidates(
         try:
             validate_candidate_payload(rc.kind, rc.payload, rc.excerpt or "")
         except ValueError as exc:
-            _log.warning("Candidate %d skipped: invalid %s payload — %s", i, rc.kind, exc)
-            continue
+            # For entity candidates with a contextual-only excerpt, fall back to the full
+            # section text before discarding — the gap prompt explicitly finds places
+            # implied by movement events whose excerpt won't contain the place name.
+            if fallback_text and rc.kind == "entity" and "no significant word in excerpt" in str(exc):
+                try:
+                    validate_candidate_payload(rc.kind, rc.payload, fallback_text)
+                    _log.info(
+                        "Candidate %d accepted via section-text fallback (excerpt was contextual): %s",
+                        i, rc.payload.get("name"),
+                    )
+                except ValueError:
+                    _log.warning("Candidate %d skipped: invalid %s payload — %s", i, rc.kind, exc)
+                    continue
+            else:
+                _log.warning("Candidate %d skipped: invalid %s payload — %s", i, rc.kind, exc)
+                continue
         c = Candidate(
             extraction_run_id=run.id,
             section_id=section_id,
@@ -274,17 +289,34 @@ def run_catalog_extraction(
     if section is None:
         raise ExtractionError(f"Section '{section_id}' not found.")
 
-    # Build known_names from prior sections so the LLM marks them is_new: false
-    # instead of re-proposing every entity it already saw in an earlier chapter.
+    # Build known_names — prefer confirmed MapEntities (per-section confirmations),
+    # then fall back to unconfirmed prior-section candidates for backward compat.
+    from app.domain.world import MapEntity as _MapEntity  # local to avoid circular
+
+    seen: set[str] = set()
+    known_names: list[dict] = []
+
+    confirmed = session.query(_MapEntity).filter(
+        _MapEntity.provenance_document_id == section.document_id,
+        _MapEntity.state == "active",
+    ).all()
+    for e in confirmed:
+        name = (e.name or "").strip()
+        if name and name not in seen:
+            seen.add(name)
+            known_names.append({"name": name, "type": e.place_kind or ""})
+        for alias in (e.aliases or []):
+            a = (alias or "").strip()
+            if a and a not in seen:
+                seen.add(a)
+
     prior_sec_ids = [
         s.id for s in session.query(SourceSection).filter(
             SourceSection.document_id == section.document_id,
             SourceSection.ordinal < section.ordinal,
         ).all()
     ]
-    known_names: list[dict] = []
     if prior_sec_ids:
-        seen: set[str] = set()
         for c in session.query(Candidate).filter(
             Candidate.section_id.in_(prior_sec_ids),
             Candidate.kind == "entity",
@@ -405,7 +437,7 @@ def run_catalog_gap_extraction(
         raise ExtractionError(str(exc)) from exc
 
     _finish_run(run, result, GLOBAL_CATALOG_GAP_VERSION)
-    candidates = _save_candidates(session, run, section_id, result)
+    candidates = _save_candidates(session, run, section_id, result, fallback_text=section.content or "")
     session.commit()
     session.refresh(run)
     for c in candidates:
