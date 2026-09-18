@@ -862,8 +862,8 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
   const selectedEntity = selectedId ? entityMap.get(selectedId) ?? null : null
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%', background: '#060C18', overflow: 'hidden' }}>
-      <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block', cursor: 'grab' }} />
+    <div style={{ position: 'relative', width: '100%', flex: 1, minHeight: 0, background: '#060C18', overflow: 'hidden' }}>
+      <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', cursor: 'grab' }} />
 
       {/* Imperative label layer */}
       <div ref={labelsRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }} />
