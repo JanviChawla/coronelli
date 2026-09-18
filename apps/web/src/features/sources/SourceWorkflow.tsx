@@ -833,7 +833,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
 
   const spatialDone = phase === 'inspecting' || phase === 'synthesizing' || phase === 'done' || (phase === 'error' && errorInStep >= 3)
   const PIPELINE_STEPS = [
-    { label: 'Catalog',     detail: catalogConfirmed ? `${approvedCount} approved · ${rejectedCount} rejected` : phase === 'cataloging' ? `${currentIdx} / ${sections.length} sections` : 'Find all named locations' },
+    { label: 'Catalog',     detail: catalogConfirmed ? `${approvedCount} approved · ${rejectedCount} rejected` : phase === 'cataloging' ? `${currentIdx + 1} / ${sections.length} sections` : 'Find all named locations' },
     { label: 'Extract',     detail: spatialDone ? `${totalCandidates} claim${totalCandidates !== 1 ? 's' : ''} found` : catalogConfirmed ? 'Spatial + visual from text' : 'Unlock after catalog' },
     { label: 'Synthesize',  detail: atlasDone && !atlasStale && dedupDone ? `${canonicalClaimCount} relationship${canonicalClaimCount !== 1 ? 's' : ''} · ${canonicalEntityCount} entities` : spatialDone ? 'Dedup · containment · visual' : 'Unlock after extraction' },
   ]
@@ -868,7 +868,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
       )
       if (phase === 'cataloging') return (
         <div style={row}>
-          <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-text)', fontFamily: 'monospace' }}>§{currentIdx} / {sections.length}</span>
+          <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-text)', fontFamily: 'monospace' }}>§{currentIdx + 1} / {sections.length}</span>
           <div style={{ width: '8rem', height: '2px', borderRadius: '1px', background: 'rgba(212,188,138,0.15)', overflow: 'hidden' }}>
             <div style={{ height: '100%', background: 'var(--gold)', width: `${sections.length > 0 ? Math.round((currentIdx / sections.length) * 100) : 0}%`, transition: 'width 1.5s ease' }} />
           </div>
@@ -1192,7 +1192,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
             {totalCost !== null ? ` ${costFmt(catalogCostLo, catalogCostHi)}` : ' (…)'}
           </span>
         </button>
-        {isRunning && <span style={{ ...subTxt, fontFamily: 'monospace' }}>§{currentIdx}/{sections.length}</span>}
+        {isRunning && <span style={{ ...subTxt, fontFamily: 'monospace' }}>§{currentIdx + 1}/{sections.length}</span>}
         {catalogError && <span style={{ ...subTxt, color: 'var(--error-text)' }}>Error · <button style={tinyLink} onClick={() => handleRunCatalog()}>retry</button></span>}
         {(inReview || catalogConfirmed) && !catalogError && (
           <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'nowrap' }}>
@@ -1391,7 +1391,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
             return (
               <>
                 <span style={{ fontSize: '0.62rem', color: 'var(--ink-faint)', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
-                  {label} section {sectionsDone} of {sections.length}
+                  {label} section {phase === 'extracting' ? sectionsDone : sectionsDone + 1} of {sections.length}
                 </span>
                 <div style={{ flex: 1, height: '3px', borderRadius: '2px', background: 'rgba(212,188,138,0.15)', overflow: 'hidden' }}>
                   <div style={{ height: '100%', borderRadius: '2px', background: 'var(--gold)', width: `${pct}%`, transition: 'width 0.4s ease' }} />
