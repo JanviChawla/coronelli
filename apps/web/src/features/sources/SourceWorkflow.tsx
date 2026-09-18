@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useRef, useState } from 'react'
+﻿import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { CandidatesTable } from '../candidates/CandidatesTable'
 import { type Candidate, fetchCandidates, fetchDocumentEntityCandidates, patchCandidateReviewState } from '../candidates/candidateApi'
 import { fetchPreflight, triggerDocumentCatalog, getDocumentCatalogStatus, confirmDocumentCatalog, triggerEvidenceExtraction, getExtractionProgress, fetchPlaceSuggestions, addManualCandidate, triggerDocumentCatalogGap, getDocumentCatalogGapStatus, triggerDedupPass, getDedupStatus, promoteDedup, fetchDedupCandidates, type DedupCandidate } from './extractionApi'
@@ -933,7 +933,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
         <div style={row}>
           <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-text)', fontFamily: 'monospace' }}>§{currentIdx} / {sections.length}</span>
           <div style={{ width: '8rem', height: '2px', borderRadius: '1px', background: 'rgba(212,188,138,0.15)', overflow: 'hidden' }}>
-            <div style={{ height: '100%', background: 'var(--gold)', width: `${sections.length > 0 ? Math.round((currentIdx / sections.length) * 100) : 0}%`, transition: 'width 1.5s ease' }} />
+            <div style={{ height: '100%', background: 'var(--gold)', width: `${sections.length > 0 ? Math.round(((currentIdx - 1) / sections.length) * 100) : 0}%`, transition: 'width 1.5s ease' }} />
           </div>
           <span style={{ fontSize: '0.72rem', color: 'var(--sidebar-muted)', fontFamily: 'monospace' }}>{candidatesSoFar} claims · {(elapsedMs / 1000).toFixed(1)}s</span>
         </div>
@@ -1049,6 +1049,11 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
     return null
   }
 
+  // Stable reference so AtlasExplorer's fetch effect doesn't re-run on every SourceWorkflow render
+  const handleAtlasLoaded = useCallback((count: number) => {
+    setCanonicalEntityCount(count)
+  }, [])
+
   // ── Right panel content ───────────────────────────────────────────────────
 
   function renderStepContent(_step: number) {
@@ -1091,7 +1096,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
         <AtlasExplorer
           documentId={document.id}
           sections={sections.map(s => ({ id: s.id, title: s.title ?? '' }))}
-          onAtlasLoaded={count => setCanonicalEntityCount(count)}
+          onAtlasLoaded={handleAtlasLoaded}
         />
       )
     }
@@ -1407,7 +1412,8 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
           {(() => {
             const sectionsDone = runningGapPass ? gapSectionsDone : currentIdx
             const label = runningGapPass ? 'Gap scan' : phase === 'cataloging' ? 'Cataloging' : 'Extracting'
-            const pct = Math.max(2, (sectionsDone / sections.length) * 100)
+            const barDone = phase === 'extracting' ? sectionsDone - 1 : sectionsDone
+            const pct = Math.max(2, (barDone / sections.length) * 100)
             return (
               <>
                 <span style={{ fontSize: '0.62rem', color: 'var(--ink-faint)', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
