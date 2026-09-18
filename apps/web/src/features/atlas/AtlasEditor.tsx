@@ -772,36 +772,70 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
                 ))}
                 {(() => {
                   const selectedEntity = entityMap.get(selectedIds[0])
-                  if (!selectedEntity || pendingVisualClaims.length === 0) return null
-                  const names = new Set([
-                    selectedEntity.name.toLowerCase(),
-                    ...(selectedEntity.aliases ?? []).map(a => a.toLowerCase()),
-                  ])
-                  const matching = pendingVisualClaims.filter(v => names.has(v.subject.toLowerCase()))
-                  if (matching.length === 0) return null
+                  if (!selectedEntity) return null
+
+                  // Pre-synthesis: show raw extraction candidates
+                  if (pendingVisualClaims.length > 0) {
+                    const names = new Set([
+                      selectedEntity.name.toLowerCase(),
+                      ...(selectedEntity.aliases ?? []).map(a => a.toLowerCase()),
+                    ])
+                    const matching = pendingVisualClaims.filter(v => names.has(v.subject.toLowerCase()))
+                    if (matching.length === 0) return null
+                    return (
+                      <div style={{ marginTop: '0.75rem' }}>
+                        <div style={{ fontSize: '0.58rem', color: 'var(--ink-faint)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: '0.4rem', borderTop: '1px solid rgba(212,188,138,0.15)', paddingTop: '0.55rem' }}>
+                          Visual observations · {matching.length}
+                        </div>
+                        {matching.map(v => (
+                          <div key={v.id} style={{ marginBottom: '0.55rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', marginBottom: '0.15rem' }}>
+                              {v.section_title && (
+                                <span style={{ fontSize: '0.58rem', color: 'var(--gold)', opacity: 0.7, letterSpacing: '0.04em' }}>{v.section_title}</span>
+                              )}
+                              <span style={{ fontSize: '0.55rem', color: 'var(--ink-faint)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>{v.category}</span>
+                            </div>
+                            <p style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', margin: 0, lineHeight: 1.5, borderLeft: '2px solid rgba(139,171,202,0.35)', paddingLeft: '0.6rem' }}>
+                              {v.observation}
+                            </p>
+                            {v.excerpt && v.excerpt !== v.observation && (
+                              <p style={{ fontSize: '0.72rem', color: 'var(--ink-faint)', margin: '0.2rem 0 0 0.6rem', lineHeight: 1.4, fontStyle: 'italic' }}>
+                                "{v.excerpt}"
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  }
+
+                  // Post-synthesis: show promoted MapClaim visual records from entity.claims
+                  const visualClaims = (selectedEntity.claims ?? []).filter(c => c.claim_type === 'visual')
+                  if (visualClaims.length === 0) return null
                   return (
                     <div style={{ marginTop: '0.75rem' }}>
                       <div style={{ fontSize: '0.58rem', color: 'var(--ink-faint)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: '0.4rem', borderTop: '1px solid rgba(212,188,138,0.15)', paddingTop: '0.55rem' }}>
-                        Visual observations · {matching.length}
+                        Visual observations · {visualClaims.length}
                       </div>
-                      {matching.map(v => (
-                        <div key={v.id} style={{ marginBottom: '0.55rem' }}>
-                          <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', marginBottom: '0.15rem' }}>
-                            {v.section_title && (
-                              <span style={{ fontSize: '0.58rem', color: 'var(--gold)', opacity: 0.7, letterSpacing: '0.04em' }}>{v.section_title}</span>
+                      {visualClaims.map(v => {
+                        const category = String(v.payload.category ?? v.payload.visual_property ?? '')
+                        const observation = String(v.payload.observation ?? v.payload.value ?? '')
+                        return (
+                          <div key={v.id} style={{ marginBottom: '0.55rem' }}>
+                            {category && (
+                              <span style={{ fontSize: '0.55rem', color: 'var(--ink-faint)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: '0.15rem' }}>{category}</span>
                             )}
-                            <span style={{ fontSize: '0.55rem', color: 'var(--ink-faint)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>{v.category}</span>
-                          </div>
-                          <p style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', margin: 0, lineHeight: 1.5, borderLeft: '2px solid rgba(139,171,202,0.35)', paddingLeft: '0.6rem' }}>
-                            {v.observation}
-                          </p>
-                          {v.excerpt && v.excerpt !== v.observation && (
-                            <p style={{ fontSize: '0.72rem', color: 'var(--ink-faint)', margin: '0.2rem 0 0 0.6rem', lineHeight: 1.4, fontStyle: 'italic' }}>
-                              "{v.excerpt}"
+                            <p style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', margin: 0, lineHeight: 1.5, borderLeft: '2px solid rgba(139,171,202,0.35)', paddingLeft: '0.6rem' }}>
+                              {observation}
                             </p>
-                          )}
-                        </div>
-                      ))}
+                            {v.excerpt && v.excerpt !== observation && (
+                              <p style={{ fontSize: '0.72rem', color: 'var(--ink-faint)', margin: '0.2rem 0 0 0.6rem', lineHeight: 1.4, fontStyle: 'italic' }}>
+                                "{v.excerpt}"
+                              </p>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   )
                 })()}
