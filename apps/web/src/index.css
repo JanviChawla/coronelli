@@ -43,7 +43,8 @@
 
 /* ── Base ────────────────────────────────────────────────────────────────── */
 
-html, body { height: 100%; }
+html { height: 100%; font-size: 24px; }
+body { height: 100%; }
 
 body {
   font-family: 'NSimSun', 'New Sung', serif;

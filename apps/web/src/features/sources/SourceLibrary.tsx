@@ -40,7 +40,7 @@ export function SourceLibrary() {
 
   async function handleSelectDoc(doc: Document) {
     setSelected(doc)
-    setView('sections-review')
+    setView('workflow')
     setError(null)
     setSections([])
     try {
@@ -154,11 +154,10 @@ export function SourceLibrary() {
   if (selected && view === 'sections-review') {
     return (
       <div style={{ height: '100%', background: 'var(--parchment)', display: 'flex', flexDirection: 'column', alignItems: 'center', overflowY: 'auto', padding: '3.5rem 2rem 4rem' }}>
-        <div style={{ width: '100%', maxWidth: '580px' }}>
-          <button type="button" onClick={() => setSelected(null)}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: '0.72rem', color: 'var(--ink-muted)', marginBottom: '2rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-            ← Library
-          </button>
+        <div style={{ width: '60%', minWidth: '480px' }}>
+          <p style={{ fontSize: '0.72rem', color: 'var(--ink-faint)', marginBottom: '2rem', fontStyle: 'italic' }}>
+            Please confirm the metadata and sections have been appropriately prepared.
+          </p>
 
           {/* Book identity */}
           <div style={{ marginBottom: '1.75rem' }}>

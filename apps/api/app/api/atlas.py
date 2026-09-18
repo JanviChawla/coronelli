@@ -197,6 +197,152 @@ def get_entity_mentions(document_id: str, db: Session = Depends(get_db)) -> list
     return [EntityMentionOut.model_validate(m) for m in mentions]
 
 
+# ── Atlas JSON export (canonical, Phase 4) ────────────────────────────────────
+
+@router.get("/api/documents/{document_id}/atlas.json")
+def export_atlas_json(document_id: str, db: Session = Depends(get_db)) -> JSONResponse:
+    doc = db.get(SourceDocument, document_id)
+
+    entities = (
+        db.query(MapEntity)
+        .filter(MapEntity.provenance_document_id == document_id, MapEntity.state == "active")
+        .order_by(MapEntity.name)
+        .all()
+    )
+    all_claims = (
+        db.query(MapClaim)
+        .filter(MapClaim.provenance_document_id == document_id, MapClaim.state == "active")
+        .all()
+    )
+    travel_rules = (
+        db.query(MapTravelRule)
+        .filter(MapTravelRule.provenance_document_id == document_id, MapTravelRule.state == "active")
+        .all()
+    )
+
+    active_entity_ids = {e.id for e in entities}
+    entity_by_id = {e.id: e for e in entities}
+
+    # located_in: non-manual first, then manual overwrites so manual wins
+    located_in: dict[str, str] = {}
+    for claim in sorted(all_claims, key=lambda c: 1 if c.status == "manual" else 0):
+        if (
+            claim.predicate == "LOCATED_IN"
+            and claim.subject_ref in active_entity_ids
+            and claim.object_refs
+        ):
+            container_id = claim.object_refs[0]
+            if container_id in entity_by_id:
+                located_in[claim.subject_ref] = entity_by_id[container_id].name
+
+    # excerpt map: lowercased canonical name → first excerpt from entity candidates
+    section_ids = {
+        s.id for s in db.query(SourceSection)
+        .filter(SourceSection.document_id == document_id)
+        .all()
+    }
+    entity_candidates = (
+        db.query(Candidate)
+        .filter(
+            Candidate.kind == "entity",
+            Candidate.status != "rejected",
+            Candidate.excerpt != "",
+            Candidate.section_id.in_(section_ids),
+        )
+        .order_by(Candidate.ordinal)
+        .all()
+    )
+    excerpt_by_name: dict[str, str] = {}
+    for cand in entity_candidates:
+        cname = (cand.payload or {}).get("name", "").lower()
+        if cname and cname not in excerpt_by_name and cand.excerpt:
+            excerpt_by_name[cname] = cand.excerpt.strip()
+
+    def _first_excerpt(entity: MapEntity) -> str | None:
+        exc = excerpt_by_name.get(entity.name.lower())
+        if exc:
+            return exc
+        for alias in (entity.aliases or []):
+            exc = excerpt_by_name.get(alias.lower())
+            if exc:
+                return exc
+        return None
+
+    def _id_to_name(eid: str | None) -> str | None:
+        return entity_by_id[eid].name if eid and eid in entity_by_id else None
+
+    world_entities = [
+        {
+            "id": e.id,
+            "name": e.name,
+            "kind": e.place_kind,
+            "tier": (e.payload or {}).get("tier"),
+            "colors": (e.payload or {}).get("colors"),
+            "aliases": list(e.aliases or []),
+            "located_in": located_in.get(e.id),
+            "excerpt": _first_excerpt(e),
+        }
+        for e in entities
+    ]
+
+    spatial_claims = []
+    visual_claims = []
+    for c in all_claims:
+        if not c.subject_ref or not c.predicate:
+            continue
+        object_id = c.object_refs[0] if c.object_refs else None
+        if c.claim_type == "spatial":
+            spatial_claims.append({
+                "id": c.id,
+                "subject": _id_to_name(c.subject_ref) or c.payload.get("subject"),
+                "predicate": c.predicate,
+                "object": _id_to_name(object_id) or c.payload.get("object"),
+                "status": c.status,
+                "excerpt": c.excerpt,
+            })
+        elif c.claim_type == "visual":
+            visual_claims.append({
+                "id": c.id,
+                "subject": _id_to_name(c.subject_ref) or c.payload.get("subject"),
+                "visual_property": c.payload.get("visual_property") or c.payload.get("category", ""),
+                "value": c.payload.get("value") or c.payload.get("observation", ""),
+                "status": c.status,
+            })
+
+    routes = [
+        {
+            "id": r.id,
+            "traveler": r.traveler,
+            "from": r.payload.get("from"),
+            "to": r.payload.get("to"),
+            "via": r.payload.get("via"),
+            "can_traverse": r.can_traverse,
+            "condition": r.condition,
+        }
+        for r in travel_rules
+    ]
+
+    package = {
+        "format": "coronelli-atlas-v1",
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "document": {
+            "id": document_id,
+            "title": doc.title if doc else document_id,
+        },
+        "entities": world_entities,
+        "spatial_claims": spatial_claims,
+        "visual_claims": visual_claims,
+        "routes": routes,
+    }
+
+    raw_slug = re.sub(r'[^a-z0-9]+', '-', (doc.title if doc else document_id).lower()).strip('-')
+    filename = f"atlas-{raw_slug[:40]}.json"
+    return JSONResponse(
+        content=package,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 # ── Atlas Package v0.1 export ──────────────────────────────────────────────────
 
 @router.get("/api/documents/{document_id}/atlas-package")

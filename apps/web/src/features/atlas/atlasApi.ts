@@ -161,3 +161,17 @@ export async function downloadAtlasPackage(documentId: string, documentTitle: st
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
 }
+
+export async function downloadAtlasJson(documentId: string, documentTitle: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/atlas.json`)
+  if (!res.ok) throw new Error('Failed to export atlas')
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `atlas-${documentTitle.replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 40)}.json`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}

@@ -120,6 +120,7 @@ export async function getExtractionProgress(sectionId: string): Promise<Extracti
 export type CatalogGapStatus = {
   document_id: string
   sections_total: number
+  sections_done: number
   status: 'running' | 'completed'
 }
 

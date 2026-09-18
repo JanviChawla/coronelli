@@ -38,6 +38,8 @@ const RELATIONSHIP_PREDICATES = [
 ]
 
 type PendingClaim = { id: string; subject: string; predicate: string; object: string }
+type CatalogCandidate = { id: string; name: string; excerpt: string | null; source: string; isRejected: boolean }
+type DedupProposal = { id: string; subject: string; object: string; rationale: string | null; isRejected: boolean }
 
 interface Props {
   documentId: string
@@ -45,6 +47,17 @@ interface Props {
   readOnly?: boolean
   canExplore?: boolean
   pendingClaims?: PendingClaim[]
+  catalogCandidates?: CatalogCandidate[]
+  onToggleCatalogReject?: (id: string) => void
+  dedupProposals?: DedupProposal[]
+  onToggleDedupReject?: (id: string) => void
+  hideHeader?: boolean
+  onConfirmCatalog?: () => void
+  confirmingCatalog?: boolean
+  onConfirmDedup?: () => void
+  confirmingDedup?: boolean
+  dedupConfirmCount?: number
+  confirmCatalogSlot?: React.ReactNode
 }
 
 // ── Small shared selects ───────────────────────────────────────────────────────
@@ -90,7 +103,7 @@ function PredicateSelect({ value, onChange }: { value: string; onChange: (v: str
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore = true, pendingClaims = [] }: Props) {
+export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore = true, pendingClaims = [], catalogCandidates = [], onToggleCatalogReject, dedupProposals = [], onToggleDedupReject, hideHeader = false, onConfirmCatalog, confirmingCatalog = false, onConfirmDedup, confirmingDedup = false, dedupConfirmCount = 0, confirmCatalogSlot }: Props) {
   const [entities, setEntities] = useState<AtlasEntity[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
@@ -131,9 +144,11 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
   // Excerpts for the selected entity
   const [excerpts, setExcerpts] = useState<EntityExcerpt[]>([])
   const [loadingExcerpts, setLoadingExcerpts] = useState(false)
+  const [catalogTooltip, setCatalogTooltip] = useState<{ id: string; x: number; y: number } | null>(null)
 
-  // Containment filter toggle (LOCATED_IN, CONTAINS, PART_OF)
-  const [showContainment, setShowContainment] = useState(false)
+  // Containment/SAME_AS filter toggles
+  const [showContainment, setShowContainment] = useState(true)
+  const [showSameAs, setShowSameAs] = useState(true)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -217,14 +232,20 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
   const allSpatialClaims = entities.flatMap(e =>
     e.claims.filter(c => c.claim_type === 'spatial')
   )
-  const spatialClaims = allSpatialClaims.filter(c =>
-    showContainment || !HIERARCHY_PREDICATES.has(c.predicate ?? '')
-  )
+  const CONTAINMENT_ONLY = new Set(['LOCATED_IN', 'CONTAINS', 'PART_OF'])
+  const spatialClaims = allSpatialClaims.filter(c => {
+    const pred = c.predicate ?? ''
+    if (!showContainment && CONTAINMENT_ONLY.has(pred)) return false
+    if (!showSameAs && pred === 'SAME_AS') return false
+    return true
+  })
 
   // Pending claims from evidence extraction (shown when no synthesized claims exist yet)
-  const filteredPendingClaims = (pendingClaims ?? []).filter(c =>
-    showContainment || !HIERARCHY_PREDICATES.has(c.predicate)
-  )
+  const filteredPendingClaims = (pendingClaims ?? []).filter(c => {
+    if (!showContainment && CONTAINMENT_ONLY.has(c.predicate)) return false
+    if (!showSameAs && c.predicate === 'SAME_AS') return false
+    return true
+  })
   const showingPending = allSpatialClaims.length === 0 && filteredPendingClaims.length > 0
   const sortedEntities = [...entities].sort((a, b) => a.name.localeCompare(b.name))
 
@@ -382,7 +403,7 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
           {!readOnly && !isSelected && (
             <span style={{ color: 'var(--gold)', fontSize: '0.55rem', flexShrink: 0, opacity: 0.55 }}>⠿</span>
           )}
-          <span style={{ fontSize: '0.86rem', color: 'var(--ink)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: '0.86rem', color: 'var(--ink)', flex: 1 }}>
             {entity.name}
           </span>
           <span style={{
@@ -588,53 +609,35 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--parchment)', fontFamily: 'inherit' }}>
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <div style={{
-        padding: '0.9rem 2rem',
-        borderBottom: '1px solid var(--border-warm)',
-        display: 'flex', alignItems: 'center',
-        flexShrink: 0,
-      }}>
-        {/* Left: title + phase */}
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-          <div>
-            <div style={{ fontSize: '0.52rem', color: 'var(--ink-faint)', letterSpacing: '0.2em', textTransform: 'uppercase', marginBottom: '0.18rem' }}>
-              {readOnly ? 'read-only' : canExplore ? 'atlas ready' : 'step 3 · synthesize'}
-            </div>
+      {!hideHeader && (
+        <div style={{
+          padding: '0.9rem 2rem',
+          borderBottom: '1px solid var(--border-warm)',
+          display: 'flex', alignItems: 'center',
+          flexShrink: 0,
+        }}>
+          {/* Left: title + badge */}
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
             <div style={{ fontSize: '1.05rem', fontWeight: 600, color: 'var(--ink)' }}>Atlas Editor</div>
+            {readOnly && (
+              <span style={{
+                fontSize: '0.52rem', fontWeight: 700, letterSpacing: '0.14em',
+                color: 'rgba(180,120,20,0.9)', background: 'rgba(180,120,20,0.1)',
+                border: '1px solid rgba(180,120,20,0.35)', borderRadius: '3px',
+                padding: '0.18rem 0.45rem', textTransform: 'uppercase', lineHeight: 1,
+              }}>
+                Read only
+              </span>
+            )}
           </div>
-          {readOnly && (
-            <span style={{
-              fontSize: '0.52rem', fontWeight: 700, letterSpacing: '0.14em',
-              color: 'rgba(180,120,20,0.9)', background: 'rgba(180,120,20,0.1)',
-              border: '1px solid rgba(180,120,20,0.35)', borderRadius: '3px',
-              padding: '0.18rem 0.45rem', textTransform: 'uppercase', lineHeight: 1,
-              alignSelf: 'center', marginTop: '0.2rem',
-            }}>
-              Read only
+          {/* Right: summary */}
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--ink-faint)', fontFamily: 'monospace' }}>
+              {entities.length} {entities.length === 1 ? 'place' : 'places'} | {spatialClaims.length} {spatialClaims.length === 1 ? 'relationship' : 'relationships'}
             </span>
-          )}
+          </div>
         </div>
-        {/* Center: summary */}
-        <div style={{ flex: 1, textAlign: 'center' }}>
-          <span style={{ fontSize: '0.75rem', color: 'var(--ink-faint)' }}>
-            {entities.length} {entities.length === 1 ? 'place' : 'places'} · {spatialClaims.length} {spatialClaims.length === 1 ? 'relationship' : 'relationships'}
-          </span>
-        </div>
-        {/* Right: action */}
-        <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>
-          {!readOnly && (
-            <button
-              className="btn-cta"
-              type="button"
-              onClick={canExplore ? onDone : undefined}
-              disabled={!canExplore}
-              style={{ opacity: canExplore ? 1 : 0.35, cursor: canExplore ? 'pointer' : 'not-allowed' }}
-            >
-              Continue to Atlas Explorer →
-            </button>
-          )}
-        </div>
-      </div>
+      )}
 
       {/* ── Two-panel body ───────────────────────────────────────────────────── */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
@@ -680,8 +683,45 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
 
           {/* Tree */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '0.35rem 0.5rem 1rem' }}>
+            {/* Catalog candidates (shown during catalog review, reject by clicking) */}
+            {catalogCandidates.map(c => (
+              <div
+                key={c.id}
+                onMouseEnter={e => {
+                  if (!c.excerpt) return
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  setCatalogTooltip({ id: c.id, x: rect.right + 10, y: rect.top })
+                }}
+                onMouseLeave={() => setCatalogTooltip(null)}
+                onClick={() => onToggleCatalogReject?.(c.id)}
+                style={{
+                  paddingLeft: '0.5rem', paddingTop: '0.3rem', paddingBottom: '0.3rem', paddingRight: '0.5rem',
+                  display: 'flex', alignItems: 'center', gap: '0.45rem',
+                  borderRadius: '4px', cursor: 'pointer',
+                  opacity: c.isRejected ? 0.4 : 1,
+                  border: '1px solid transparent',
+                  userSelect: 'none',
+                }}
+              >
+                <span style={{
+                  width: '0.75rem', height: '0.75rem', borderRadius: '50%', flexShrink: 0,
+                  border: c.isRejected ? '1px solid rgba(180,60,60,0.5)' : '1px solid var(--gold)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '0.38rem', color: c.isRejected ? 'rgba(180,60,60,0.7)' : 'var(--gold)',
+                }}>
+                  {c.isRejected ? '✕' : '◉'}
+                </span>
+                <span style={{ fontSize: '0.86rem', color: c.isRejected ? 'var(--ink-faint)' : 'var(--ink)', flex: 1, textDecoration: c.isRejected ? 'line-through' : 'none' }}>
+                  {c.name}
+                </span>
+                {c.source === 'gap' && (
+                  <span style={{ fontSize: '0.52rem', color: 'var(--ink-faint)', flexShrink: 0, letterSpacing: '0.08em', opacity: 0.7 }}>gap</span>
+                )}
+              </div>
+            ))}
+            {/* Real entity tree */}
             {rootIds.map(id => renderNode(id, 0))}
-            {entities.length === 0 && (
+            {entities.length === 0 && catalogCandidates.length === 0 && (
               <p style={{ padding: '1rem 0.75rem', fontSize: '0.82rem', color: 'var(--ink-faint)' }}>
                 No entities in atlas yet.
               </p>
@@ -783,6 +823,32 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
               )}
             </div>
           </div>}
+
+          {/* Confirm catalog sticky bar */}
+          {catalogCandidates.length > 0 && onConfirmCatalog && (
+            <div style={{
+              flexShrink: 0, borderTop: '1px solid rgba(212,188,138,0.3)',
+              padding: '0.55rem 1.25rem',
+              background: 'rgba(212,188,138,0.06)',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem',
+            }}>
+              <div style={{ flex: 1 }}>{confirmCatalogSlot}</div>
+              <button
+                type="button"
+                onClick={onConfirmCatalog}
+                disabled={confirmingCatalog}
+                style={{
+                  fontSize: '0.78rem', padding: '0.32rem 0.9rem',
+                  background: 'var(--gold)', border: 'none', borderRadius: '4px',
+                  cursor: confirmingCatalog ? 'wait' : 'pointer',
+                  color: '#1a1008', fontWeight: 600,
+                  opacity: confirmingCatalog ? 0.6 : 1, flexShrink: 0,
+                }}
+              >
+                {confirmingCatalog ? 'Confirming…' : 'Confirm catalog →'}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* ── Right: Relationships + Merge ────────────────────────────────── */}
@@ -807,19 +873,34 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-                <select
-                  value={showContainment ? 'show' : 'hide'}
-                  onChange={e => setShowContainment(e.target.value === 'show')}
+                <button
+                  type="button"
+                  onClick={() => setShowContainment(v => !v)}
                   style={{
-                    fontSize: '0.62rem', padding: '0.2rem 0.5rem',
+                    fontSize: '0.62rem', padding: '0.18rem 0.5rem',
                     border: '1px solid var(--border-warm)',
                     borderRadius: '4px', cursor: 'pointer',
-                    background: 'var(--parchment-alt)', color: 'var(--ink-faint)',
+                    background: showContainment ? 'rgba(212,188,138,0.18)' : 'var(--parchment-alt)',
+                    color: showContainment ? 'var(--ink-muted)' : 'var(--ink-faint)',
+                    fontWeight: showContainment ? 500 : 400,
                   }}
                 >
-                  <option value="hide">hide containment</option>
-                  <option value="show">show containment</option>
-                </select>
+                  {showContainment ? '✓' : '○'} Containment
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowSameAs(v => !v)}
+                  style={{
+                    fontSize: '0.62rem', padding: '0.18rem 0.5rem',
+                    border: '1px solid var(--border-warm)',
+                    borderRadius: '4px', cursor: 'pointer',
+                    background: showSameAs ? 'rgba(212,188,138,0.18)' : 'var(--parchment-alt)',
+                    color: showSameAs ? 'var(--ink-muted)' : 'var(--ink-faint)',
+                    fontWeight: showSameAs ? 500 : 400,
+                  }}
+                >
+                  {showSameAs ? '✓' : '○'} Same As
+                </button>
                 {!readOnly && !addingRel && (
                   <button
                     type="button"
@@ -837,6 +918,48 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
             </div>
 
             <div style={{ flex: 1, overflowY: 'auto', padding: '0.4rem 1.5rem 1rem' }}>
+              {/* Dedup merge proposals */}
+              {dedupProposals.length > 0 && (
+                <div style={{ marginBottom: '0.85rem' }}>
+                  <div style={{ fontSize: '0.58rem', color: 'var(--ink-faint)', letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: '0.4rem' }}>
+                    Merge proposals — click to reject
+                  </div>
+                  {dedupProposals.map(p => (
+                    <div
+                      key={p.id}
+                      onClick={() => onToggleDedupReject?.(p.id)}
+                      style={{
+                        display: 'flex', flexDirection: 'column',
+                        padding: '0.35rem 0.6rem', marginBottom: '0.18rem',
+                        borderRadius: '4px', fontSize: '0.82rem',
+                        border: '1px solid rgba(212,188,138,0.2)',
+                        opacity: p.isRejected ? 0.4 : 1,
+                        cursor: 'pointer',
+                        background: p.isRejected ? 'transparent' : 'rgba(212,188,138,0.04)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span style={{
+                          width: '0.75rem', height: '0.75rem', borderRadius: '50%', flexShrink: 0,
+                          border: p.isRejected ? '1px solid rgba(180,60,60,0.5)' : '1px solid var(--gold)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: '0.38rem', color: p.isRejected ? 'rgba(180,60,60,0.7)' : 'var(--gold)',
+                        }}>
+                          {p.isRejected ? '✕' : '='}
+                        </span>
+                        <span style={{ color: 'var(--ink)', fontWeight: 500, textDecoration: p.isRejected ? 'line-through' : 'none' }}>{p.subject}</span>
+                        <span style={{ color: 'var(--ink-faint)', fontSize: '0.75rem' }}>=</span>
+                        <span style={{ color: 'var(--ink)', fontWeight: 500, textDecoration: p.isRejected ? 'line-through' : 'none' }}>{p.object}</span>
+                      </div>
+                      {p.rationale && !p.isRejected && (
+                        <div style={{ fontSize: '0.68rem', color: 'var(--ink-faint)', marginTop: '0.15rem', marginLeft: '1.2rem', lineHeight: 1.3 }}>
+                          {p.rationale}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
               {/* Add relationship form */}
               {!readOnly && addingRel && (
                 <div style={{
@@ -897,7 +1020,7 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
                     >
                       {isEditing ? (
                         <>
-                          <span style={{ color: 'var(--ink)', maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }} title={subjName}>{subjName}</span>
+                          <span style={{ color: 'var(--ink)', flexShrink: 0 }}>{subjName}</span>
                           <PredicateSelect value={editPred} onChange={setEditPred} />
                           <EntitySelect entities={sortedEntities} value={editObjId} onChange={setEditObjId} placeholder="Object…" />
                           <button type="button" onClick={() => handleSaveEdit(claim.id)} disabled={isSaving} style={{ fontSize: '0.72rem', padding: '0.22rem 0.55rem', background: 'var(--gold)', border: 'none', borderRadius: '3px', cursor: 'pointer', color: '#1a1008' }}>Save</button>
@@ -905,12 +1028,12 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
                         </>
                       ) : (
                         <>
-                          <span style={{ color: 'var(--ink)', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }} title={subjName}>{subjName}</span>
+                          <span style={{ color: 'var(--ink)', flexShrink: 0 }}>{subjName}</span>
                           <span style={{ color: 'var(--ink-faint)', fontSize: '0.68rem', letterSpacing: '0.05em', flexShrink: 0, fontVariant: 'small-caps' }}>{claim.predicate ?? '?'}</span>
                           <span style={{
                             color: objId ? 'var(--ink)' : 'var(--ink-faint)',
-                            maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0, fontStyle: objId ? 'normal' : 'italic',
-                          }} title={objName}>{objName}</span>
+                            flexShrink: 0, fontStyle: objId ? 'normal' : 'italic',
+                          }}>{objName}</span>
                           {!readOnly && <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.22rem', flexShrink: 0 }}>
                             <button
                               type="button"
@@ -947,9 +1070,9 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
                     opacity: 0.65,
                   }}
                 >
-                  <span style={{ color: 'var(--ink)', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }} title={c.subject}>{c.subject}</span>
+                  <span style={{ color: 'var(--ink)', flexShrink: 0 }}>{c.subject}</span>
                   <span style={{ color: 'var(--ink-faint)', fontSize: '0.68rem', letterSpacing: '0.05em', flexShrink: 0 }}>{c.predicate}</span>
-                  <span style={{ color: 'var(--ink)', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }} title={c.object}>{c.object}</span>
+                  <span style={{ color: 'var(--ink)', flexShrink: 0 }}>{c.object}</span>
                   <span style={{ marginLeft: 'auto', fontSize: '0.6rem', color: 'var(--ink-faint)', flexShrink: 0 }}>pending</span>
                 </div>
               ))}
@@ -960,10 +1083,66 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
                 </p>
               )}
             </div>
+
+            {/* Confirm merges sticky bar */}
+            {dedupProposals.length > 0 && onConfirmDedup && (
+              <div style={{
+                flexShrink: 0, borderTop: '1px solid rgba(212,188,138,0.3)',
+                padding: '0.55rem 1.5rem',
+                background: 'rgba(212,188,138,0.06)',
+                display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+              }}>
+                <button
+                  type="button"
+                  onClick={onConfirmDedup}
+                  disabled={confirmingDedup}
+                  style={{
+                    fontSize: '0.78rem', padding: '0.32rem 0.9rem',
+                    background: 'var(--gold)', border: 'none', borderRadius: '4px',
+                    cursor: confirmingDedup ? 'wait' : 'pointer',
+                    color: '#1a1008', fontWeight: 600,
+                    opacity: confirmingDedup ? 0.6 : 1,
+                  }}
+                >
+                  {confirmingDedup ? 'Confirming…' : `Confirm ${dedupConfirmCount} merge${dedupConfirmCount !== 1 ? 's' : ''} →`}
+                </button>
+              </div>
+            )}
           </div>
 
         </div>
       </div>
+
+      {/* Catalog candidate excerpt tooltip — fixed, no layout shift */}
+      {catalogTooltip && (() => {
+        const c = catalogCandidates.find(x => x.id === catalogTooltip.id)
+        if (!c?.excerpt) return null
+        return (
+          <div style={{
+            position: 'fixed',
+            left: catalogTooltip.x,
+            top: catalogTooltip.y,
+            zIndex: 1000,
+            background: 'var(--parchment-card)',
+            border: '1px solid var(--border-warm)',
+            borderRadius: '5px',
+            padding: '0.65rem 0.9rem',
+            maxWidth: '340px',
+            minWidth: '180px',
+            fontSize: '0.78rem',
+            color: 'var(--ink)',
+            lineHeight: 1.6,
+            boxShadow: '0 4px 18px rgba(0,0,0,0.22)',
+            pointerEvents: 'none',
+          }}>
+            <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--ink-faint)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '0.35rem' }}>
+              {c.name}
+            </div>
+            <span style={{ fontStyle: 'italic', color: 'var(--ink-muted)' }}>"{c.excerpt}"</span>
+          </div>
+        )
+      })()}
+
     </div>
   )
 }

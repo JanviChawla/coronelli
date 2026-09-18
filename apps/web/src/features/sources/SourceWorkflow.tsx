@@ -76,9 +76,9 @@ function buildGapPass(
   return { label: `Gap pass ${passNumber}`, candidates, sectionIds }
 }
 
-// ── StepRow (module-level) ────────────────────────────────────────────────────
+// ── FooterStepPill (horizontal footer variant) ─────────────────────────────────
 
-function StepRow({ n: _n, label, detail, status, active, onClick }: {
+function FooterStepPill({ n: _n, label, detail, status, active, onClick }: {
   n: number; label: string; detail?: string; status: StepStatus
   active: boolean; onClick: () => void
 }) {
@@ -89,19 +89,21 @@ function StepRow({ n: _n, label, detail, status, active, onClick }: {
       onClick={isLocked ? undefined : onClick}
       disabled={isLocked}
       style={{
-        width: '100%', textAlign: 'left',
-        background: active ? 'rgba(212,188,138,0.14)' : 'none',
-        border: active ? '1px solid rgba(212,188,138,0.22)' : '1px solid transparent',
-        borderRadius: '6px', padding: '0.6rem 0.65rem',
-        cursor: isLocked ? 'default' : 'pointer', opacity: isLocked ? 0.28 : 1,
-        transition: 'background 0.12s, border-color 0.12s',
-        display: 'flex', alignItems: 'flex-start', gap: '0.55rem',
+        flex: 1, display: 'flex', alignItems: 'center', gap: '0.6rem',
+        padding: '0 1.25rem', height: '100%',
+        background: active ? 'rgba(212,188,138,0.10)' : 'transparent',
+        border: 'none',
+        borderLeft: '1px solid var(--sidebar-border)',
+        borderBottom: active ? '2px solid var(--gold)' : '2px solid transparent',
+        cursor: isLocked ? 'default' : 'pointer', opacity: isLocked ? 0.32 : 1,
+        transition: 'background 0.12s',
+        textAlign: 'left',
       }}
     >
       <span style={{
-        width: '1.45rem', height: '1.45rem', borderRadius: '50%', flexShrink: 0,
+        width: '1.25rem', height: '1.25rem', borderRadius: '50%', flexShrink: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: status === 'done' ? '0.72rem' : '0.52rem', fontWeight: 700, lineHeight: 1, marginTop: '0.05rem',
+        fontSize: status === 'done' ? '0.65rem' : '0.48rem', fontWeight: 700, lineHeight: 1,
         ...(status === 'done'
           ? { background: 'radial-gradient(circle at 40% 35%, #7a3528, #3d1208)', color: 'rgba(240,215,190,0.92)' }
           : status === 'running'
@@ -110,18 +112,18 @@ function StepRow({ n: _n, label, detail, status, active, onClick }: {
               ? { border: '1.5px solid var(--gold)', color: 'var(--gold)' }
               : { background: 'rgba(212,188,138,0.06)', border: '1.5px solid rgba(212,188,138,0.14)' }),
       }} className={status === 'running' ? 'step-processing' : ''}>
-        {status === 'done' ? '✓' : status === 'running' ? '✦' : status === 'active' ? '✦' : ''}
+        {status === 'done' ? '✓' : status === 'running' || status === 'active' ? '✦' : ''}
       </span>
-      <div style={{ minWidth: 0, flex: 1 }}>
+      <div style={{ minWidth: 0 }}>
         <div style={{
           fontSize: '0.8rem',
           color: active ? 'var(--gold)' : status === 'locked' ? 'var(--sidebar-muted)' : 'var(--sidebar-text)',
-          fontWeight: active ? 600 : 400, lineHeight: 1.3,
+          fontWeight: active ? 600 : 400, lineHeight: 1.2, whiteSpace: 'nowrap',
         }}>
           {label}
         </div>
         {detail && (
-          <div style={{ fontSize: '0.62rem', color: 'var(--sidebar-muted)', marginTop: '0.18rem', lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <div style={{ fontSize: '0.6rem', color: 'var(--sidebar-muted)', lineHeight: 1.2, whiteSpace: 'nowrap' }}>
             {detail}
           </div>
         )}
@@ -156,6 +158,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
   const [totalCost, setTotalCost] = useState<number | null>(null)
   const [cachedCount, setCachedCount] = useState(0)
   const [currentIdx, setCurrentIdx] = useState(0)
+  const [gapSectionsDone, setGapSectionsDone] = useState(0)
   const [currentTitle, setCurrentTitle] = useState<string | null>(null)
   const [elapsedMs, setElapsedMs] = useState(0)
   const [candidatesSoFar, setCandidatesSoFar] = useState(0)
@@ -305,7 +308,10 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
             bySection[s.id] = await fetchCandidates(s.id)
             total += bySection[s.id].length
           }))
-          if (total > 0) {
+          const evidenceTotal = Object.values(bySection).reduce(
+            (sum, cands) => sum + cands.filter(c => c.kind !== 'entity').length, 0
+          )
+          if (evidenceTotal > 0) {
             setCanonicalEntityCount(atlas.entity_count)
             setCanonicalClaimCount(atlas.claim_count)
             setAllCandidates(bySection)
@@ -620,13 +626,20 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
   async function handleGapPass() {
     if (runningGapPass) return
     setRunningGapPass(true)
+    setElapsedMs(0)
+    setGapSectionsDone(0)
+    const gapStart = Date.now()
+    if (timerRef.current) clearInterval(timerRef.current)
+    timerRef.current = setInterval(() => setElapsedMs(Date.now() - gapStart), 100)
     try {
       await triggerDocumentCatalogGap(document.id)
       gapPollRef.current = setInterval(async () => {
         try {
           const status = await getDocumentCatalogGapStatus(document.id)
+          setGapSectionsDone(prev => Math.max(prev, status.sections_done ?? 0))
           if (status.status === 'completed') {
             if (gapPollRef.current) clearInterval(gapPollRef.current)
+            if (timerRef.current) clearInterval(timerRef.current)
             gapPollRef.current = null
             setRunningGapPass(false)
             const allEntities = await fetchDocumentEntityCandidates(document.id)
@@ -643,6 +656,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
         } catch { /* keep polling */ }
       }, 2000)
     } catch {
+      if (timerRef.current) clearInterval(timerRef.current)
       setRunningGapPass(false)
     }
   }
@@ -822,80 +836,51 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
     { label: 'Synthesize',  detail: atlasDone && !atlasStale && dedupDone ? `${canonicalClaimCount} relationship${canonicalClaimCount !== 1 ? 's' : ''} · ${canonicalEntityCount} entities` : spatialDone ? 'Dedup · containment · visual' : 'Unlock after extraction' },
   ]
 
-  // ── Left panel step detail ─────────────────────────────────────────────────
+  // ── Footer tray content ───────────────────────────────────────────────────
 
-  function renderLeftDetail(step: number): React.ReactNode {
-    const ds: React.CSSProperties = {
-      padding: '0.6rem 0.75rem',
-      display: 'flex', flexDirection: 'column', gap: '0.4rem',
-    }
+  function renderTrayContent(): React.ReactNode {
+    const row: React.CSSProperties = { display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }
 
-    if (step === 1) {
+    if (activeStep === 1) {
       if (catalogError) return (
-        <div style={ds}>
-          <p style={{ fontSize: '0.72rem', color: 'var(--error-text)', lineHeight: 1.4 }}>{workflowError}</p>
-          <button className="btn-cta" type="button" onClick={() => handleRunCatalog()} style={{ fontSize: '0.75rem' }}>Retry</button>
+        <div style={row}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--error-text)' }}>{workflowError}</span>
+          <button className="btn-cta" type="button" onClick={() => handleRunCatalog()} style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>Retry</button>
         </div>
       )
       if (phase === 'preflight') return (
-        <div style={ds}>
-          <p style={{ fontSize: '0.7rem', color: 'var(--sidebar-muted)' }}>Estimating cost…</p>
-        </div>
+        <div style={row}><span style={{ fontSize: '0.78rem', color: 'var(--sidebar-muted)' }}>Estimating cost…</span></div>
       )
       if (phase === 'ready') return (
-        <div style={ds}>
-          <div style={{ fontSize: '0.65rem', color: 'var(--sidebar-muted)', display: 'flex', justifyContent: 'space-between' }}>
-            <span>Est. cost</span>
-            <span style={{ color: 'var(--sidebar-text)', fontFamily: 'monospace' }}>
+        <div style={row}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-muted)' }}>
+            Est. <span style={{ fontFamily: 'monospace', color: 'var(--sidebar-text)' }}>
               {totalCost !== null ? `$${catalogCostLo.toFixed(2)}–$${catalogCostHi.toFixed(2)}` : '…'}
             </span>
-          </div>
-          <div style={{ fontSize: '0.62rem', color: 'var(--sidebar-muted)', fontFamily: 'monospace' }}>
-            {sections.length} section{sections.length !== 1 ? 's' : ''} · 1 pass
-            {cachedCount > 0 ? ` · ${cachedCount} cached` : ''}
-          </div>
-          <button className="btn-cta" type="button" onClick={() => handleRunCatalog()} style={{ fontSize: '0.75rem', marginTop: '0.15rem' }}>Find places</button>
+          </span>
+          <span style={{ fontSize: '0.72rem', color: 'var(--sidebar-muted)', fontFamily: 'monospace' }}>
+            {sections.length} section{sections.length !== 1 ? 's' : ''}{cachedCount > 0 ? ` · ${cachedCount} cached` : ''}
+          </span>
+          <button className="btn-cta" type="button" onClick={() => handleRunCatalog()} style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>Find places</button>
         </div>
       )
       if (phase === 'cataloging') return (
-        <div style={ds}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--sidebar-text)', fontFamily: 'monospace' }}>
-            <span>§{currentIdx} / {sections.length}</span>
-            <span style={{ color: 'var(--sidebar-muted)' }}>{(elapsedMs / 1000).toFixed(1)}s</span>
-          </div>
-          <div style={{ height: '2px', borderRadius: '1px', background: 'rgba(212,188,138,0.15)', overflow: 'hidden' }}>
+        <div style={row}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-text)', fontFamily: 'monospace' }}>§{currentIdx} / {sections.length}</span>
+          <div style={{ width: '8rem', height: '2px', borderRadius: '1px', background: 'rgba(212,188,138,0.15)', overflow: 'hidden' }}>
             <div style={{ height: '100%', background: 'var(--gold)', width: `${sections.length > 0 ? Math.round((currentIdx / sections.length) * 100) : 0}%`, transition: 'width 1.5s ease' }} />
           </div>
+          <span style={{ fontSize: '0.72rem', color: 'var(--sidebar-muted)', fontFamily: 'monospace' }}>{(elapsedMs / 1000).toFixed(1)}s</span>
         </div>
       )
       if (phase === 'catalog-review') return (
-        <div style={{ ...ds, flex: 1, overflow: 'hidden', minHeight: 0 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.65rem', color: 'var(--sidebar-muted)', flexShrink: 0 }}>
-            <span>{approvedCount} approved · {rejectedCount} rejected</span>
-            <button type="button" onClick={handleGapPass} disabled={runningGapPass}
-              style={{ background: 'none', border: 'none', cursor: runningGapPass ? 'default' : 'pointer', fontSize: '0.62rem', color: 'var(--gold)', opacity: runningGapPass ? 0.5 : 1, padding: 0 }}>
-              {runningGapPass ? 'Scanning…' : '+ More'}
-            </button>
-          </div>
-          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1px' }}>
-            {uniqueEntityCandidates.map(c => {
-              const p = c.payload as Record<string, unknown>
-              const name = String(p.name ?? '')
-              const isRejected = rejectedCandidateIds.has(c.id)
-              return (
-                <button key={c.id} type="button" onClick={() => toggleReject(c.id)}
-                  onMouseEnter={e => { setTooltipY(e.currentTarget.getBoundingClientRect().top); setHoveredCandidateId(c.id) }}
-                  onMouseLeave={() => setHoveredCandidateId(null)}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', padding: '0.2rem 0.25rem', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', opacity: isRejected ? 0.4 : 1, borderRadius: '2px', width: '100%' }}>
-                  <span style={{ width: '0.75rem', height: '0.75rem', borderRadius: '50%', flexShrink: 0, border: isRejected ? '1px solid rgba(180,60,60,0.5)' : '1px solid var(--gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.38rem', color: isRejected ? 'rgba(180,60,60,0.7)' : 'var(--gold)' }}>
-                    {isRejected ? '✕' : '◉'}
-                  </span>
-                  <span style={{ fontSize: '0.78rem', color: isRejected ? 'var(--sidebar-muted)' : 'var(--sidebar-text)', textDecoration: isRejected ? 'line-through' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{name}</span>
-                </button>
-              )
-            })}
-          </div>
-          <div ref={addPlaceRef} style={{ position: 'relative', flexShrink: 0 }}>
+        <div style={row}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-muted)' }}>{approvedCount} approved · {rejectedCount} rejected</span>
+          <button type="button" onClick={handleGapPass} disabled={runningGapPass}
+            style={{ background: 'none', border: '1px solid var(--sidebar-border)', borderRadius: '3px', cursor: runningGapPass ? 'default' : 'pointer', fontSize: '0.72rem', color: 'var(--gold)', opacity: runningGapPass ? 0.5 : 1, padding: '0.25rem 0.6rem' }}>
+            {runningGapPass ? 'Scanning…' : '+ Gap pass'}
+          </button>
+          <div ref={addPlaceRef} style={{ position: 'relative' }}>
             <input type="text" placeholder="Add place…" value={addPlaceInput} disabled={addingPlace}
               onChange={e => {
                 const val = e.target.value; setAddPlaceInput(val); setShowAddSuggestions(true)
@@ -913,7 +898,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
                 if (e.key === 'Enter' && addPlaceInput.trim()) handleAddManualPlace(addPlaceInput.trim())
                 if (e.key === 'Escape') { setShowAddSuggestions(false); setAddPlaceInput('') }
               }}
-              style={{ width: '100%', boxSizing: 'border-box' as const, padding: '0.28rem 0.5rem', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--sidebar-border)', borderRadius: '3px', color: 'var(--sidebar-text)', fontSize: '0.75rem', outline: 'none' }}
+              style={{ padding: '0.28rem 0.6rem', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--sidebar-border)', borderRadius: '3px', color: 'var(--sidebar-text)', fontSize: '0.78rem', outline: 'none', width: '160px' }}
             />
             {showAddSuggestions && filteredSuggestions.length > 0 && (
               <div style={{ position: 'absolute', bottom: '100%', left: 0, right: 0, zIndex: 10, background: 'var(--parchment-card)', border: '1px solid var(--border-warm)', borderRadius: '4px 4px 0 0', boxShadow: '0 -4px 12px rgba(0,0,0,0.12)', maxHeight: '6rem', overflowY: 'auto' }}>
@@ -926,195 +911,135 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
               </div>
             )}
           </div>
-          <button className="btn-cta" type="button" onClick={handleConfirmCatalog} disabled={confirmingCatalog} style={{ fontSize: '0.75rem', flexShrink: 0 }}>
+          <button className="btn-cta" type="button" onClick={handleConfirmCatalog} disabled={confirmingCatalog} style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>
             {confirmingCatalog ? 'Confirming…' : 'Confirm catalog →'}
           </button>
-          {workflowError && phase === 'catalog-review' && (
-            <p style={{ fontSize: '0.65rem', color: 'var(--error-text)', flexShrink: 0 }}>{workflowError}</p>
-          )}
+          {workflowError && <span style={{ fontSize: '0.72rem', color: 'var(--error-text)' }}>{workflowError}</span>}
         </div>
       )
       if (catalogConfirmed) return (
-        <div style={ds}>
-          <div style={{ fontSize: '0.65rem', color: 'var(--sidebar-muted)', display: 'flex', justifyContent: 'space-between' }}>
-            <span>{approvedCount} approved · {rejectedCount} rejected</span>
-          </div>
-          <div style={{ fontSize: '0.65rem', color: 'var(--sidebar-muted)', display: 'flex', justifyContent: 'space-between' }}>
-            <span>Re-catalog cost</span>
-            <span style={{ color: 'var(--sidebar-text)', fontFamily: 'monospace' }}>${catalogCostLo.toFixed(2)}–${catalogCostHi.toFixed(2)}</span>
-          </div>
-          <button className="btn-rerun" type="button" onClick={() => handleRunCatalog(true)} style={{ fontSize: '0.65rem', padding: '0.2rem 0.5rem' }}>Re-catalog</button>
+        <div style={row}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-muted)' }}>{approvedCount} approved</span>
+          <button className="btn-rerun" type="button" onClick={() => handleRunCatalog(true)} style={{ fontSize: '0.72rem' }}>Re-catalog</button>
         </div>
       )
       return null
     }
 
-    if (step === 2) {
-      if (phase === 'extracting') {
-        return (
-          <div style={ds}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--sidebar-text)', fontFamily: 'monospace' }}>
-              <span>§{currentIdx} / {sections.length}</span>
-              <span style={{ color: 'var(--sidebar-muted)' }}>{(elapsedMs / 1000).toFixed(1)}s</span>
-            </div>
-            <div style={{ height: '2px', borderRadius: '1px', background: 'rgba(212,188,138,0.15)', overflow: 'hidden' }}>
-              <div style={{ height: '100%', background: 'var(--gold)', width: `${sections.length > 0 ? Math.round((currentIdx / sections.length) * 100) : 0}%`, transition: 'width 1.5s ease' }} />
-            </div>
-            <div style={{ fontSize: '0.65rem', color: 'var(--sidebar-muted)', fontFamily: 'monospace' }}>{candidatesSoFar} claim{candidatesSoFar !== 1 ? 's' : ''} found</div>
+    if (activeStep === 2) {
+      if (phase === 'extracting') return (
+        <div style={row}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-text)', fontFamily: 'monospace' }}>§{currentIdx} / {sections.length}</span>
+          <div style={{ width: '8rem', height: '2px', borderRadius: '1px', background: 'rgba(212,188,138,0.15)', overflow: 'hidden' }}>
+            <div style={{ height: '100%', background: 'var(--gold)', width: `${sections.length > 0 ? Math.round((currentIdx / sections.length) * 100) : 0}%`, transition: 'width 1.5s ease' }} />
           </div>
-        )
-      }
-      if (spatialError) return (
-        <div style={ds}>
-          <p style={{ fontSize: '0.72rem', color: 'var(--error-text)', lineHeight: 1.4 }}>{workflowError}</p>
-          <button className="btn-cta" type="button" onClick={handleStartEvidence} style={{ fontSize: '0.75rem' }}>Retry</button>
+          <span style={{ fontSize: '0.72rem', color: 'var(--sidebar-muted)', fontFamily: 'monospace' }}>{candidatesSoFar} claims · {(elapsedMs / 1000).toFixed(1)}s</span>
         </div>
       )
-      if (phase === 'inspecting' || phase === 'synthesizing' || phase === 'done') {
-        const claimCandidateCount = Object.values(allCandidates).flat().filter(c => c.kind !== 'entity').length
-        return (
-          <div style={ds}>
-            <div style={{ fontSize: '0.65rem', color: 'var(--sidebar-muted)' }}>{claimCandidateCount} claim{claimCandidateCount !== 1 ? 's' : ''} found · added to atlas in step 5</div>
-            <button className="btn-rerun" type="button" onClick={handleStartEvidence} style={{ fontSize: '0.65rem', padding: '0.2rem 0.5rem' }}>Re-run</button>
-          </div>
-        )
-      }
+      if (spatialError) return (
+        <div style={row}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--error-text)' }}>{workflowError}</span>
+          <button className="btn-cta" type="button" onClick={handleStartEvidence} style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>Retry</button>
+        </div>
+      )
+      if (spatialDone) return (
+        <div style={row}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-muted)' }}>{Object.values(allCandidates).flat().filter(c => c.kind !== 'entity').length} claims found</span>
+          <button className="btn-rerun" type="button" onClick={handleStartEvidence} style={{ fontSize: '0.72rem' }}>Re-run</button>
+        </div>
+      )
       if (evidenceStale) return (
-        <div style={ds}>
-          <p style={{ fontSize: '0.65rem', color: 'rgba(180,120,20,0.85)', lineHeight: 1.4 }}>Catalog changed — re-run.</p>
-          <button className="btn-cta" type="button" onClick={handleStartEvidence} style={{ fontSize: '0.75rem' }}>Re-run spatial claims</button>
+        <div style={row}>
+          <span style={{ fontSize: '0.78rem', color: 'rgba(180,120,20,0.85)' }}>Catalog changed — re-run.</span>
+          <button className="btn-cta" type="button" onClick={handleStartEvidence} style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>Re-run extraction</button>
         </div>
       )
       if (catalogConfirmed) return (
-        <div style={ds}>
-          <div style={{ fontSize: '0.65rem', color: 'var(--sidebar-muted)', display: 'flex', justifyContent: 'space-between' }}>
-            <span>Est. cost</span>
-            <span style={{ color: 'var(--sidebar-text)', fontFamily: 'monospace' }}>
+        <div style={row}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-muted)' }}>
+            Est. <span style={{ fontFamily: 'monospace', color: 'var(--sidebar-text)' }}>
               {totalCost !== null ? `$${evidenceCostLo.toFixed(2)}–$${evidenceCostHi.toFixed(2)}` : '…'}
             </span>
-          </div>
-          <div style={{ fontSize: '0.62rem', color: 'var(--sidebar-muted)', fontFamily: 'monospace' }}>
-            {sections.length} section{sections.length !== 1 ? 's' : ''} · 2 passes
-          </div>
-          <button className="btn-cta" type="button" onClick={handleStartEvidence} style={{ fontSize: '0.75rem', marginTop: '0.15rem' }}>Run spatial claims</button>
+          </span>
+          <span style={{ fontSize: '0.72rem', color: 'var(--sidebar-muted)', fontFamily: 'monospace' }}>{sections.length} sections · 2 passes</span>
+          <button className="btn-cta" type="button" onClick={handleStartEvidence} style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>Run extraction</button>
         </div>
       )
-      return (
-        <div style={ds}>
-          <p style={{ fontSize: '0.7rem', color: 'var(--sidebar-muted)' }}>Complete catalog first (step 1).</p>
-        </div>
-      )
+      return <div style={row}><span style={{ fontSize: '0.78rem', color: 'var(--sidebar-muted)' }}>Complete catalog first.</span></div>
     }
 
-    if (step === 3) {
-      if (!spatialDone) return (
-        <div style={ds}>
-          <p style={{ fontSize: '0.7rem', color: 'var(--sidebar-muted)' }}>Complete extraction first (step 2).</p>
-        </div>
-      )
+    if (activeStep === 3) {
+      if (!spatialDone) return <div style={row}><span style={{ fontSize: '0.78rem', color: 'var(--sidebar-muted)' }}>Complete extraction first.</span></div>
       if (atlasError) return (
-        <div style={ds}>
-          <p style={{ fontSize: '0.72rem', color: 'var(--error-text)', lineHeight: 1.4 }}>{workflowError}</p>
-          <button className="btn-cta" type="button" onClick={() => handleSynthesize(false)} style={{ fontSize: '0.75rem' }}>Retry</button>
+        <div style={row}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--error-text)' }}>{workflowError}</span>
+          <button className="btn-cta" type="button" onClick={() => handleSynthesize(false)} style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>Retry</button>
         </div>
       )
       if (dedupError && !dedupDone) return (
-        <div style={ds}>
-          <p style={{ fontSize: '0.72rem', color: 'var(--error-text)', lineHeight: 1.4 }}>{dedupError}</p>
-          <button className="btn-cta" type="button" onClick={handleDedupStep} style={{ fontSize: '0.75rem' }}>Retry dedup</button>
+        <div style={row}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--error-text)' }}>{dedupError}</span>
+          <button className="btn-cta" type="button" onClick={handleDedupStep} style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>Retry dedup</button>
         </div>
       )
       if (runningDedup) return (
-        <div style={ds}>
-          <p style={{ fontSize: '0.72rem', color: 'var(--sidebar-text)', lineHeight: 1.4 }}>Deduplicating…</p>
-          <div style={{ height: '2px', borderRadius: '1px', background: 'rgba(212,188,138,0.15)', overflow: 'hidden', marginTop: '0.25rem' }}>
+        <div style={row}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-text)' }}>Deduplicating…</span>
+          <div style={{ width: '5rem', height: '2px', borderRadius: '1px', background: 'rgba(212,188,138,0.15)', overflow: 'hidden' }}>
             <div className="step-processing" style={{ height: '100%', width: '40%', background: 'var(--gold)' }} />
           </div>
         </div>
       )
-      if (dedupCandidates.length > 0) return (
-        <div style={{ ...ds, flex: 1, overflow: 'hidden', minHeight: 0 }}>
-          <div style={{ fontSize: '0.65rem', color: 'var(--sidebar-muted)', flexShrink: 0 }}>
-            {dedupCandidates.length} merge proposal{dedupCandidates.length !== 1 ? 's' : ''} — click to reject
-          </div>
-          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1px' }}>
-            {dedupCandidates.map(c => {
-              const isRejected = rejectedDedupIds.has(c.id)
-              return (
-                <button key={c.id} type="button"
-                  onClick={() => setRejectedDedupIds(prev => {
-                    const next = new Set(prev)
-                    if (next.has(c.id)) next.delete(c.id)
-                    else next.add(c.id)
-                    return next
-                  })}
-                  style={{ display: 'flex', flexDirection: 'column', padding: '0.25rem 0.35rem', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', opacity: isRejected ? 0.4 : 1, borderRadius: '2px', width: '100%', borderBottom: '1px solid rgba(212,188,138,0.08)' }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.35rem' }}>
-                    <span style={{ width: '0.75rem', height: '0.75rem', borderRadius: '50%', flexShrink: 0, border: isRejected ? '1px solid rgba(180,60,60,0.5)' : '1px solid var(--gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.38rem', color: isRejected ? 'rgba(180,60,60,0.7)' : 'var(--gold)', marginTop: '0.1rem' }}>
-                      {isRejected ? '✕' : '='}
-                    </span>
-                    <div style={{ fontSize: '0.75rem', color: isRejected ? 'var(--sidebar-muted)' : 'var(--sidebar-text)', fontWeight: 500, flex: 1, lineHeight: 1.35 }}>
-                      <span style={{ wordBreak: 'break-word' }}>{c.subject}</span>
-                      <span style={{ color: 'var(--sidebar-muted)', fontWeight: 400 }}> = </span>
-                      <span style={{ wordBreak: 'break-word' }}>{c.object}</span>
-                    </div>
-                  </div>
-                  {c.rationale && (
-                    <div style={{ fontSize: '0.6rem', color: 'var(--sidebar-muted)', marginTop: '0.1rem', marginLeft: '1.1rem', lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {c.rationale}
-                    </div>
-                  )}
-                </button>
-              )
-            })}
-          </div>
-          <button className="btn-cta" type="button" onClick={handleConfirmDedup} disabled={confirmingDedup} style={{ fontSize: '0.75rem', flexShrink: 0 }}>
-            {confirmingDedup
-              ? 'Confirming…'
-              : `Confirm ${dedupCandidates.length - rejectedDedupIds.size} merge${(dedupCandidates.length - rejectedDedupIds.size) !== 1 ? 's' : ''} →`}
+      if (dedupCandidates.length > 0 && !dedupDone) return (
+        <div style={row}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-muted)' }}>
+            {dedupCandidates.length - rejectedDedupIds.size} merge{(dedupCandidates.length - rejectedDedupIds.size) !== 1 ? 's' : ''} to apply — reject in panel
+          </span>
+          <button className="btn-cta" type="button" onClick={handleConfirmDedup} disabled={confirmingDedup} style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>
+            {confirmingDedup ? 'Confirming…' : `Confirm ${dedupCandidates.length - rejectedDedupIds.size} merge${(dedupCandidates.length - rejectedDedupIds.size) !== 1 ? 's' : ''} →`}
           </button>
         </div>
       )
       if (phase === 'synthesizing') return (
-        <div style={ds}>
-          <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
-            <SubPassDot done={false} active={true} />
-            <span style={{ fontSize: '0.7rem', color: 'var(--sidebar-text)' }}>Visual claims</span>
-          </div>
-          <div style={{ fontSize: '0.65rem', color: 'var(--sidebar-muted)', fontFamily: 'monospace' }}>{(synthElapsedMs / 1000).toFixed(1)}s</div>
+        <div style={row}>
+          <SubPassDot done={false} active={true} />
+          <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-text)' }}>Synthesizing visual claims…</span>
+          <span style={{ fontSize: '0.72rem', color: 'var(--sidebar-muted)', fontFamily: 'monospace' }}>{(synthElapsedMs / 1000).toFixed(1)}s</span>
         </div>
       )
       if (atlasDone && !atlasStale && dedupDone) return (
-        <div style={ds}>
-          <div style={{ fontSize: '0.65rem', color: 'var(--sidebar-muted)' }}>{dedupCount === 0 ? 'No duplicates.' : `${dedupCount} merge${dedupCount !== 1 ? 's' : ''}.`} {canonicalClaimCount} relationship{canonicalClaimCount !== 1 ? 's' : ''} added.</div>
-          <button className="btn-rerun" type="button" onClick={() => handleSynthesize(true)} style={{ fontSize: '0.65rem', padding: '0.2rem 0.5rem' }}>Re-run</button>
+        <div style={row}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-muted)' }}>
+            {dedupCount === 0 ? 'No duplicates.' : `${dedupCount} merge${dedupCount !== 1 ? 's' : ''}.`}{' '}
+            {canonicalClaimCount} relationship{canonicalClaimCount !== 1 ? 's' : ''} · {canonicalEntityCount} entities
+          </span>
+          <button className="btn-rerun" type="button" onClick={() => handleSynthesize(true)} style={{ fontSize: '0.72rem' }}>Re-run</button>
         </div>
       )
       if (atlasStale) return (
-        <div style={ds}>
-          <p style={{ fontSize: '0.65rem', color: 'rgba(180,120,20,0.85)', lineHeight: 1.4 }}>Catalog changed — re-run.</p>
-          <button className="btn-cta" type="button" onClick={() => handleSynthesize(true)} style={{ fontSize: '0.75rem' }}>Re-run</button>
+        <div style={row}>
+          <span style={{ fontSize: '0.78rem', color: 'rgba(180,120,20,0.85)' }}>Catalog changed — re-run.</span>
+          <button className="btn-cta" type="button" onClick={() => handleSynthesize(true)} style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>Re-run</button>
         </div>
       )
       if (dedupDone) return (
-        <div style={ds}>
-          <div style={{ fontSize: '0.65rem', color: 'var(--sidebar-muted)' }}>{dedupCount === 0 ? 'No duplicates found.' : `${dedupCount} merge${dedupCount !== 1 ? 's' : ''} performed.`}</div>
-          <div style={{ fontSize: '0.65rem', color: 'var(--sidebar-muted)', display: 'flex', justifyContent: 'space-between', marginTop: '0.1rem' }}>
-            <span>Est. cost</span>
-            <span style={{ color: 'var(--sidebar-text)', fontFamily: 'monospace' }}>${synthCostLo.toFixed(2)}–${synthCostHi.toFixed(2)}</span>
-          </div>
-          <button className="btn-cta" type="button" onClick={() => handleSynthesize(false)} style={{ fontSize: '0.75rem', marginTop: '0.15rem' }}>Add visual claims</button>
+        <div style={row}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-muted)' }}>
+            {dedupCount === 0 ? 'No duplicates found.' : `${dedupCount} merge${dedupCount !== 1 ? 's' : ''} performed.`}
+          </span>
+          <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-muted)' }}>
+            Est. <span style={{ fontFamily: 'monospace', color: 'var(--sidebar-text)' }}>${synthCostLo.toFixed(2)}–${synthCostHi.toFixed(2)}</span>
+          </span>
+          <button className="btn-cta" type="button" onClick={() => handleSynthesize(false)} style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>Add visual claims →</button>
         </div>
       )
       return (
-        <div style={ds}>
-          <div style={{ fontSize: '0.65rem', color: 'var(--sidebar-muted)', display: 'flex', justifyContent: 'space-between' }}>
-            <span>Est. cost</span>
-            <span style={{ color: 'var(--sidebar-text)', fontFamily: 'monospace' }}>${enrichCostLo.toFixed(4)}–${enrichCostHi.toFixed(4)}</span>
-          </div>
-          <div style={{ fontSize: '0.62rem', color: 'var(--sidebar-muted)', fontFamily: 'monospace' }}>{approvedCount} entities · 1 pass</div>
-          <p style={{ fontSize: '0.7rem', color: 'var(--sidebar-muted)', lineHeight: 1.4 }}>Merge duplicate place names before building atlas.</p>
-          <button className="btn-cta" type="button" onClick={handleDedupStep} style={{ fontSize: '0.75rem', marginTop: '0.1rem' }}>Deduplicate entities</button>
+        <div style={row}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-muted)' }}>
+            Est. <span style={{ fontFamily: 'monospace', color: 'var(--sidebar-text)' }}>${enrichCostLo.toFixed(4)}–${enrichCostHi.toFixed(4)}</span>
+            {' · '}{approvedCount} entities
+          </span>
+          <button className="btn-cta" type="button" onClick={handleDedupStep} style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>Deduplicate entities</button>
         </div>
       )
     }
@@ -1142,26 +1067,11 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
       : []
     if (showExplorer) {
       return (
-        <div style={{ position: 'relative', height: '100%' }}>
-          <AtlasExplorer
-            documentId={document.id}
-            sections={sections.map(s => ({ id: s.id, title: s.title ?? '' }))}
-            onAtlasLoaded={count => setCanonicalEntityCount(count)}
-          />
-          <button
-            type="button"
-            onClick={() => setShowExplorer(false)}
-            style={{
-              position: 'absolute', top: '0.75rem', left: '0.75rem', zIndex: 10,
-              fontSize: '0.72rem', padding: '0.3rem 0.65rem',
-              background: 'rgba(20,14,8,0.72)', border: '1px solid rgba(212,188,138,0.35)',
-              borderRadius: '4px', cursor: 'pointer', color: 'rgba(212,188,138,0.85)',
-              backdropFilter: 'blur(4px)',
-            }}
-          >
-            ← Atlas Editor
-          </button>
-        </div>
+        <AtlasExplorer
+          documentId={document.id}
+          sections={sections.map(s => ({ id: s.id, title: s.title ?? '' }))}
+          onAtlasLoaded={count => setCanonicalEntityCount(count)}
+        />
       )
     }
 
@@ -1172,133 +1082,332 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
         readOnly={isReadOnly}
         canExplore={phase === 'done'}
         pendingClaims={pendingClaims}
+        catalogCandidates={phase === 'catalog-review' ? uniqueEntityCandidates.map(c => ({
+          id: c.id,
+          name: String((c.payload as Record<string, unknown>).name ?? ''),
+          excerpt: c.excerpt ?? null,
+          source: c.source ?? 'catalog',
+          isRejected: rejectedCandidateIds.has(c.id),
+        })) : []}
+        onToggleCatalogReject={toggleReject}
+        dedupProposals={dedupCandidates.length > 0 && !dedupDone ? dedupCandidates.map(c => ({
+          id: c.id,
+          subject: c.subject,
+          object: c.object,
+          rationale: c.rationale ?? null,
+          isRejected: rejectedDedupIds.has(c.id),
+        })) : []}
+        onToggleDedupReject={(id) => setRejectedDedupIds(prev => {
+          const next = new Set(prev)
+          if (next.has(id)) next.delete(id)
+          else next.add(id)
+          return next
+        })}
+        hideHeader={true}
+        onConfirmCatalog={handleConfirmCatalog}
+        confirmingCatalog={confirmingCatalog}
+        confirmCatalogSlot={phase === 'catalog-review' ? (
+          <div ref={addPlaceRef} style={{ position: 'relative' }}>
+            <input
+              type="text" placeholder="+ Add place…" value={addPlaceInput} disabled={addingPlace}
+              onChange={e => {
+                const val = e.target.value; setAddPlaceInput(val); setShowAddSuggestions(true)
+                if (suggestionDebounceRef.current) clearTimeout(suggestionDebounceRef.current)
+                if (val.trim().length >= 2) {
+                  suggestionDebounceRef.current = setTimeout(async () => {
+                    const results = await fetchPlaceSuggestions(document.id, val.trim())
+                    setDynamicSuggestions(results)
+                  }, 300)
+                } else { setDynamicSuggestions([]) }
+              }}
+              onFocus={() => setShowAddSuggestions(true)}
+              onBlur={() => setTimeout(() => setShowAddSuggestions(false), 150)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && addPlaceInput.trim()) handleAddManualPlace(addPlaceInput.trim())
+                if (e.key === 'Escape') { setShowAddSuggestions(false); setAddPlaceInput('') }
+              }}
+              style={{ padding: '0.22rem 0.55rem', background: 'rgba(212,188,138,0.07)', border: '1px solid var(--border-warm)', borderRadius: '4px', color: 'var(--ink)', fontSize: '0.72rem', outline: 'none', width: '140px' }}
+            />
+            {showAddSuggestions && filteredSuggestions.length > 0 && (
+              <div style={{ position: 'absolute', bottom: '100%', left: 0, right: 0, zIndex: 50, background: 'var(--parchment-card)', border: '1px solid var(--border-warm)', borderRadius: '4px 4px 0 0', boxShadow: '0 -4px 12px rgba(0,0,0,0.18)', maxHeight: '8rem', overflowY: 'auto' }}>
+                {filteredSuggestions.map(s => (
+                  <button key={s} type="button" onMouseDown={() => handleAddManualPlace(s)}
+                    style={{ width: '100%', padding: '0.3rem 0.6rem', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontSize: '0.75rem', color: 'var(--ink)', borderBottom: '1px solid rgba(212,188,138,0.12)' }}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : undefined}
+        onConfirmDedup={handleConfirmDedup}
+        confirmingDedup={confirmingDedup}
+        dedupConfirmCount={dedupCandidates.length - rejectedDedupIds.size}
         onDone={() => setShowExplorer(true)}
       />
     )
   }
   // ── Render ────────────────────────────────────────────────────────────────
 
-  return (
-    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+  // ── Compact pipeline item helpers ────────────────────────────────────────
 
-      {/* Left sidebar */}
-      <nav className="texture-dark" style={{
-        width: '220px', flexShrink: 0, display: 'flex', flexDirection: 'column',
-        backgroundColor: 'var(--sidebar-bg)', borderRight: '1px solid var(--sidebar-border)',
-        overflow: 'hidden',
-      }}>
+  const cBtn = (clickable: boolean, gold = false): React.CSSProperties => ({
+    fontSize: '0.72rem', padding: '0.22rem 0.6rem',
+    background: clickable ? (gold ? 'rgba(212,188,138,0.13)' : 'rgba(212,188,138,0.07)') : 'rgba(212,188,138,0.03)',
+    border: `1px solid ${clickable ? (gold ? 'rgba(212,188,138,0.45)' : 'rgba(212,188,138,0.28)') : 'rgba(212,188,138,0.1)'}`,
+    borderRadius: '4px', cursor: clickable ? 'pointer' : 'default',
+    color: clickable ? (gold ? 'var(--gold)' : 'var(--ink)') : 'var(--ink-faint)',
+    opacity: clickable ? 1 : 0.45,
+    display: 'flex', alignItems: 'center', gap: '0.15rem',
+    whiteSpace: 'nowrap' as const, transition: 'background 0.12s',
+  })
 
-        {/* Back + book title */}
-        <div style={{ padding: '0.85rem 0.75rem 0.6rem', borderBottom: '1px solid var(--sidebar-border)', flexShrink: 0 }}>
-          <button
-            type="button"
-            onClick={onBack}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: '0.72rem', color: 'var(--sidebar-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem', marginBottom: '0.65rem', letterSpacing: '0.06em' }}
-          >
-            ← Library
-          </button>
-          <div style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--sidebar-text)', lineHeight: 1.25, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {document.title}
+  const tinyLink: React.CSSProperties = {
+    fontSize: '0.62rem', background: 'none', border: 'none',
+    cursor: 'pointer', color: 'var(--ink-muted)', padding: 0,
+    textDecoration: 'underline', textDecorationStyle: 'dotted' as const,
+  }
+
+  const tinyConfirm: React.CSSProperties = {
+    fontSize: '0.62rem', background: 'none', border: 'none',
+    cursor: 'pointer', color: 'var(--gold)', padding: 0, fontWeight: 500,
+  }
+
+  const subTxt: React.CSSProperties = { fontSize: '0.62rem', color: 'var(--ink-faint)' }
+  const costFmt = (lo: number, hi: number) => `($${lo.toFixed(2)}–$${hi.toFixed(2)})`
+  const pSep = <span style={{ color: 'rgba(212,188,138,0.3)', fontSize: '0.9rem', alignSelf: 'flex-start', paddingTop: '0.28rem', flexShrink: 0 }}>›</span>
+
+  function renderCatalogItem() {
+    const isRunning = phase === 'cataloging'
+    const inReview = phase === 'catalog-review'
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.18rem', alignItems: 'flex-start' }}>
+        <button type="button" disabled={isRunning || phase === 'preflight'}
+          onClick={() => !isRunning && !catalogError ? handleRunCatalog(catalogConfirmed) : handleRunCatalog()}
+          style={cBtn(!(isRunning || phase === 'preflight'))}>
+          {isRunning ? 'Finding…' : catalogConfirmed ? 'Re-catalog' : 'Catalog'}
+          <span style={{ opacity: 0.55, fontSize: '0.67rem' }}>
+            {totalCost !== null ? ` ${costFmt(catalogCostLo, catalogCostHi)}` : ' (…)'}
+          </span>
+        </button>
+        {isRunning && <span style={{ ...subTxt, fontFamily: 'monospace' }}>§{currentIdx}/{sections.length}</span>}
+        {catalogError && <span style={{ ...subTxt, color: 'var(--error-text)' }}>Error · <button style={tinyLink} onClick={() => handleRunCatalog()}>retry</button></span>}
+        {(inReview || catalogConfirmed) && !catalogError && (
+          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'nowrap' }}>
+            <span style={subTxt}>{approvedCount} found</span>
+            {inReview && (
+              <>
+                <button type="button" style={tinyLink} onClick={handleGapPass} disabled={runningGapPass}>
+                  {runningGapPass ? 'scanning…' : 'gap +'}
+                </button>
+                <button type="button" style={tinyConfirm} onClick={handleConfirmCatalog} disabled={confirmingCatalog}>
+                  {confirmingCatalog ? 'confirming…' : 'Confirm →'}
+                </button>
+              </>
+            )}
           </div>
-          {document.author && (
-            <div style={{ fontSize: '0.68rem', color: 'var(--sidebar-muted)', marginTop: '0.25rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {document.author}
-            </div>
-          )}
-        </div>
+        )}
+      </div>
+    )
+  }
 
-        {/* Pipeline steps */}
-        <div style={{ flexShrink: 0, padding: '0.4rem' }}>
-          {PIPELINE_STEPS.map((step, i) => (
-            <StepRow
-              key={i}
-              n={i + 1}
-              label={step.label}
-              detail={step.detail}
-              status={getStepStatus(i + 1)}
-              active={activeStep === i + 1}
-              onClick={() => setActiveStep(i + 1)}
-            />
-          ))}
-        </div>
+  function renderExtractItem() {
+    const locked = !catalogConfirmed
+    const isRunning = phase === 'extracting'
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.18rem', alignItems: 'flex-start' }}>
+        <button type="button" disabled={locked || isRunning}
+          onClick={locked || isRunning ? undefined : handleStartEvidence}
+          style={cBtn(!locked && !isRunning)}>
+          {isRunning ? 'Extracting…' : spatialDone ? 'Re-extract' : 'Extract'}
+          <span style={{ opacity: 0.55, fontSize: '0.67rem' }}> {costFmt(evidenceCostLo, evidenceCostHi)}</span>
+        </button>
+        {isRunning && <span style={{ ...subTxt, fontFamily: 'monospace' }}>§{currentIdx}/{sections.length} · {candidatesSoFar} claims</span>}
+        {spatialError && <span style={{ ...subTxt, color: 'var(--error-text)' }}>Error · <button style={tinyLink} onClick={handleStartEvidence}>retry</button></span>}
+        {spatialDone && !spatialError && !isRunning && <span style={subTxt}>{totalCandidates} claims</span>}
+        {evidenceStale && <span style={{ ...subTxt, color: 'rgba(180,120,20,0.85)' }}>stale</span>}
+      </div>
+    )
+  }
 
-        {/* Step detail */}
-        <div style={{ flex: 1, overflowY: 'auto', borderTop: '1px solid var(--sidebar-border)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          {renderLeftDetail(activeStep)}
-        </div>
+  function renderDedupItem() {
+    const locked = !spatialDone
+    const isRunning = runningDedup || phase === 'synthesizing'
+    const needsConfirm = dedupCandidates.length > 0 && !dedupDone
+    const toConfirm = dedupCandidates.length - rejectedDedupIds.size
+    const label = isRunning
+      ? 'Synthesizing…'
+      : atlasDone && !atlasStale && dedupDone ? 'Re-synthesize'
+      : 'Synthesize'
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.18rem', alignItems: 'flex-start' }}>
+        <button type="button" disabled={locked || isRunning}
+          onClick={locked || isRunning ? undefined : (dedupDone ? () => handleSynthesize(false) : handleDedupStep)}
+          style={cBtn(!locked && !isRunning)}>
+          {label}
+          <span style={{ opacity: 0.55, fontSize: '0.67rem' }}>
+            {' '}{costFmt(dedupDone ? synthCostLo : enrichCostLo, dedupDone ? synthCostHi : enrichCostHi)}
+          </span>
+        </button>
+        {(dedupError && !dedupDone) && <span style={{ ...subTxt, color: 'var(--error-text)' }}>Error · <button style={tinyLink} onClick={handleDedupStep}>retry</button></span>}
+        {atlasError && <span style={{ ...subTxt, color: 'var(--error-text)' }}>Error · <button style={tinyLink} onClick={() => handleSynthesize(false)}>retry</button></span>}
+        {needsConfirm && !isRunning && (
+          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+            <span style={subTxt}>{toConfirm} merge{toConfirm !== 1 ? 's' : ''}</span>
+            <button type="button" style={tinyConfirm} onClick={handleConfirmDedup} disabled={confirmingDedup}>
+              {confirmingDedup ? 'confirming…' : 'Confirm →'}
+            </button>
+          </div>
+        )}
+        {atlasDone && !atlasStale && dedupDone && !isRunning && (
+          <span style={subTxt}>{dedupCount} dedup{dedupCount !== 1 ? 's' : ''} · {canonicalEntityCount} entities</span>
+        )}
+        {atlasStale && <span style={{ ...subTxt, color: 'rgba(180,120,20,0.85)' }}>stale</span>}
+      </div>
+    )
+  }
 
-        {/* Export atlas.json */}
-        <div style={{ borderTop: '1px solid var(--sidebar-border)', padding: '0.5rem 0.75rem', flexShrink: 0 }}>
-          <button
-            type="button"
-            onClick={phase === 'done' ? handleExportAtlas : undefined}
-            disabled={phase !== 'done'}
-            style={{
-              width: '100%', fontSize: '0.62rem',
-              color: phase === 'done' ? 'var(--gold)' : 'var(--sidebar-muted)',
-              background: 'none',
-              border: `1px solid ${phase === 'done' ? 'rgba(212,188,138,0.35)' : 'var(--sidebar-border)'}`,
-              borderRadius: '3px', padding: '0.25rem 0.55rem',
-              cursor: phase === 'done' ? 'pointer' : 'not-allowed',
-              opacity: phase === 'done' ? 1 : 0.35,
-              letterSpacing: '0.04em',
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              transition: 'all 0.15s',
-            }}
-          >
-            <span>Export atlas.json</span>
-            <span>↓</span>
-          </button>
-        </div>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
 
-        {/* Burn this book */}
-        <div style={{ padding: '0.5rem 0.75rem', flexShrink: 0 }}>
-          <button
-            type="button"
-            onClick={() => {
-              if (confirmingDelete) {
-                if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current)
-                setConfirmingDelete(false)
-                onDelete?.()
-              } else {
-                setConfirmingDelete(true)
-                deleteTimerRef.current = setTimeout(() => setConfirmingDelete(false), 3000)
-              }
-            }}
-            style={{
-              fontSize: '0.62rem', color: confirmingDelete ? '#c06060' : 'var(--sidebar-muted)', background: 'none',
-              border: `1px solid ${confirmingDelete ? 'rgba(180,60,60,0.4)' : 'var(--sidebar-border)'}`, borderRadius: '3px',
-              padding: '0.2rem 0.55rem', cursor: 'pointer',
-              letterSpacing: '0.08em', textTransform: 'uppercase' as const,
-              transition: 'all 0.15s',
-            }}
-          >
-            {confirmingDelete ? 'Confirm burn?' : 'Burn this book'}
-          </button>
+      {/* ── Brand header: CORONELLI (= back link) + book title ───────────────── */}
+      <header style={{
+        flexShrink: 0, display: 'flex', alignItems: 'center',
+        background: 'var(--sidebar-bg)', borderBottom: '1px solid var(--sidebar-border)',
+        height: '2.6rem', padding: '0 1.5rem',
+      }}>
+        <button type="button" onClick={onBack} style={{
+          background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+          fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.24em',
+          color: 'var(--gold)', textTransform: 'uppercase', flexShrink: 0,
+          transition: 'opacity 0.12s',
+        }} title="Back to library">
+          Coronelli
+        </button>
+        <div style={{ flex: 1, textAlign: 'center', fontSize: '0.85rem', color: 'var(--sidebar-text)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '0 2rem' }}>
+          {document.title}
         </div>
-      </nav>
+      </header>
 
-      {/* Right content */}
+      {/* ── Atlas Editor header row ───────────────────────────────────────────── */}
+      <div style={{
+        flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.65rem',
+        background: 'var(--parchment)', borderBottom: '1px solid var(--border-warm)',
+        padding: '0.55rem 1.5rem',
+      }}>
+        {/* Atlas Editor label */}
+        <span style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--ink)', whiteSpace: 'nowrap', flexShrink: 0 }}>
+          Atlas Editor
+        </span>
+
+        {/* Separator */}
+        <div style={{ width: '1px', height: '1.1rem', background: 'var(--border-warm)', flexShrink: 0, marginLeft: '0.15rem', marginRight: '0.15rem' }} />
+
+        {/* Catalog button — "Catalog +" (gap pass) after first run */}
+        {(() => {
+          const catalogRunOnce = phase !== 'preflight' && phase !== 'ready'
+          const isCataloging = phase === 'cataloging'
+          const label = isCataloging ? 'Finding…' : catalogRunOnce ? 'Catalog +' : 'Catalog'
+          const clickable = !isCataloging && phase !== 'preflight'
+          const handler = catalogRunOnce ? handleGapPass : () => handleRunCatalog(false)
+          return (
+            <button type="button"
+              disabled={!clickable || runningGapPass}
+              onClick={clickable && !runningGapPass ? handler : undefined}
+              style={cBtn(clickable && !runningGapPass)}>
+              {runningGapPass ? 'Scanning…' : label}
+              {totalCost !== null && <span style={{ opacity: 0.55, fontSize: '0.67rem', marginLeft: '0.1rem' }}>
+                ({catalogCostLo.toFixed(2)}–{catalogCostHi.toFixed(2)})
+              </span>}
+            </button>
+          )
+        })()}
+
+        {/* Extract button — "Extract +" after first run */}
+        <button type="button"
+          disabled={!catalogConfirmed || phase === 'extracting'}
+          onClick={catalogConfirmed && phase !== 'extracting' ? handleStartEvidence : undefined}
+          style={cBtn(catalogConfirmed && phase !== 'extracting')}>
+          {phase === 'extracting' ? 'Extracting…' : spatialDone ? 'Extract +' : 'Extract'}
+          <span style={{ opacity: 0.55, fontSize: '0.67rem', marginLeft: '0.1rem' }}>
+            ({evidenceCostLo.toFixed(2)}–{evidenceCostHi.toFixed(2)})
+          </span>
+        </button>
+
+        {/* Deduplicate / Synthesize button */}
+        {(() => {
+          const locked = !spatialDone
+          const isRunning = runningDedup || phase === 'synthesizing'
+          const label = isRunning
+            ? (runningDedup ? 'Synthesizing…' : 'Synthesizing…')
+            : atlasDone && dedupDone ? 'Re-synthesize'
+            : 'Synthesize'
+          const costLo = dedupDone ? synthCostLo : enrichCostLo
+          const costHi = dedupDone ? synthCostHi : enrichCostHi
+          return (
+            <>
+              <button type="button"
+                disabled={locked || isRunning}
+                onClick={locked || isRunning ? undefined : (dedupDone ? () => handleSynthesize(false) : handleDedupStep)}
+                style={cBtn(!locked && !isRunning)}>
+                {label}
+                <span style={{ opacity: 0.55, fontSize: '0.67rem', marginLeft: '0.1rem' }}>
+                  ({costLo.toFixed(2)}–{costHi.toFixed(2)})
+                </span>
+              </button>
+            </>
+          )
+        })()}
+
+        {/* Export button */}
+        <button type="button"
+          disabled={!atlasDone}
+          onClick={atlasDone ? handleExportAtlas : undefined}
+          style={{ ...cBtn(atlasDone), color: atlasDone ? 'var(--gold)' : undefined, border: atlasDone ? '1px solid rgba(212,188,138,0.4)' : undefined }}>
+          Export atlas.json ↓
+        </button>
+
+        {/* Push Launch Explorer to the right */}
+        <div style={{ flex: 1 }} />
+
+        {/* Launch / Back toggle */}
+        <button type="button" className="btn-cta"
+          disabled={!atlasDone && !showExplorer}
+          onClick={() => setShowExplorer(v => !v)}
+          style={{ display: 'inline-flex', alignItems: 'center', width: 'auto', flexShrink: 0, padding: '0.32rem 0.9rem', fontSize: '0.78rem', opacity: atlasDone || showExplorer ? 1 : 0.38, cursor: atlasDone || showExplorer ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap' }}>
+          {showExplorer ? '← Atlas Editor' : 'Launch Atlas Explorer'}
+        </button>
+      </div>
+
+      {/* ── Section progress bar ─────────────────────────────────────────────── */}
+      {(phase === 'cataloging' || phase === 'extracting' || runningGapPass) && sections.length > 0 && (
+        <div style={{ flexShrink: 0, background: 'var(--parchment)', borderBottom: '1px solid var(--border-warm)', padding: '0.3rem 1.5rem 0.35rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          {(() => {
+            const sectionsDone = runningGapPass ? gapSectionsDone : currentIdx
+            const label = runningGapPass ? 'Gap scan' : phase === 'cataloging' ? 'Cataloging' : 'Extracting'
+            const pct = Math.max(2, (sectionsDone / sections.length) * 100)
+            return (
+              <>
+                <span style={{ fontSize: '0.62rem', color: 'var(--ink-faint)', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
+                  {label} section {sectionsDone} of {sections.length}
+                </span>
+                <div style={{ flex: 1, height: '3px', borderRadius: '2px', background: 'rgba(212,188,138,0.15)', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', borderRadius: '2px', background: 'var(--gold)', width: `${pct}%`, transition: 'width 0.4s ease' }} />
+                </div>
+              </>
+            )
+          })()}
+          <span style={{ fontSize: '0.62rem', color: 'var(--ink-faint)', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
+            {phase === 'extracting' && candidatesSoFar > 0 ? `${candidatesSoFar} claims · ` : ''}{(elapsedMs / 1000).toFixed(1)}s
+          </span>
+        </div>
+      )}
+
+      {/* ── Main content ─────────────────────────────────────────────────────── */}
       <main style={{ flex: 1, overflow: 'hidden', backgroundColor: 'var(--parchment)', display: 'flex', flexDirection: 'column' }}>
         {renderStepContent(activeStep)}
       </main>
 
-      {/* Excerpt tooltip */}
-      {hoveredCandidateId && (() => {
-        const cand = uniqueEntityCandidates.find(x => x.id === hoveredCandidateId)
-        if (!cand?.excerpt) return null
-        return (
-          <div style={{
-            position: 'fixed', top: Math.max(8, tooltipY - 4), left: 228, zIndex: 200,
-            maxWidth: '340px', background: 'var(--parchment-card)', border: '1px solid var(--border-warm)',
-            borderRadius: '5px', padding: '0.6rem 0.85rem', fontSize: '0.78rem',
-            color: 'var(--ink-muted)', fontStyle: 'italic', lineHeight: 1.55,
-            boxShadow: '0 4px 16px rgba(0,0,0,0.18)', pointerEvents: 'none',
-          }}>
-            "{cand.excerpt}"
-          </div>
-        )
-      })()}
     </div>
   )
 }

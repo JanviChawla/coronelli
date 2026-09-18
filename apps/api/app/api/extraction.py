@@ -43,6 +43,7 @@ _PREFLIGHT_OUTPUT_TOKEN_ESTIMATE = 200  # conservative output estimate for cost 
 # Used only for status reporting; accuracy is best-effort (lost on server restart).
 _active_catalog_batches: set[str] = set()
 _active_catalog_gap_batches: set[str] = set()
+_catalog_gap_progress: dict[str, int] = {}
 _active_enrichment_runs: set[str] = set()
 _active_containment_runs: set[str] = set()
 _active_dedup_runs: set[str] = set()
@@ -562,6 +563,7 @@ def confirm_catalog_review(
 def _catalog_gap_batch_worker(document_id: str, section_ids: list[str]) -> None:
     """Background thread: run gap catalog pass for every section of a document."""
     db = SessionLocal()
+    _catalog_gap_progress[document_id] = 0
     try:
         try:
             provider = get_provider()
@@ -573,14 +575,17 @@ def _catalog_gap_batch_worker(document_id: str, section_ids: list[str]) -> None:
                 run_catalog_gap_extraction(db, section_id, provider)
             except Exception as exc:
                 _log.error("Catalog gap batch failed for section %s: %s", section_id, exc)
+            _catalog_gap_progress[document_id] = _catalog_gap_progress.get(document_id, 0) + 1
     finally:
         _active_catalog_gap_batches.discard(document_id)
+        _catalog_gap_progress.pop(document_id, None)
         db.close()
 
 
 class CatalogGapBatchResponse(BaseModel):
     document_id: str
     sections_total: int
+    sections_done: int = 0
     status: str  # "running" | "completed"
 
 
@@ -647,9 +652,11 @@ def get_catalog_gap_status(
         .all()
     ]
     status = "running" if document_id in _active_catalog_gap_batches else "completed"
+    sections_done = _catalog_gap_progress.get(document_id, len(section_ids) if status == "completed" else 0)
     return CatalogGapBatchResponse(
         document_id=document_id,
         sections_total=len(section_ids),
+        sections_done=sections_done,
         status=status,
     )
 
