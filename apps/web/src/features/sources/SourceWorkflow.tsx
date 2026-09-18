@@ -615,6 +615,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
       const atlas = await fetchAtlas(document.id)
       setCanonicalEntityCount(atlas.entity_count)
       setCanonicalClaimCount(atlas.claim_count)
+      setAtlasKey(k => k + 1)
       setPhase('done')
     } catch (e) {
       if (timerRef.current) clearInterval(timerRef.current)
@@ -685,10 +686,11 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
       })
       const candidates = await fetchDedupCandidates(document.id)
       if (candidates.length === 0) {
-        // No duplicates found — auto-complete with 0 merges
+        // No duplicates found — auto-continue directly to visual synthesis
         await promoteDedup(document.id)
         setDedupCount(0)
         setDedupDone(true)
+        handleSynthesize(false)
       } else {
         setDedupCandidates(candidates)
       }
