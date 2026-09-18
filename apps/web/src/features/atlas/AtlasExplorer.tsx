@@ -208,8 +208,8 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
   useEffect(() => {
     setLoading(true); setError(null); setAtlas(null)
     fetchAtlas(documentId)
-      .then(d => { setAtlas(d); onAtlasLoaded(d.entity_count) })
-      .catch(e => setError(String(e)))
+      .then(d => { console.log('[AtlasExplorer] fetched atlas — entities:', d.entity_count, 'claims:', d.claim_count); setAtlas(d); onAtlasLoaded(d.entity_count) })
+      .catch(e => { console.error('[AtlasExplorer] fetch error:', e); setError(String(e)) })
       .finally(() => setLoading(false))
   }, [documentId, onAtlasLoaded])
 
@@ -223,6 +223,8 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
     const labelsEl = labelsRef.current
     let animFrame: number
     let t = 0
+
+    console.log('[AtlasExplorer] init — entities:', atlas.entities.length, 'canvas:', canvas.clientWidth, 'x', canvas.clientHeight)
 
     // ── Renderer (placeholder color — updated after L0 palette is known) ──────
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
@@ -368,9 +370,11 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
     // Bounding centre + max radius after layout
     let cx = 0, cz = 0
     for (const e of entities) { const p = positions.get(e.id)!; cx += p.x; cz += p.z }
-    cx /= entities.length; cz /= entities.length
+    cx = entities.length ? cx / entities.length : 0
+    cz = entities.length ? cz / entities.length : 0
     let maxR = 0
     for (const e of entities) { const p = positions.get(e.id)!; const r = Math.sqrt((p.x-cx)**2 + (p.z-cz)**2); if (r > maxR) maxR = r }
+    console.log('[AtlasExplorer] layout — cx:', cx.toFixed(2), 'cz:', cz.toFixed(2), 'maxR:', maxR.toFixed(2), 'l0:', l0Set.size, 'l1:', l1Set.size, 'l3:', l3Set.size)
 
     // ── L0 atmosphere — tint background/fog with realm palette ───────────────
     const atmBase = new THREE.Color(0x060C18)
