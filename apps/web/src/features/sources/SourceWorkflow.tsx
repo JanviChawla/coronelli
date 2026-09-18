@@ -203,6 +203,8 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
   const [rejectedDedupIds, setRejectedDedupIds] = useState<Set<string>>(new Set())
   const [confirmingDedup, setConfirmingDedup] = useState(false)
 
+  const [gapFindings, setGapFindings] = useState<string[] | null>(null) // null=not run, []=none found, [...]=names
+
   // ── New navigation state ──────────────────────────────────────────────────
   const [activeStep, setActiveStep] = useState<number>(1)
   const [atlasKey, setAtlasKey] = useState(0)
@@ -543,6 +545,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
   async function handleStartEvidence() {
     setEvidenceStale(false)
     setAtlasStale(true)
+    setGapFindings(null)
     setPhase('extracting')
     setCurrentIdx(0)
     setCandidatesSoFar(0)
@@ -655,6 +658,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
             )
             setEntityCandidates(allEntities)
             setCatalogPasses(prev => [...prev, buildGapPass(newEntities, knownNames, prev.length)])
+            setGapFindings(newEntities.map(c => String((c.payload as Record<string, unknown>).name ?? '')))
           }
         } catch { /* keep polling */ }
       }, 2000)
@@ -1340,15 +1344,24 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
           const clickable = !isCataloging && phase !== 'preflight'
           const handler = catalogRunOnce ? handleGapPass : () => handleRunCatalog(false)
           return (
-            <button type="button"
-              disabled={!clickable || runningGapPass}
-              onClick={clickable && !runningGapPass ? handler : undefined}
-              style={cBtn(clickable && !runningGapPass)}>
-              {runningGapPass ? 'Scanning…' : label}
-              {totalCost !== null && <span style={{ opacity: 0.55, fontSize: '0.67rem', marginLeft: '0.1rem' }}>
-                ({catalogCostLo.toFixed(2)}–{catalogCostHi.toFixed(2)})
-              </span>}
-            </button>
+            <>
+              <button type="button"
+                disabled={!clickable || runningGapPass}
+                onClick={clickable && !runningGapPass ? handler : undefined}
+                style={cBtn(clickable && !runningGapPass)}>
+                {runningGapPass ? 'Scanning…' : label}
+                {totalCost !== null && <span style={{ opacity: 0.55, fontSize: '0.67rem', marginLeft: '0.1rem' }}>
+                  ({catalogCostLo.toFixed(2)}–{catalogCostHi.toFixed(2)})
+                </span>}
+              </button>
+              {gapFindings !== null && !runningGapPass && (
+                <span style={{ fontSize: '0.72rem', color: gapFindings.length > 0 ? 'var(--gold)' : 'var(--sidebar-muted)', whiteSpace: 'nowrap' }}>
+                  {gapFindings.length > 0
+                    ? `+${gapFindings.length} new: ${gapFindings.slice(0, 3).join(', ')}${gapFindings.length > 3 ? ` +${gapFindings.length - 3} more` : ''} — re-extract to include`
+                    : 'No new locations found'}
+                </span>
+              )}
+            </>
           )
         })()}
 
