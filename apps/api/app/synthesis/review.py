@@ -138,6 +138,26 @@ def _resolve_entity_id(session: Session, document_id: str, name: str | None) -> 
     return None
 
 
+_CONTAINMENT_PREDICATES = {"CONTAINS", "LOCATED_IN", "PART_OF"}
+
+
+def _normalize_containment(payload: dict) -> dict:
+    """Normalize CONTAINS / PART_OF → LOCATED_IN with correct subject/object direction.
+
+    Canonical form: LOCATED_IN(subject=contained, object=container).
+    - LOCATED_IN: already canonical, no change.
+    - PART_OF(A, B):  A is structurally part of B → LOCATED_IN(A, B), same direction.
+    - CONTAINS(A, B): A contains B → LOCATED_IN(B, A), flip subject and object.
+    """
+    predicate = (payload.get("predicate") or "").upper()
+    if predicate not in _CONTAINMENT_PREDICATES or predicate == "LOCATED_IN":
+        return payload
+    if predicate == "CONTAINS":
+        return {**payload, "predicate": "LOCATED_IN", "subject": payload.get("object"), "object": payload.get("subject")}
+    # PART_OF — same direction, just rename
+    return {**payload, "predicate": "LOCATED_IN"}
+
+
 def _approve_claim(
     session: Session,
     document_id: str,
@@ -145,6 +165,8 @@ def _approve_claim(
     claim_type: str,
     confidence: float | None = None,
 ) -> MapClaim:
+    if claim_type == "spatial":
+        payload = _normalize_containment(payload)
     subject_ref = _resolve_entity_id(session, document_id, payload.get("subject"))
     object_id = _resolve_entity_id(session, document_id, payload.get("object"))
     claim = MapClaim(

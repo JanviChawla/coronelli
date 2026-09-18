@@ -226,17 +226,22 @@ def export_atlas_json(document_id: str, db: Session = Depends(get_db)) -> JSONRe
     active_entity_ids = {e.id for e in entities}
     entity_by_id = {e.id: e for e in entities}
 
-    # located_in: non-manual first, then manual overwrites so manual wins
+    # located_in: non-manual first, then manual overwrites so manual wins.
+    # Canonical form is LOCATED_IN(subject=contained, object=container).
+    # PART_OF has the same direction; CONTAINS is the inverse (subject=container).
     located_in: dict[str, str] = {}
     for claim in sorted(all_claims, key=lambda c: 1 if c.status == "manual" else 0):
-        if (
-            claim.predicate == "LOCATED_IN"
-            and claim.subject_ref in active_entity_ids
-            and claim.object_refs
-        ):
-            container_id = claim.object_refs[0]
-            if container_id in entity_by_id:
-                located_in[claim.subject_ref] = entity_by_id[container_id].name
+        if claim.predicate == "LOCATED_IN" or claim.predicate == "PART_OF":
+            if claim.subject_ref in active_entity_ids and claim.object_refs:
+                container_id = claim.object_refs[0]
+                if container_id in entity_by_id:
+                    located_in[claim.subject_ref] = entity_by_id[container_id].name
+        elif claim.predicate == "CONTAINS":
+            # CONTAINS(subject=container, object_refs[0]=contained) — flip to build located_in
+            if claim.object_refs and claim.object_refs[0] in active_entity_ids:
+                contained_id = claim.object_refs[0]
+                if claim.subject_ref in entity_by_id:
+                    located_in[contained_id] = entity_by_id[claim.subject_ref].name
 
     # excerpt map: lowercased canonical name → first excerpt from entity candidates
     section_ids = {
