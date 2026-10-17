@@ -363,12 +363,34 @@ class OpenAISynthesisProvider:
         _log.info("Visual claims sub-pass: %d input → %d output items", len(visual_candidates), len(items))
         return items
 
+    def _resolve_canonical_name(self, subject: str, canonical_entity_map: list[dict]) -> str | None:
+        """Resolve a visual claim subject to the canonical entity name via exact → alias → substring."""
+        subj_lower = subject.lower().strip()
+        if not subj_lower:
+            return None
+        for e in canonical_entity_map:
+            ename = (e.get("name") or "").lower()
+            if subj_lower == ename:
+                return e["name"]
+            if subj_lower in [a.lower() for a in (e.get("aliases") or [])]:
+                return e["name"]
+        for e in canonical_entity_map:
+            ename = (e.get("name") or "").lower()
+            if subj_lower in ename or ename in subj_lower:
+                return e["name"]
+        return None
+
     def synthesize_palette(
         self,
         evidence_ledger: list[dict],
         canonical_entity_map: list[dict],
     ) -> SynthesisResult:
-        """Synthesize a 3-hex colour palette per entity from visual evidence."""
+        """Synthesize a 3-hex colour palette per entity from visual evidence.
+
+        Palette hints extracted by the evidence pass (palette arrays on visual_claim candidates)
+        are aggregated directly — no LLM colour inference needed when hints exist.
+        Entities without palette hints still go through the LLM for observation-based inference.
+        """
         visual_candidates = [item for item in evidence_ledger if item.get("kind") == "visual_claim"]
 
         if not visual_candidates:
@@ -380,45 +402,94 @@ class OpenAISynthesisProvider:
                 synthesis_prompt_version=VISUAL_PALETTE_VERSION,
             )
 
-        entity_names: list[str] = []
-        for e in canonical_entity_map:
-            if e.get("name"):
-                entity_names.append(e["name"])
-            entity_names.extend(a for a in (e.get("aliases") or []) if a)
+        # ── 1. Aggregate palette hints directly from evidence candidates ──────────
+        entity_palette_hints: dict[str, list[str]] = {}  # canonical_name → [hex, ...]
+        entity_has_evidence: set[str] = set()  # canonical names with any visual evidence
 
-        user_content = (
-            f"Canonical entity list ({len(entity_names)} names):\n"
-            f"{json.dumps(entity_names, ensure_ascii=False)}\n\n"
-            f"Visual evidence candidates ({len(visual_candidates)} items):\n"
-            f"{json.dumps(visual_candidates, indent=2, ensure_ascii=False)}\n\n"
-            "Produce one visual_palette item per entity that has colour evidence."
+        for candidate in visual_candidates:
+            payload = candidate.get("payload", {})
+            subject = (payload.get("subject") or "").strip()
+            if not subject:
+                continue
+            canonical = self._resolve_canonical_name(subject, canonical_entity_map) or subject
+            entity_has_evidence.add(canonical)
+            for h in (payload.get("palette") or []):
+                color = h.get("color") if isinstance(h, dict) else None
+                if color and isinstance(color, str) and color.startswith("#"):
+                    entity_palette_hints.setdefault(canonical, []).append(color)
+
+        # ── 2. Build palette items directly for entities that have hex hints ──────
+        direct_items: list[RawSynthesisItem] = []
+        entities_needing_llm: set[str] = set()
+
+        for canonical_name in entity_has_evidence:
+            hexes = entity_palette_hints.get(canonical_name, [])
+            # Deduplicate while preserving order
+            seen: list[str] = []
+            for h in hexes:
+                if h not in seen:
+                    seen.append(h)
+            if seen:
+                primary = seen[0]
+                atmosphere = seen[1] if len(seen) > 1 else primary
+                accent = seen[2] if len(seen) > 2 else primary
+                direct_items.append(RawSynthesisItem(
+                    kind="visual_palette",
+                    payload={
+                        "entity_name": canonical_name,
+                        "colors": {"primary": primary, "atmosphere": atmosphere, "accent": accent},
+                    },
+                    confidence=0.85,
+                    rationale="Aggregated from evidence palette hints",
+                ))
+            else:
+                entities_needing_llm.add(canonical_name)
+
+        # ── 3. LLM inference for entities with observations but no hex hints ──────
+        llm_candidates = [
+            c for c in visual_candidates
+            if (self._resolve_canonical_name(
+                (c.get("payload", {}).get("subject") or "").strip(), canonical_entity_map
+            ) or (c.get("payload", {}).get("subject") or "").strip()) in entities_needing_llm
+        ]
+        llm_items: list[RawSynthesisItem] = []
+        if llm_candidates:
+            entity_names: list[str] = list(entities_needing_llm)
+            user_content = (
+                f"Canonical entity list ({len(entity_names)} names):\n"
+                f"{json.dumps(entity_names, ensure_ascii=False)}\n\n"
+                f"Visual evidence candidates ({len(llm_candidates)} items):\n"
+                f"{json.dumps(llm_candidates, indent=2, ensure_ascii=False)}\n\n"
+                "Produce one visual_palette item per entity that has colour evidence. "
+                "Infer hex colours from observation text."
+            )
+            try:
+                resp = self._client.chat.completions.create(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": VISUAL_PALETTE_SYNTHESIS_PROMPT},
+                        {"role": "user", "content": user_content},
+                    ],
+                    response_format={"type": "json_object"},
+                    max_tokens=2048,
+                )
+                parsed = json.loads(resp.choices[0].message.content)
+                for raw in parsed.get("synthesis_items", []):
+                    if isinstance(raw, dict) and raw.get("kind") == "visual_palette":
+                        llm_items.append(RawSynthesisItem(
+                            kind="visual_palette",
+                            payload=raw.get("payload", {}),
+                            confidence=float(raw.get("confidence", 0.65)),
+                            rationale=str(raw.get("rationale", "")),
+                        ))
+            except (json.JSONDecodeError, KeyError, ValueError) as exc:
+                _log.warning("Palette LLM inference sub-pass failed: %s", exc)
+
+        items = direct_items + llm_items
+        _log.info(
+            "Palette sub-pass: %d candidates → %d direct (from hints) + %d LLM inferred",
+            len(visual_candidates), len(direct_items), len(llm_items),
         )
-
-        resp = self._client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": VISUAL_PALETTE_SYNTHESIS_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=4096,
-        )
-
-        items: list[RawSynthesisItem] = []
-        try:
-            parsed = json.loads(resp.choices[0].message.content)
-            for raw in parsed.get("synthesis_items", []):
-                if isinstance(raw, dict) and raw.get("kind") == "visual_palette":
-                    items.append(RawSynthesisItem(
-                        kind="visual_palette",
-                        payload=raw.get("payload", {}),
-                        confidence=float(raw.get("confidence", 0.75)),
-                        rationale=str(raw.get("rationale", "")),
-                    ))
-        except (json.JSONDecodeError, KeyError, ValueError) as exc:
-            _log.warning("Palette sub-pass failed to parse JSON: %s", exc)
-
-        _log.info("Palette sub-pass: %d input → %d output items", len(visual_candidates), len(items))
         return SynthesisResult(
             items=items,
             raw_response={},

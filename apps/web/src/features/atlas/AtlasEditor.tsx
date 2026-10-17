@@ -1280,7 +1280,7 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
                 </div>
               ))}
 
-              {spatialClaims.length === 0 && !showingPending && !addingRel && (
+              {spatialClaims.length === 0 && !showingPending && permanentSameAsClaims.length === 0 && !addingRel && (
                 <p style={{ padding: '0.75rem 0', fontSize: '0.82rem', color: 'var(--ink-faint)' }}>
                   No spatial relationships yet — add one with + Add above.
                 </p>
