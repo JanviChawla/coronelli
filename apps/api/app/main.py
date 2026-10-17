@@ -1,10 +1,11 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
-load_dotenv(Path(__file__).parents[3] / ".env")
+load_dotenv(find_dotenv(usecwd=True) or None)
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.admin import router as admin_router
@@ -47,3 +48,8 @@ app.include_router(atlas_router)
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+_static = Path(__file__).parent / "static"
+if _static.is_dir():
+    app.mount("/", StaticFiles(directory=_static, html=True), name="static")
