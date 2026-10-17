@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { SectionEditor } from './SectionEditor'
 import { SourceWorkflow } from './SourceWorkflow'
@@ -10,7 +10,7 @@ import {
 
 type View = 'workflow' | 'edit-sections' | 'sections-review'
 
-// ── Canvas / layout helpers ───────────────────────────────────────────────────
+// ── Droplet helpers ───────────────────────────────────────────────────────────
 
 function hashStr(s: string): number {
   let h = 0
@@ -18,113 +18,37 @@ function hashStr(s: string): number {
   return Math.abs(h)
 }
 
-const PALETTES = [
-  ['#FF9DE2', '#C4B5FD', '#93C5FD', '#6EE7B7'],
-  ['#FDE68A', '#FCA5A5', '#C4B5FD', '#93C5FD'],
-  ['#6EE7B7', '#67E8F9', '#A78BFA', '#F9A8D4'],
-  ['#FDE68A', '#FB923C', '#F472B6', '#A78BFA'],
-  ['#86EFAC', '#67E8F9', '#FDE68A', '#A78BFA'],
-  ['#F9A8D4', '#FBBF24', '#A78BFA', '#93C5FD'],
-]
+const DROPLET_VARIANTS = ['pink', 'blue', 'green', 'peach', 'amber', 'aqua'] as const
+type Variant = typeof DROPLET_VARIANTS[number]
 
-function bubblePalette(id: string): string[] { return PALETTES[hashStr(id) % PALETTES.length] }
-
-function blobRadius(id: string): string {
-  const h = hashStr(id)
-  const v = (sh: number) => 40 + ((h >> sh) & 0x1F) % 28
-  const a = v(0), b = v(5), c = v(10), d = v(15)
-  return `${a}% ${100-a}% ${b}% ${100-b}% / ${c}% ${d}% ${100-d}% ${100-c}%`
+const DROPLET_GLOW: Record<Variant, string> = {
+  pink:  'rgba(230, 140, 200, 0.6)',
+  blue:  'rgba( 90, 140, 255, 0.6)',
+  green: 'rgba( 60, 200, 175, 0.6)',
+  peach: 'rgba(235, 155, 110, 0.6)',
+  amber: 'rgba(235, 180,  75, 0.6)',
+  aqua:  'rgba( 65, 200, 220, 0.6)',
 }
 
-function hexRgba(hex: string, a: number): string {
-  const r = parseInt(hex.slice(1,3), 16)
-  const g = parseInt(hex.slice(3,5), 16)
-  const b = parseInt(hex.slice(5,7), 16)
-  return `rgba(${r},${g},${b},${a})`
+function dropletVariant(id: string): Variant {
+  return DROPLET_VARIANTS[hashStr(id) % DROPLET_VARIANTS.length]
 }
 
-function drawBubble(
-  ctx: CanvasRenderingContext2D,
-  w: number, h: number,
-  pal: string[], t: number, seed: number,
-): void {
-  const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2
-  const rng = (n: number) => { const x = Math.sin(n * 9301 + seed * 49297) * 10000; return x - Math.floor(x) }
-
-  ctx.clearRect(0, 0, w, h)
-
-  // Base radial gradient
-  const bg = ctx.createRadialGradient(cx * 0.75, cy * 0.8, 0, cx, cy, r * 1.1)
-  bg.addColorStop(0, hexRgba(pal[0], 0.72))
-  bg.addColorStop(0.3, hexRgba(pal[1], 0.45))
-  bg.addColorStop(0.65, hexRgba(pal[2], 0.22))
-  bg.addColorStop(1, 'rgba(3,1,18,0.95)')
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h)
-
-  // Secondary offset glow for depth
-  const bg2 = ctx.createRadialGradient(cx * 1.3, cy * 0.45, 0, cx * 1.15, cy * 0.55, r * 0.65)
-  bg2.addColorStop(0, hexRgba(pal[3] ?? pal[0], 0.32))
-  bg2.addColorStop(1, 'transparent')
-  ctx.fillStyle = bg2; ctx.fillRect(0, 0, w, h)
-
-  // Swirling ribbons
-  ctx.save()
-  ctx.globalCompositeOperation = 'lighter'
-  for (let s = 0; s < 8; s++) {
-    const col = pal[s % pal.length]
-    const phase = rng(s * 11) * Math.PI * 2
-    const speed = 0.07 + s * 0.013
-    ctx.strokeStyle = hexRgba(col, 0.16 + rng(s) * 0.18)
-    ctx.lineWidth = 1.0 + rng(s * 3) * 2.6
-    ctx.shadowBlur = 10 + rng(s * 7) * 16
-    ctx.shadowColor = col
-    ctx.beginPath()
-    for (let i = 0; i <= 110; i++) {
-      const p = i / 110
-      const angle = p * Math.PI * (3 + rng(s * 5) * 2.5) + phase + t * speed
-      const wobble = Math.sin(p * Math.PI * 4 + t * 0.35 + s) * r * 0.07
-      const sr = p * r * (0.72 + rng(s * 9) * 0.18) + wobble
-      const x = cx + Math.cos(angle) * sr
-      const y = cy + Math.sin(angle) * sr * (0.5 + rng(s * 13) * 0.35)
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
-    }
-    ctx.stroke()
-  }
-  ctx.restore()
-
-  // Sparkles
-  ctx.save()
-  ctx.globalCompositeOperation = 'lighter'
-  for (let i = 0; i < 100; i++) {
-    const sr = (0.05 + rng(i * 3.3) * 0.8) * r
-    const sa = rng(i * 7.1) * Math.PI * 2 + t * 0.022 * (i % 5 - 2)
-    const sx = cx + Math.cos(sa) * sr
-    const sy = cy + Math.sin(sa) * sr * 0.8
-    const sz = 0.3 + rng(i * 2.7) * 2.1
-    const twinkle = Math.max(0, Math.sin(t * (1.2 + rng(i) * 2) + i * 2.1))
-    ctx.globalAlpha = twinkle * 0.9
-    ctx.fillStyle = i % 8 === 0 ? '#FFFFFF' : pal[i % pal.length]
-    ctx.shadowBlur = 4; ctx.shadowColor = '#FFFFFF'
-    ctx.beginPath(); ctx.arc(sx, sy, sz, 0, Math.PI * 2); ctx.fill()
-  }
-  ctx.restore()
-  ctx.globalAlpha = 1; ctx.shadowBlur = 0
-}
-
-// Bubble positions (cx/cy = center as %, size in vh)
+// Bubble layout: cx/cy = center %, size in vh
 const BUBBLE_LAYOUT = [
-  { cx: '21%',  cy: '46%', size: '52vh' },
-  { cx: '53%',  cy: '44%', size: '38vh' },
-  { cx: '78%',  cy: '45%', size: '27vh' },
-  { cx: '93%',  cy: '44%', size: '20vh' },
+  { cx: '23%', cy: '47%', size: '60vh' },
+  { cx: '56%', cy: '45%', size: '44vh' },
+  { cx: '80%', cy: '44%', size: '31vh' },
+  { cx: '95%', cy: '44%', size: '22vh' },
 ]
 
+// Small decorative plain glass drops
 const DECO = [
-  { cx: '47%', cy: '68%', size: '5.5vh', dur: 3.6, delay: 0 },
-  { cx: '63%', cy: '73%', size: '3.8vh', dur: 4.2, delay: 0.8 },
-  { cx: '9%',  cy: '27%', size: '4.4vh', dur: 3.9, delay: 1.1 },
-  { cx: '37%', cy: '17%', size: '3.2vh', dur: 4.8, delay: 0.4 },
-  { cx: '67%', cy: '21%', size: '2.8vh', dur: 3.4, delay: 1.5 },
+  { cx: '46%', cy: '70%', size: '5.5vh', dur: 3.6, delay: 0   },
+  { cx: '63%', cy: '74%', size: '3.6vh', dur: 4.2, delay: 0.8 },
+  { cx:  '9%', cy: '26%', size: '4.2vh', dur: 3.9, delay: 1.1 },
+  { cx: '37%', cy: '16%', size: '3.0vh', dur: 4.8, delay: 0.4 },
+  { cx: '67%', cy: '20%', size: '2.6vh', dur: 3.4, delay: 1.5 },
 ]
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -147,28 +71,10 @@ export function SourceLibrary() {
   const [editSaving, setEditSaving] = useState(false)
   const [confirmingBurnId, setConfirmingBurnId] = useState<string | null>(null)
 
-  const fileRef       = useRef<HTMLInputElement>(null)
-  const burnTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const canvasMapRef  = useRef<Map<string, HTMLCanvasElement>>(new Map())
-  const animFrameRef  = useRef<number>(0)
+  const fileRef      = useRef<HTMLInputElement>(null)
+  const burnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => { fetchDocuments().then(setDocuments).catch(() => {}) }, [])
-
-  // Animation loop
-  useEffect(() => {
-    let t = 0
-    const loop = () => {
-      t += 0.005
-      for (const [docId, canvas] of canvasMapRef.current) {
-        const ctx = canvas.getContext('2d')
-        if (!ctx || !canvas.width || !canvas.height) continue
-        drawBubble(ctx, canvas.width, canvas.height, bubblePalette(docId), t, hashStr(docId))
-      }
-      animFrameRef.current = requestAnimationFrame(loop)
-    }
-    animFrameRef.current = requestAnimationFrame(loop)
-    return () => cancelAnimationFrame(animFrameRef.current)
-  }, [])
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -205,7 +111,7 @@ export function SourceLibrary() {
 
   async function handleSave(updates: SectionUpdate[]) {
     if (!selected) return
-    try { const updated = await updateSections(selected.id, updates); setSections(updated); setView('workflow') }
+    try { const u = await updateSections(selected.id, updates); setSections(u); setView('workflow') }
     catch { setError('Could not save sections.') }
   }
 
@@ -248,24 +154,6 @@ export function SourceLibrary() {
     }
   }
 
-  const setCanvasRef = useCallback((docId: string) => (el: HTMLCanvasElement | null) => {
-    if (el) {
-      canvasMapRef.current.set(docId, el)
-      const parent = el.parentElement
-      if (parent) {
-        const sync = () => { el.width = parent.clientWidth || 300; el.height = parent.clientHeight || 300 }
-        sync()
-        const ro = new ResizeObserver(sync)
-        ro.observe(parent)
-        ;(el as HTMLCanvasElement & { _ro?: ResizeObserver })._ro = ro
-      }
-    } else {
-      const prev = canvasMapRef.current.get(docId) as (HTMLCanvasElement & { _ro?: ResizeObserver }) | undefined
-      prev?._ro?.disconnect()
-      canvasMapRef.current.delete(docId)
-    }
-  }, [])
-
   // ── Font shorthands ───────────────────────────────────────────────────────
   const Cinzel = "'Cinzel', serif"
   const Mono   = "'Space Mono', monospace"
@@ -277,16 +165,17 @@ export function SourceLibrary() {
     if (!editingDoc) return null
     return (
       <div style={{ position: 'fixed', inset: 0, background: 'rgba(200,215,240,0.45)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
-        <div style={{ background: 'rgba(248,250,255,0.96)', border: '1px solid rgba(180,200,235,0.55)', borderRadius: '14px', padding: '2rem 2.25rem', width: '380px', maxWidth: '90vw' }}>
+        <div style={{ background: 'rgba(248,250,255,0.97)', border: '1px solid rgba(180,200,235,0.5)', borderRadius: '14px', padding: '2rem 2.25rem', width: '380px', maxWidth: '90vw' }}>
           <p style={{ fontSize: '1rem', fontWeight: 400, color: '#0F1937', marginBottom: '1.25rem', fontFamily: Cinzel }}>Edit metadata</p>
           {[
-            { label: 'Title', value: editTitle, set: setEditTitle, type: 'text' },
-            { label: 'Author', value: editAuthor, set: setEditAuthor, type: 'text' },
-            { label: 'Year', value: editYear, set: setEditYear, type: 'number' },
+            { label: 'Title',  value: editTitle,  set: setEditTitle,  type: 'text'   },
+            { label: 'Author', value: editAuthor, set: setEditAuthor, type: 'text'   },
+            { label: 'Year',   value: editYear,   set: setEditYear,   type: 'number' },
           ].map(({ label, value, set, type }) => (
             <div key={label} style={{ marginBottom: '0.9rem' }}>
               <label style={{ display: 'block', fontSize: '0.65rem', color: 'rgba(15,25,55,0.45)', marginBottom: '0.25rem', letterSpacing: '0.12em', textTransform: 'uppercase', fontFamily: Mono }}>{label}</label>
-              <input type={type} value={value} onChange={e => set(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') saveEdit() }}
+              <input type={type} value={value} onChange={e => set(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') saveEdit() }}
                 style={{ width: '100%', boxSizing: 'border-box', padding: '0.5rem 0.75rem', fontSize: '0.85rem', border: '1px solid rgba(15,25,55,0.15)', borderRadius: '7px', background: 'rgba(255,255,255,0.85)', color: '#0F1937', outline: 'none' }} />
             </div>
           ))}
@@ -307,7 +196,7 @@ export function SourceLibrary() {
     if (!showReset) return null
     return (
       <div style={{ position: 'fixed', inset: 0, background: 'rgba(200,215,240,0.45)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
-        <div style={{ background: 'rgba(248,250,255,0.96)', border: '1px solid rgba(180,200,235,0.55)', borderRadius: '14px', padding: '2rem 2.25rem', width: '360px', maxWidth: '90vw' }}>
+        <div style={{ background: 'rgba(248,250,255,0.97)', border: '1px solid rgba(180,200,235,0.5)', borderRadius: '14px', padding: '2rem 2.25rem', width: '360px', maxWidth: '90vw' }}>
           <p style={{ fontSize: '1rem', color: '#0F1937', marginBottom: '0.4rem', fontFamily: Cinzel }}>Reset the library?</p>
           <p style={{ fontSize: '0.78rem', color: 'rgba(15,25,55,0.5)', marginBottom: '1.5rem', lineHeight: 1.6, fontFamily: Mono }}>Permanently deletes every document, section, candidate, and atlas entity. No undo.</p>
           <p style={{ fontSize: '0.72rem', color: 'rgba(15,25,55,0.45)', marginBottom: '0.5rem', fontFamily: Mono }}>Type <strong style={{ color: 'rgba(15,25,55,0.75)' }}>reset</strong> to confirm:</p>
@@ -333,7 +222,7 @@ export function SourceLibrary() {
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
 
-      {/* ── Workflow view ────────────────────────────────────────────────── */}
+      {/* ── Workflow ───────────────────────────────────────────────────────── */}
       {inWorkflow && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 30 }}>
           {view === 'edit-sections' ? (
@@ -356,68 +245,72 @@ export function SourceLibrary() {
         </div>
       )}
 
-      {/* ── Home page ────────────────────────────────────────────────────── */}
+      {/* ── Home page ──────────────────────────────────────────────────────── */}
       {!inWorkflow && (
-        <div style={{ position: 'absolute', inset: 0, background: '#cdd6e8' }}>
+        <div style={{ position: 'absolute', inset: 0 }}>
 
-          {/* CSS keyframes */}
           <style>{`
             @keyframes bubbleFloat {
-              from { transform: translateY(0px); }
-              to   { transform: translateY(-16px); }
+              from { transform: translateY(0px);   }
+              to   { transform: translateY(-18px); }
             }
             @keyframes decoFloat {
-              from { transform: translate(-50%, -50%) translateY(0px); }
-              to   { transform: translate(-50%, -50%) translateY(-9px); }
+              from { transform: translate(-50%,-50%) translateY(0px);   }
+              to   { transform: translate(-50%,-50%) translateY(-10px); }
             }
           `}</style>
 
-          {/* Background image */}
-          <div style={{ position: 'absolute', inset: 0, backgroundImage: "url('/bg/background.png')", backgroundSize: 'cover', backgroundPosition: 'center bottom', opacity: 0.92 }} />
+          {/* Background */}
+          <div style={{ position: 'absolute', inset: 0, backgroundImage: "url('/bg/background.png')", backgroundSize: 'cover', backgroundPosition: 'center bottom' }} />
 
-          {/* Header */}
-          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.5rem 2rem', zIndex: 20, pointerEvents: 'none' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.7rem', pointerEvents: 'auto' }}>
-              <span style={{ fontSize: '1rem', color: 'rgba(20,35,80,0.65)', lineHeight: 1 }}>✦</span>
+          {/* ── Header ──────────────────────────────────────────────────── */}
+          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.5rem 2rem', zIndex: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+              <span style={{ fontSize: '0.9rem', color: 'rgba(20,35,80,0.6)', lineHeight: 1 }}>✦</span>
               <div>
-                <div style={{ fontSize: '1.5rem', color: 'rgba(12,22,60,0.88)', fontFamily: Cinzel, letterSpacing: '0.05em', fontWeight: 400, lineHeight: 1 }}>Coronelli</div>
-                <div style={{ fontSize: '0.44rem', color: 'rgba(12,22,60,0.42)', letterSpacing: '0.22em', textTransform: 'uppercase', fontFamily: Mono, marginTop: '0.22rem' }}>Literary Atlases for Curious Minds</div>
+                <div style={{ fontSize: '1.5rem', color: 'rgba(12,22,60,0.9)', fontFamily: Cinzel, letterSpacing: '0.05em', fontWeight: 400, lineHeight: 1 }}>Coronelli</div>
+                <div style={{ fontSize: '0.44rem', color: 'rgba(12,22,60,0.4)', letterSpacing: '0.22em', textTransform: 'uppercase', fontFamily: Mono, marginTop: '0.22rem' }}>Literary Atlases for Curious Minds</div>
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '2rem', pointerEvents: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '2rem' }}>
               {['Your worlds', 'Journal', 'Settings'].map((label, i) => (
-                <button key={label} type="button" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem', color: i === 0 ? 'rgba(12,22,60,0.88)' : 'rgba(12,22,60,0.45)', fontFamily: Cinzel, letterSpacing: '0.03em', padding: '0 0 4px', position: 'relative', borderBottom: i === 0 ? '1px solid rgba(12,22,60,0.5)' : 'none' }}>
+                <button key={label} type="button"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem', color: i === 0 ? 'rgba(12,22,60,0.88)' : 'rgba(12,22,60,0.42)', fontFamily: Cinzel, letterSpacing: '0.03em', padding: '0 0 4px', borderBottom: i === 0 ? '1px solid rgba(12,22,60,0.45)' : 'none' }}>
                   {label}
                 </button>
               ))}
-              <div style={{ width: '31px', height: '31px', borderRadius: '50%', border: '1.5px solid rgba(12,22,60,0.28)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'rgba(12,22,60,0.55)', fontSize: '0.9rem' }}>✦</div>
+              <div style={{ width: '31px', height: '31px', borderRadius: '50%', border: '1.5px solid rgba(12,22,60,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'rgba(12,22,60,0.5)', fontSize: '0.85rem' }}>✦</div>
             </div>
           </div>
 
-          {/* Small decorative bubbles */}
+          {/* ── Decorative glass drops ────────────────────────────────────── */}
           {DECO.map((d, i) => (
             <div key={i} style={{
               position: 'absolute', left: d.cx, top: d.cy,
-              width: d.size, height: d.size,
-              borderRadius: '50%',
-              background: 'rgba(255,255,255,0.18)',
-              border: '1px solid rgba(255,255,255,0.65)',
+              width: d.size, height: d.size, borderRadius: '50%',
+              background: 'rgba(255,255,255,0.16)',
+              border: '1px solid rgba(255,255,255,0.62)',
               backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
               animation: `decoFloat ${d.dur}s ease-in-out ${d.delay}s infinite alternate`,
-              boxShadow: '0 4px 18px rgba(180,200,240,0.25)',
-              pointerEvents: 'none',
-              zIndex: 2,
+              boxShadow: '0 4px 16px rgba(160,185,235,0.22)',
+              pointerEvents: 'none', zIndex: 2,
             }} />
           ))}
 
-          {/* World bubbles */}
+          {/* ── World bubbles ─────────────────────────────────────────────── */}
           {documents.slice(0, 4).map((doc, i) => {
-            const layout = BUBBLE_LAYOUT[i]!
-            const pal = bubblePalette(doc.id)
+            const layout   = BUBBLE_LAYOUT[i]!
+            const variant  = dropletVariant(doc.id)
+            const glow     = DROPLET_GLOW[variant]
             const isFocused = focused?.id === doc.id
-            const h = hashStr(doc.id)
-            const floatDur = 3.8 + (h % 10) * 0.28
+            const h        = hashStr(doc.id)
+            const floatDur   = 3.8 + (h % 10) * 0.28
             const floatDelay = (h % 20) * 0.14
+            // text area is the upper-left clear zone of the droplet image
+            const titleSize  = `calc(${layout.size} * 0.125)`
+            const authorSize = `calc(${layout.size} * 0.052)`
+            const badgeSize  = `calc(${layout.size} * 0.048)`
+            const dotSize    = `calc(${layout.size} * 0.026)`
 
             return (
               <div
@@ -427,70 +320,47 @@ export function SourceLibrary() {
                   position: 'absolute',
                   left: layout.cx, top: layout.cy,
                   width: layout.size, height: layout.size,
+                  // centering + float animation in one transform chain via wrapper
                   transform: 'translate(-50%, -50%)',
                   zIndex: isFocused ? 15 : 8 - i,
-                  filter: isFocused
-                    ? `drop-shadow(0 0 38px ${hexRgba(pal[0], 0.55)}) drop-shadow(0 22px 55px rgba(80,100,180,0.3))`
-                    : 'drop-shadow(0 14px 38px rgba(80,100,180,0.18))',
                   cursor: 'pointer',
-                  transition: 'filter 0.4s ease',
                 }}
               >
-                {/* Animated inner blob */}
+                {/* Float + glow wrapper */}
                 <div style={{
                   width: '100%', height: '100%',
-                  borderRadius: blobRadius(doc.id),
-                  overflow: 'hidden',
-                  position: 'relative',
                   animation: `bubbleFloat ${floatDur}s ease-in-out ${floatDelay}s infinite alternate`,
+                  filter: isFocused
+                    ? `drop-shadow(0 0 38px ${glow}) drop-shadow(0 22px 55px rgba(80,100,180,0.28))`
+                    : `drop-shadow(0 14px 42px rgba(80,100,180,0.18))`,
+                  transition: 'filter 0.45s ease',
+                  position: 'relative',
                 }}>
-                  {/* Galaxy canvas */}
-                  <canvas
-                    ref={setCanvasRef(doc.id)}
-                    style={{ display: 'block', width: '100%', height: '100%' }}
+                  {/* Droplet image */}
+                  <img
+                    src={`/bg/droplet-${variant}.png`}
+                    alt=""
+                    draggable={false}
+                    style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', userSelect: 'none', pointerEvents: 'none' }}
                   />
 
-                  {/* Glass highlight */}
-                  <div style={{
-                    position: 'absolute', inset: 0, pointerEvents: 'none',
-                    background: `
-                      radial-gradient(ellipse 62% 42% at 28% 18%, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0.06) 55%, transparent 80%),
-                      radial-gradient(ellipse 32% 22% at 72% 78%, rgba(255,255,255,0.1) 0%, transparent 100%)
-                    `,
-                  }} />
-
-                  {/* Iridescent rim tint */}
-                  <div style={{
-                    position: 'absolute', inset: 0, pointerEvents: 'none',
-                    background: 'linear-gradient(135deg, rgba(255,190,230,0.12) 0%, rgba(190,215,255,0.12) 33%, rgba(190,255,220,0.1) 66%, rgba(255,220,170,0.08) 100%)',
-                  }} />
-
-                  {/* Glass border */}
-                  <div style={{
-                    position: 'absolute', inset: 0, borderRadius: 'inherit', pointerEvents: 'none',
-                    border: '1.5px solid rgba(255,255,255,0.74)',
-                    boxSizing: 'border-box',
-                  }} />
-
-                  {/* Text labels */}
+                  {/* Text — placed in the clear upper zone of the droplet */}
                   <div style={{
                     position: 'absolute',
-                    bottom: `calc(${layout.size} * 0.14)`,
-                    left: `calc(${layout.size} * 0.1)`,
-                    right: `calc(${layout.size} * 0.1)`,
+                    top: '10%', left: '9%', right: '28%',
                     pointerEvents: 'none',
                   }}>
-                    <div style={{ fontSize: `calc(${layout.size} * 0.125)`, fontFamily: Cinzel, color: '#0F1937', fontWeight: 400, lineHeight: 1.15, textShadow: '0 1px 14px rgba(255,255,255,0.6)' }}>
+                    <div style={{ fontSize: titleSize, fontFamily: Cinzel, color: '#0E1535', fontWeight: 400, lineHeight: 1.2 }}>
                       {doc.title}
                     </div>
                     {doc.author && (
-                      <div style={{ fontSize: `calc(${layout.size} * 0.052)`, letterSpacing: '0.13em', color: '#0F1937', opacity: 0.62, textTransform: 'uppercase', marginTop: '0.28em', fontFamily: Mono }}>
+                      <div style={{ fontSize: authorSize, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#0E1535', opacity: 0.58, marginTop: '0.3em', fontFamily: Mono }}>
                         {doc.author}
                       </div>
                     )}
-                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.38em', marginTop: '0.5em', background: 'rgba(255,255,255,0.72)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderRadius: '20px', padding: '0.18em 0.72em' }}>
-                      <div style={{ width: `calc(${layout.size} * 0.028)`, height: `calc(${layout.size} * 0.028)`, minWidth: '5px', minHeight: '5px', maxWidth: '10px', maxHeight: '10px', borderRadius: '50%', background: '#D97706', flexShrink: 0 }} />
-                      <span style={{ fontSize: `calc(${layout.size} * 0.048)`, color: '#0F1937', fontFamily: Mono, letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>In progress</span>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.38em', marginTop: '0.55em', background: 'rgba(255,255,255,0.7)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderRadius: '20px', padding: '0.18em 0.75em' }}>
+                      <div style={{ width: dotSize, height: dotSize, minWidth: '5px', minHeight: '5px', maxWidth: '10px', maxHeight: '10px', borderRadius: '50%', background: '#D97706', flexShrink: 0 }} />
+                      <span style={{ fontSize: badgeSize, color: '#0E1535', fontFamily: Mono, letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>In progress</span>
                     </div>
                   </div>
                 </div>
@@ -498,50 +368,50 @@ export function SourceLibrary() {
             )
           })}
 
-          {/* Empty state */}
+          {/* ── Empty state ────────────────────────────────────────────────── */}
           {documents.length === 0 && !importing && (
-            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center', pointerEvents: 'none', zIndex: 5 }}>
-              <div style={{ fontSize: '0.78rem', color: 'rgba(12,22,60,0.38)', letterSpacing: '0.14em', fontFamily: Mono }}>No worlds yet — add one →</div>
+            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', textAlign: 'center', pointerEvents: 'none', zIndex: 5 }}>
+              <div style={{ fontSize: '0.78rem', color: 'rgba(12,22,60,0.35)', letterSpacing: '0.14em', fontFamily: Mono }}>No worlds yet — add one →</div>
             </div>
           )}
 
-          {/* Bottom info panel */}
+          {/* ── Bottom info panel ──────────────────────────────────────────── */}
           {focused && (
             <div style={{
               position: 'absolute', bottom: '4%', left: '50%', transform: 'translateX(-50%)',
               background: 'rgba(255,255,255,0.44)',
-              backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)',
-              border: '1px solid rgba(255,255,255,0.72)',
-              borderRadius: '16px',
+              backdropFilter: 'blur(26px)', WebkitBackdropFilter: 'blur(26px)',
+              border: '1px solid rgba(255,255,255,0.74)',
+              borderRadius: '18px',
               padding: '1.4rem 2rem',
               display: 'flex', alignItems: 'center', gap: '2.5rem',
-              boxShadow: '0 8px 44px rgba(130,155,220,0.22)',
+              boxShadow: '0 8px 44px rgba(130,155,220,0.2)',
               zIndex: 20,
-              minWidth: '400px', maxWidth: '600px',
+              minWidth: '420px', maxWidth: '620px',
             }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '0.55rem', color: 'rgba(12,22,60,0.4)', letterSpacing: '0.22em', textTransform: 'uppercase', fontFamily: Mono, marginBottom: '0.32rem' }}>Selected world</div>
-                <div style={{ fontSize: '1.65rem', fontFamily: Cinzel, color: '#0F1937', fontWeight: 400, lineHeight: 1.15, marginBottom: '0.12rem' }}>{focused.title}</div>
+                <div style={{ fontSize: '0.52rem', color: 'rgba(12,22,60,0.38)', letterSpacing: '0.24em', textTransform: 'uppercase', fontFamily: Mono, marginBottom: '0.3rem' }}>Selected world</div>
+                <div style={{ fontSize: '1.7rem', fontFamily: Cinzel, color: '#0E1535', fontWeight: 400, lineHeight: 1.15, marginBottom: '0.1rem' }}>{focused.title}</div>
                 {focused.author && (
-                  <div style={{ fontSize: '0.62rem', letterSpacing: '0.13em', textTransform: 'uppercase', color: 'rgba(12,22,60,0.5)', fontFamily: Mono, marginBottom: '0.6rem' }}>{focused.author}</div>
+                  <div style={{ fontSize: '0.6rem', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'rgba(12,22,60,0.48)', fontFamily: Mono, marginBottom: '0.6rem' }}>{focused.author}</div>
                 )}
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4em', background: 'rgba(255,255,255,0.6)', borderRadius: '20px', padding: '0.2em 0.8em' }}>
-                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#D97706', flexShrink: 0 }} />
-                  <span style={{ fontSize: '0.65rem', color: '#0F1937', fontFamily: Mono }}>Catalog · In progress</span>
+                  <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#D97706', flexShrink: 0 }} />
+                  <span style={{ fontSize: '0.62rem', color: '#0E1535', fontFamily: Mono }}>Catalog · In progress</span>
                 </div>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', alignItems: 'stretch', flexShrink: 0 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', flexShrink: 0 }}>
                 <button type="button" onClick={() => handleOpenDoc(focused)}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', background: 'rgba(100,120,195,0.22)', border: '1px solid rgba(100,120,195,0.38)', borderRadius: '10px', padding: '0.65rem 1.4rem', color: '#0F1937', fontSize: '0.82rem', cursor: 'pointer', fontFamily: Cinzel, letterSpacing: '0.03em', whiteSpace: 'nowrap', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}>
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(100,120,200,0.2)', border: '1px solid rgba(100,120,200,0.36)', borderRadius: '10px', padding: '0.65rem 1.4rem', color: '#0E1535', fontSize: '0.82rem', cursor: 'pointer', fontFamily: Cinzel, letterSpacing: '0.03em', whiteSpace: 'nowrap', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}>
                   Open Atlas Editor →
                 </button>
                 <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'center' }}>
                   <button type="button" onClick={() => openEdit(focused)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.64rem', color: 'rgba(12,22,60,0.38)', fontFamily: Mono, padding: '0.15rem 0.4rem' }}>
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.64rem', color: 'rgba(12,22,60,0.36)', fontFamily: Mono, padding: '0.1rem 0.4rem' }}>
                     Edit
                   </button>
                   <button type="button" onClick={() => triggerBurn(focused)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.64rem', color: confirmingBurnId === focused.id ? '#c06060' : 'rgba(12,22,60,0.3)', fontFamily: Mono, padding: '0.15rem 0.4rem' }}>
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.64rem', color: confirmingBurnId === focused.id ? '#c06060' : 'rgba(12,22,60,0.28)', fontFamily: Mono, padding: '0.1rem 0.4rem' }}>
                     {confirmingBurnId === focused.id ? 'Sure?' : 'Burn'}
                   </button>
                 </div>
@@ -549,47 +419,47 @@ export function SourceLibrary() {
             </div>
           )}
 
-          {/* New world bubble */}
+          {/* ── New world bubble ───────────────────────────────────────────── */}
           <label style={{
             position: 'absolute', bottom: '8%', right: '4%',
             width: '13vh', height: '13vh', minWidth: '90px', minHeight: '90px',
             borderRadius: '50%',
-            background: 'rgba(255,255,255,0.2)',
+            background: 'rgba(255,255,255,0.22)',
             backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
             border: '1.5px solid rgba(255,255,255,0.68)',
-            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.15rem',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.12rem',
             cursor: importing ? 'wait' : 'pointer',
-            boxShadow: '0 8px 32px rgba(140,165,225,0.2)',
+            boxShadow: '0 8px 30px rgba(140,165,225,0.18)',
             animation: 'decoFloat 4.6s ease-in-out 0.3s infinite alternate',
             zIndex: 15,
           }}>
             <input ref={fileRef} type="file" accept=".txt,.md,.pdf" style={{ display: 'none' }} onChange={handleImportFile} disabled={importing} />
-            <div style={{ fontSize: '1.6rem', color: 'rgba(12,22,60,0.5)', lineHeight: 1, fontWeight: 300 }}>{importing ? '…' : '+'}</div>
-            <div style={{ fontSize: '0.6rem', color: 'rgba(12,22,60,0.48)', fontFamily: Cinzel, letterSpacing: '0.04em', textAlign: 'center' }}>New world</div>
+            <div style={{ fontSize: '1.55rem', color: 'rgba(12,22,60,0.48)', lineHeight: 1, fontWeight: 300 }}>{importing ? '…' : '+'}</div>
+            <div style={{ fontSize: '0.58rem', color: 'rgba(12,22,60,0.46)', fontFamily: Cinzel, letterSpacing: '0.04em', textAlign: 'center' }}>New world</div>
           </label>
 
-          {/* Burn library */}
+          {/* ── Burn library ────────────────────────────────────────────────── */}
           <button type="button" onClick={() => { setShowReset(true); setResetInput('') }}
             style={{ position: 'absolute', bottom: '2rem', left: '2rem', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'flex-start', gap: '0.45rem', zIndex: 15 }}>
-            <div style={{ fontSize: '1.05rem', lineHeight: 1.25 }}>🔥</div>
+            <div style={{ fontSize: '1rem', lineHeight: 1.3 }}>🔥</div>
             <div style={{ textAlign: 'left' }}>
               <div style={{ fontSize: '0.7rem', color: 'rgba(190,55,35,0.8)', fontFamily: Cinzel, letterSpacing: '0.04em' }}>Burn library</div>
-              <div style={{ fontSize: '0.48rem', color: 'rgba(190,55,35,0.42)', letterSpacing: '0.1em', textTransform: 'uppercase', fontFamily: Mono }}>Erase all worlds and their data</div>
+              <div style={{ fontSize: '0.46rem', color: 'rgba(190,55,35,0.4)', letterSpacing: '0.1em', textTransform: 'uppercase', fontFamily: Mono }}>Erase all worlds and their data</div>
             </div>
           </button>
 
           {error && (
-            <div style={{ position: 'absolute', top: '5rem', left: '50%', transform: 'translateX(-50%)', color: '#b04040', fontSize: '0.75rem', background: 'rgba(255,255,255,0.88)', padding: '0.4rem 1rem', borderRadius: '6px', fontFamily: Mono, zIndex: 25 }}>{error}</div>
+            <div style={{ position: 'absolute', top: '5rem', left: '50%', transform: 'translateX(-50%)', color: '#b04040', fontSize: '0.75rem', background: 'rgba(255,255,255,0.9)', padding: '0.4rem 1rem', borderRadius: '6px', fontFamily: Mono, zIndex: 25 }}>{error}</div>
           )}
 
-          {/* Sections review modal */}
+          {/* ── Sections review modal ─────────────────────────────────────── */}
           {selected && view === 'sections-review' && (
             <div style={{ position: 'fixed', inset: '4vh 10vw', background: 'rgba(242,246,255,0.97)', border: '1px solid rgba(175,200,235,0.45)', borderRadius: '14px', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', overflow: 'auto', zIndex: 50, padding: '3rem 3rem 2.5rem', boxShadow: '0 8px 60px rgba(100,125,210,0.18)' }}>
               <p style={{ fontSize: '0.63rem', color: 'rgba(12,22,60,0.38)', marginBottom: '2rem', fontStyle: 'italic', fontFamily: Mono, letterSpacing: '0.06em' }}>
                 Confirm metadata and sections before beginning the pipeline.
               </p>
               <div style={{ marginBottom: '1.75rem' }}>
-                <h2 style={{ fontSize: '1.8rem', fontWeight: 400, color: '#0F1937', marginBottom: '0.3rem', lineHeight: 1.2, fontFamily: Cinzel }}>{selected.title}</h2>
+                <h2 style={{ fontSize: '1.8rem', fontWeight: 400, color: '#0E1535', marginBottom: '0.3rem', lineHeight: 1.2, fontFamily: Cinzel }}>{selected.title}</h2>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
                   {selected.author && <span style={{ fontSize: '0.82rem', color: 'rgba(12,22,60,0.52)', fontFamily: Mono }}>{selected.author}</span>}
                   {selected.year && <span style={{ fontSize: '0.75rem', color: 'rgba(12,22,60,0.35)', fontFamily: Mono }}>{selected.year}</span>}
@@ -618,7 +488,7 @@ export function SourceLibrary() {
                 }
               </div>
               <button type="button" onClick={() => setView('workflow')}
-                style={{ width: '100%', padding: '0.65rem', background: 'rgba(100,120,195,0.15)', border: '1px solid rgba(100,120,195,0.32)', borderRadius: '8px', color: '#0F1937', fontSize: '0.8rem', cursor: 'pointer', letterSpacing: '0.1em', fontFamily: Mono }}>
+                style={{ width: '100%', padding: '0.65rem', background: 'rgba(100,120,195,0.15)', border: '1px solid rgba(100,120,195,0.32)', borderRadius: '8px', color: '#0E1535', fontSize: '0.8rem', cursor: 'pointer', letterSpacing: '0.1em', fontFamily: Mono }}>
                 Begin pipeline →
               </button>
               {error && <p style={{ color: '#b04040', fontSize: '0.75rem', marginTop: '0.75rem', fontFamily: Mono }}>{error}</p>}
