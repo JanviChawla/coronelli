@@ -760,6 +760,7 @@ def get_entity_excerpts(document_id: str, entity_id: str, db: Session = Depends(
 class EntityPatchRequest(BaseModel):
     place_kind: str | None = None
     tier: str | None = None  # set to "" to clear
+    spatial_level: int | None = None  # set to -1 to clear
 
 
 @router.patch("/api/documents/{document_id}/atlas/entities/{entity_id}")
@@ -780,6 +781,14 @@ def patch_atlas_entity(
             payload["tier"] = body.tier
         else:
             payload.pop("tier", None)
+        entity.payload = payload
+        flag_modified(entity, "payload")
+    if body.spatial_level is not None:
+        payload = dict(entity.payload or {})
+        if body.spatial_level >= 0:
+            payload["spatial_level"] = body.spatial_level
+        else:
+            payload.pop("spatial_level", None)
         entity.payload = payload
         flag_modified(entity, "payload")
     entity.status = "manual"
@@ -1090,6 +1099,25 @@ def promote_dedup(document_id: str, db: Session = Depends(get_db)):
         for k, v in list(name_to_entity.items()):
             if v.id == drop.id:
                 name_to_entity[k] = keep
+
+        # Write SAME_AS provenance claim so the relationship panel records the merge
+        _existing_same_as = db.query(MapClaim).filter(
+            MapClaim.subject_ref == keep.id,
+            MapClaim.predicate == "SAME_AS",
+            MapClaim.state == "active",
+        ).all()
+        if not any(c.object_refs and drop.id in c.object_refs for c in _existing_same_as):
+            db.add(MapClaim(
+                claim_type="spatial",
+                subject_ref=keep.id,
+                predicate="SAME_AS",
+                object_refs=[drop.id],
+                status="explicit",
+                state="active",
+                provenance_document_id=keep.provenance_document_id,
+                payload={"subject": keep.name, "object": drop.name, "predicate": "SAME_AS"},
+            ))
+
         merges += 1
 
     db.commit()
@@ -1146,6 +1174,25 @@ def merge_entities(body: EntityMergeRequest, db: Session = Depends(get_db)):
             c.object_refs = [body.keep_id if r == body.drop_id else r for r in c.object_refs]
 
     drop.state = "merged"
+
+    # Write SAME_AS provenance claim so the relationship panel records the merge
+    _existing_same_as = db.query(MapClaim).filter(
+        MapClaim.subject_ref == keep.id,
+        MapClaim.predicate == "SAME_AS",
+        MapClaim.state == "active",
+    ).all()
+    if not any(c.object_refs and drop.id in c.object_refs for c in _existing_same_as):
+        db.add(MapClaim(
+            claim_type="spatial",
+            subject_ref=keep.id,
+            predicate="SAME_AS",
+            object_refs=[drop.id],
+            status="manual",
+            state="active",
+            provenance_document_id=keep.provenance_document_id,
+            payload={"subject": keep.name, "object": drop.name, "predicate": "SAME_AS"},
+        ))
+
     db.commit()
     db.refresh(keep)
 

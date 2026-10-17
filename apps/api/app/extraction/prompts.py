@@ -24,11 +24,11 @@ Pipeline architecture:
 # Version constants — bump to invalidate the extraction cache
 # ---------------------------------------------------------------------------
 
-GLOBAL_CATALOG_VERSION           = "4.2-catalog"
-GLOBAL_CATALOG_GAP_VERSION       = "4.3-catalog-gap"
+GLOBAL_CATALOG_VERSION           = "4.5-catalog"
+GLOBAL_CATALOG_GAP_VERSION       = "4.6-catalog-gap"
 GLOBAL_EVIDENCE_VERSION          = "4.0-evidence"
 
-GLOBAL_EVIDENCE_SPATIAL_VERSION     = "4.0-spatial"
+GLOBAL_EVIDENCE_SPATIAL_VERSION     = "4.1-spatial"
 GLOBAL_EVIDENCE_VISUAL_VERSION      = "4.0-visual"
 GLOBAL_EVIDENCE_TRAVELRULE_VERSION  = "4.0-travelrule"
 GLOBAL_EVIDENCE_MOVEMENT_VERSION    = "4.0-movement"
@@ -165,6 +165,8 @@ OUTPUT FORMAT — respond with exactly this JSON structure, no other keys:
       "kind_descriptor": "<atlas geometry kind — from list below>",
       "tier":            "<vertical elevation — from list below>",
       "spatial_level":   <integer 0-3>,
+      "parent_context":  "<name of the enclosing place the narrative was in when this place was mentioned, or null>",
+      "note":            "<one-sentence distinguishing description, especially for generic names; null for unambiguous named places>",
       "aliases":         ["<alternate name used for this place in THIS section>"],
       "is_new":          true,
       "confidence":      0.85,
@@ -173,7 +175,26 @@ OUTPUT FORMAT — respond with exactly this JSON structure, no other keys:
   ]
 }}
 
-  name:            Use the most complete, canonical form used in the text.
+  name:            Use the most complete, canonical form used in the text. When a place has no
+                   proper name but is exclusively and distinctly associated with a named character,
+                   incorporate the character's name so the place is uniquely identifiable on a map:
+                     "the mushroom" (where only the Caterpillar sits) → "Caterpillar's Mushroom"
+                     "a bough of a tree" (where the Cheshire Cat always perches) → "Cheshire Cat's Tree"
+                     "the hut" (Baba Yaga's hut, nowhere else) → "Baba Yaga's Hut"
+                   Apply this only when the association is clear and consistent — not for incidental mentions.
+  parent_context:  The name of the enclosing or surrounding place whose scene the narrative was in when
+                   this place was mentioned. Use this to disambiguate generic names ("a hall", "a room",
+                   "a tree", "a door") that might appear in multiple locations across the book.
+                   Set to null for top-level places (regions, worlds) or when no clear enclosing context exists.
+                   Examples: "March Hare's house", "Royal Palace", "the rabbit hole", "Thornfield Hall"
+  note:            A one-sentence description synthesizing what distinguishes THIS specific place instance
+                   from others with the same generic name. Focus on: what it looks like, what it contains,
+                   who was there, what happened there. Critical for generic names ("the hall", "a room",
+                   "a tree", "a door") where multiple instances may appear across the book.
+                   Set to null for clearly unique proper-named places (e.g. "the Hudson River", "Sleepy Hollow").
+                   Examples: "A long low hall with many locked doors and a tiny golden key on a glass table."
+                             "Grand assembly hall where the Queen holds court for the croquet game."
+                             "The great beech tree where the Cheshire Cat first appears, sitting on a bough."
   aliases:         Other names the text uses for the SAME place in this section. Empty list [] if none.
   is_new:          true if this place is NOT already in the known_places list.
                    false if it appears there (still emit it so aliases are captured).
@@ -243,7 +264,15 @@ WORKED EXAMPLES
 
   "The window" used as a spatial vantage point (The Yellow Wallpaper)
     → type: portal  kind_descriptor: portal  tier: elevated  spatial_level: 3
-    (a window is an opening — never type: room)\
+    (a window is an opening — never type: room)
+
+  "The mushroom" where the Caterpillar sits (Alice in Wonderland)
+    → name: "Caterpillar's Mushroom"  type: landmark  kind_descriptor: landmark  tier: elevated  spatial_level: 3
+    (exclusively character-associated place → use character's name)
+
+  "A bough of a tree" or "the tree" where the Cheshire Cat perches (Alice in Wonderland)
+    → name: "Cheshire Cat's Tree"  type: terrain_feature  kind_descriptor: landmark  tier: elevated  spatial_level: 3
+    (exclusively character-associated landmark → use character's name)\
 """
 
 # ---------------------------------------------------------------------------
@@ -287,6 +316,8 @@ OUTPUT FORMAT — identical to the catalog pass:
       "kind_descriptor": "<atlas geometry kind>",
       "tier":            "<vertical elevation>",
       "spatial_level":   <integer 0-3>,
+      "parent_context":  "<name of the enclosing place the narrative was in when this place appeared, or null>",
+      "note":            "<one-sentence distinguishing description, especially for generic names; null for unambiguous named places>",
       "aliases":         [],
       "is_new":          true,
       "confidence":      0.75,
@@ -385,11 +416,20 @@ OUTPUT FORMAT:
 
 PREDICATES  (use exact uppercase strings)
 
-CONTAINMENT — highest priority; extract every instance
+CONTAINMENT — extract only when physically accurate AND textually supported
   CONTAINS          subject physically encloses object             (house CONTAINS room)
   LOCATED_IN        object is the broader container                (room LOCATED_IN house)
   PART_OF           object is a structural component of subject    (tower PART_OF castle)
   SURROUNDED_BY     subject is enclosed on all sides by object
+
+  CONTAINMENT RULES — read these before emitting any CONTAINS or LOCATED_IN:
+  - Require explicit textual evidence: the text must say or clearly imply one place is inside another.
+    Narrative proximity (two places mentioned in the same paragraph) is NOT evidence of containment.
+  - Physical plausibility: the container must be large enough to hold the contained thing.
+    A tree, forest, hill, river, or other outdoor/natural feature cannot be LOCATED_IN a building or room.
+    A building cannot be LOCATED_IN a room or furniture item.
+    If the relationship would be physically absurd, use ADJACENT_TO or NEAR instead.
+  - When in doubt between LOCATED_IN and ADJACENT_TO, prefer ADJACENT_TO.
 
 CONNECTIONS — highest priority; these form traversal edges in the atlas
   LEADS_TO          subject connects to or opens into object       (path LEADS_TO bridge)
@@ -422,7 +462,7 @@ IDENTITY — dedup only; use sparingly
   SAME_AS           subject and object are the same place under different names
 
 EXTRACTION PRIORITY
-  1. CONTAINS / LOCATED_IN — hull edges; extract every one
+  1. CONTAINS / LOCATED_IN — hull edges; extract only physically accurate, textually supported instances
   2. LEADS_TO / PORTAL_TO / DESCENDS_TO — traversal edges; extract every one
   3. PART_OF / SURROUNDED_BY / ENDS_AT
   4. Relative position predicates

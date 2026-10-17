@@ -370,6 +370,8 @@ def run_synthesis(
     def _phase_callback(phase: str) -> None:
         run.current_phase = phase
         session.commit()
+        from app import events as ev
+        ev.emit(document_id, "phase_change", stage="synthesis", phase=phase)
 
     try:
         entity_ledger = [item for item in ledger if item["kind"] == "entity"]
@@ -477,6 +479,8 @@ def run_visual_synthesis(
     def _phase_callback(phase: str) -> None:
         run.current_phase = phase
         session.commit()
+        from app import events as ev
+        ev.emit(document_id, "phase_change", stage="visual_synthesis", phase=phase)
 
     try:
         _phase_callback("visual")

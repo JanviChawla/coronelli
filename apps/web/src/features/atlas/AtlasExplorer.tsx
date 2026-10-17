@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
-import { fetchAtlas } from './atlasApi'
+import { fetchAtlas, fetchEntityMentions } from './atlasApi'
 import type { AtlasResponse, AtlasEntity } from './atlasApi'
 
 interface Props {
@@ -196,20 +196,39 @@ function DetailPanel({ entity, entityMap, onClose }: {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
-  const canvasRef     = useRef<HTMLCanvasElement>(null)
-  const labelsRef     = useRef<HTMLDivElement>(null)
-  const selectedIdRef = useRef<string | null>(null)
+  const canvasRef       = useRef<HTMLCanvasElement>(null)
+  const labelsRef       = useRef<HTMLDivElement>(null)
+  const selectedIdRef   = useRef<string | null>(null)
+  const revealUpToRef   = useRef<number>(9999)
+  const ordinalMapRef   = useRef<Map<string, number>>(new Map())
 
   const [atlas, setAtlas]           = useState<AtlasResponse | null>(null)
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [revealUpTo, setRevealUpTo] = useState(9999)
+  const [sectionCount, setSectionCount] = useState(1)
 
   useEffect(() => {
     setLoading(true); setError(null); setAtlas(null)
-    fetchAtlas(documentId)
-      .then(d => { console.log('[AtlasExplorer] fetched atlas — entities:', d.entity_count, 'claims:', d.claim_count); setAtlas(d); onAtlasLoaded(d.entity_count) })
-      .catch(e => { console.error('[AtlasExplorer] fetch error:', e); setError(String(e)) })
+    Promise.all([
+      fetchAtlas(documentId),
+      fetchEntityMentions(documentId).catch(() => []),
+    ]).then(([atlasData, mentions]) => {
+      // Build entity → earliest section ordinal map
+      const om = new Map<string, number>()
+      for (const m of mentions) {
+        const cur = om.get(m.entity_id)
+        if (cur === undefined || m.section_ordinal < cur) om.set(m.entity_id, m.section_ordinal)
+      }
+      ordinalMapRef.current = om
+      const maxOrdinal = mentions.length > 0 ? Math.max(...mentions.map(m => m.section_ordinal)) : 1
+      setSectionCount(maxOrdinal)
+      setRevealUpTo(maxOrdinal)
+      revealUpToRef.current = maxOrdinal
+      setAtlas(atlasData)
+      onAtlasLoaded(atlasData.entity_count)
+    }).catch(e => { setError(String(e)) })
       .finally(() => setLoading(false))
   }, [documentId, onAtlasLoaded])
 
@@ -223,8 +242,6 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
     const labelsEl = labelsRef.current
     let animFrame: number
     let t = 0
-
-    console.log('[AtlasExplorer] init — entities:', atlas.entities.length, 'canvas:', canvas.clientWidth, 'x', canvas.clientHeight)
 
     // ── Renderer (placeholder color — updated after L0 palette is known) ──────
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
@@ -374,8 +391,6 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
     cz = entities.length ? cz / entities.length : 0
     let maxR = 0
     for (const e of entities) { const p = positions.get(e.id)!; const r = Math.sqrt((p.x-cx)**2 + (p.z-cz)**2); if (r > maxR) maxR = r }
-    console.log('[AtlasExplorer] layout — cx:', cx.toFixed(2), 'cz:', cz.toFixed(2), 'maxR:', maxR.toFixed(2), 'l0:', l0Set.size, 'l1:', l1Set.size, 'l3:', l3Set.size)
-
     // ── L0 atmosphere — tint background/fog with realm palette ───────────────
     const atmBase = new THREE.Color(0x060C18)
     let atmColor = atmBase.clone()
@@ -428,10 +443,6 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
 
       // Fill circle
       const fillGeo = new THREE.CircleGeometry(hullR, 48); fillGeo.rotateX(-Math.PI / 2)
-      scene.add(Object.assign(
-        new THREE.Mesh(fillGeo, new THREE.MeshBasicMaterial({ color: planeColor, transparent: true, opacity: 0.11, depthWrite: false, side: THREE.DoubleSide })),
-        { position: new THREE.Vector3(center.x, -0.02, center.z) }
-      ))
       const fillMesh = new THREE.Mesh(fillGeo, new THREE.MeshBasicMaterial({ color: planeColor, transparent: true, opacity: 0.11, depthWrite: false, side: THREE.DoubleSide }))
       fillMesh.position.set(center.x, -0.02, center.z)
       scene.add(fillMesh)
@@ -456,6 +467,8 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
       id: string; group: THREE.Group; shadow: THREE.Mesh
       phase: number; rotSpeed: number; baseY: number
       coreMat: THREE.MeshPhongMaterial; r: number
+      provenanceOrdinal: number
+      baseOpacity: number
     }
     const nodeData: NodeData[] = []
     const nodeById = new Map<string, NodeData>()
@@ -503,9 +516,9 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
       group.userData = { id: entity.id }
       group.scale.setScalar(0)   // grow-in starts at 0
 
-      // Core: L2 container nodes are semi-transparent so children show through
+      // Core: use entity palette color; fall back to tier color when no visual claims
       const coreMat = new THREE.MeshPhongMaterial({
-        color: 0xC8BC9E, emissive: 0xC8BC9E, emissiveIntensity: 0.22, shininess: 45,
+        color: col, emissive: col, emissiveIntensity: 0.18, shininess: 55,
         transparent: hasChildren && !isL3,
         opacity: hasChildren && !isL3 ? 0.38 : 1.0,
         side: hasChildren && !isL3 ? THREE.DoubleSide : THREE.FrontSide,
@@ -549,6 +562,8 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
         phase: Math.random() * Math.PI * 2,
         rotSpeed: (Math.random() * 0.28 + 0.06) * (Math.random() < 0.5 ? 1 : -1),
         baseY: pos.y, coreMat, r: effectiveR,
+        provenanceOrdinal: ordinalMapRef.current.get(entity.id) ?? 0,
+        baseOpacity: hasChildren && !isL3 ? 0.38 : 1.0,
       }
       nodeData.push(nd); nodeById.set(entity.id, nd)
     }
@@ -809,13 +824,18 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
       // Float + shadow + idle rotation (skipped during grow, same as artifact)
       if (!isGrowing) {
         for (const nd of nodeData) {
+          const visible = nd.provenanceOrdinal <= revealUpToRef.current
           const dy = Math.sin(t * 0.72 + nd.phase) * 0.07
           nd.group.position.y = nd.baseY + dy
           if (nd.id !== selId) nd.group.rotation.y += nd.rotSpeed * 0.016
           const gs = nd.group.scale.x
           const heightAboveGround = Math.max(0, nd.baseY + dy + 0.016)
-          ;(nd.shadow.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.22 - Math.abs(dy) * 0.5 - heightAboveGround * 0.018) * gs
+          ;(nd.shadow.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.22 - Math.abs(dy) * 0.5 - heightAboveGround * 0.018) * gs * (visible ? 1 : 0)
           const sc = (1 + Math.abs(dy) * 0.3) * gs; nd.shadow.scale.set(sc, 1, sc)
+          // Provenance fade
+          nd.coreMat.opacity = visible ? nd.baseOpacity : 0.07
+          const labelEl = labelEls.get(nd.id)
+          if (labelEl) labelEl.style.opacity = visible ? '1' : '0'
         }
       }
 
@@ -927,6 +947,26 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
               {l}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Provenance scrubber */}
+      {!loading && !error && sectionCount > 1 && (
+        <div style={{ position: 'absolute', bottom: 18, left: selectedId ? 308 : 18, right: 120, display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(6,12,24,0.72)', borderRadius: 4, padding: '8px 14px', zIndex: 20, backdropFilter: 'blur(8px)' }}>
+          <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 8, color: '#6B6352', letterSpacing: '.1em', whiteSpace: 'nowrap' }}>§1</span>
+          <input
+            type="range"
+            min={1}
+            max={sectionCount}
+            value={revealUpTo}
+            onChange={e => {
+              const v = Number(e.target.value)
+              setRevealUpTo(v)
+              revealUpToRef.current = v
+            }}
+            style={{ flex: 1, accentColor: '#B8943A', cursor: 'pointer' }}
+          />
+          <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 8, color: '#6B6352', letterSpacing: '.1em', whiteSpace: 'nowrap' }}>§{sectionCount}</span>
         </div>
       )}
     </div>

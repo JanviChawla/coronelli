@@ -112,7 +112,7 @@ export async function fetchEntityExcerpts(documentId: string, entityId: string):
   return res.json()
 }
 
-export async function patchAtlasEntity(documentId: string, entityId: string, body: { place_kind?: string; tier?: string }): Promise<void> {
+export async function patchAtlasEntity(documentId: string, entityId: string, body: { place_kind?: string; tier?: string; spatial_level?: number }): Promise<void> {
   const res = await fetch(`${BASE}/api/documents/${documentId}/atlas/entities/${entityId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

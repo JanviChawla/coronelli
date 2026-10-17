@@ -437,7 +437,7 @@ def run_catalog_gap_extraction(
         raise ExtractionError(str(exc)) from exc
 
     _finish_run(run, result, GLOBAL_CATALOG_GAP_VERSION)
-    candidates = _save_candidates(session, run, section_id, result, fallback_text=section.content or "")
+    candidates = _save_candidates(session, run, section_id, result, fallback_text=section.text or "")
     session.commit()
     session.refresh(run)
     for c in candidates:
@@ -505,6 +505,8 @@ def run_evidence_extraction(
     def _phase_callback(phase: str) -> None:
         run.current_phase = phase
         session.commit()
+        from app import events as ev
+        ev.emit(section.document_id, "phase_change", stage="evidence", phase=phase, section_id=section_id)
 
     try:
         result = provider.extract_evidence_only(section, global_catalog, phase_callback=_phase_callback)

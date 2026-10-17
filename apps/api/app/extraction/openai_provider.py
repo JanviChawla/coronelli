@@ -217,6 +217,10 @@ class OpenAIExtractionProvider:
                 payload["kind_descriptor"] = str(p["kind_descriptor"]).strip().lower()
             if p.get("tier"):
                 payload["tier"] = str(p["tier"]).strip().lower()
+            if p.get("parent_context"):
+                payload["parent_context"] = str(p["parent_context"]).strip()
+            if p.get("note"):
+                payload["note"] = str(p["note"]).strip()
             aliases = [a for a in (p.get("aliases") or []) if not _BARE_POSSESSIVE_RE.search(a or "")]
             if aliases:
                 payload["aliases"] = aliases
@@ -448,6 +452,10 @@ class OpenAIExtractionProvider:
                 payload["kind_descriptor"] = str(p["kind_descriptor"]).strip().lower()
             if p.get("tier"):
                 payload["tier"] = str(p["tier"]).strip().lower()
+            if p.get("parent_context"):
+                payload["parent_context"] = str(p["parent_context"]).strip()
+            if p.get("note"):
+                payload["note"] = str(p["note"]).strip()
             aliases = [a for a in (p.get("aliases") or []) if not _BARE_POSSESSIVE_RE.search(a or "")]
             if aliases:
                 payload["aliases"] = aliases
@@ -533,6 +541,10 @@ class OpenAIExtractionProvider:
                 payload["kind_descriptor"] = str(p["kind_descriptor"]).strip().lower()
             if p.get("tier"):
                 payload["tier"] = str(p["tier"]).strip().lower()
+            if p.get("parent_context"):
+                payload["parent_context"] = str(p["parent_context"]).strip()
+            if p.get("note"):
+                payload["note"] = str(p["note"]).strip()
             aliases = [a for a in (p.get("aliases") or []) if not _BARE_POSSESSIVE_RE.search(a or "")]
             if aliases:
                 payload["aliases"] = aliases

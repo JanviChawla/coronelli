@@ -231,3 +231,23 @@ export async function confirmSectionCatalog(sectionId: string): Promise<{ sectio
   if (!res.ok) throw new Error(`Section catalog confirm failed: ${res.statusText}`)
   return res.json()
 }
+
+export type SSEPhaseEvent =
+  | { type: 'connected' }
+  | { type: 'phase_change'; stage: string; phase: string; section_id?: string }
+  | { type: 'done'; stage: string }
+
+export function openDocumentEventStream(
+  documentId: string,
+  onEvent: (event: SSEPhaseEvent) => void,
+): EventSource {
+  const es = new EventSource(`${BASE}/api/documents/${documentId}/events`)
+  es.onmessage = (e: MessageEvent<string>) => {
+    try {
+      onEvent(JSON.parse(e.data) as SSEPhaseEvent)
+    } catch {
+      // ignore malformed frames
+    }
+  }
+  return es
+}

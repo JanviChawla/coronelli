@@ -38,7 +38,7 @@ const RELATIONSHIP_PREDICATES = [
 ]
 
 type PendingClaim = { id: string; subject: string; predicate: string; object: string }
-type CatalogCandidate = { id: string; name: string; excerpt: string | null; source: string; isRejected: boolean }
+type CatalogCandidate = { id: string; name: string; excerpt: string | null; source: string; isRejected: boolean; parentContext?: string | null; note?: string | null; sectionTitle?: string | null; spatialLevel?: number | null; placeType?: string | null }
 type DedupProposal = { id: string; subject: string; object: string; rationale: string | null; isRejected: boolean }
 type PendingVisualClaim = { id: string; subject: string; category: string; observation: string; excerpt: string | null; section_title: string | null }
 
@@ -60,6 +60,7 @@ interface Props {
   confirmingDedup?: boolean
   dedupConfirmCount?: number
   confirmCatalogSlot?: React.ReactNode
+  isReviewingCatalog?: boolean
 }
 
 // ── Small shared selects ───────────────────────────────────────────────────────
@@ -105,7 +106,7 @@ function PredicateSelect({ value, onChange }: { value: string; onChange: (v: str
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore = true, pendingClaims = [], pendingVisualClaims = [], catalogCandidates = [], onToggleCatalogReject, dedupProposals = [], onToggleDedupReject, hideHeader = false, onConfirmCatalog, confirmingCatalog = false, onConfirmDedup, confirmingDedup = false, dedupConfirmCount = 0, confirmCatalogSlot }: Props) {
+export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore = true, pendingClaims = [], pendingVisualClaims = [], catalogCandidates = [], onToggleCatalogReject, dedupProposals = [], onToggleDedupReject, hideHeader = false, onConfirmCatalog, confirmingCatalog = false, onConfirmDedup, confirmingDedup = false, dedupConfirmCount = 0, confirmCatalogSlot, isReviewingCatalog = false }: Props) {
   const [entities, setEntities] = useState<AtlasEntity[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
@@ -115,12 +116,23 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
   const [dropTarget, setDropTarget] = useState<string | null>(null)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
+  // Catalog group 2 (Rooms & Features / L3) starts collapsed — too many entries in long books
+  const [collapsedCatalogGroups, setCollapsedCatalogGroups] = useState<Set<number>>(new Set([2]))
 
   function toggleCollapsed(id: string) {
     setCollapsedIds(prev => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
+      return next
+    })
+  }
+
+  function toggleCatalogGroup(groupId: number) {
+    setCollapsedCatalogGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(groupId)) next.delete(groupId)
+      else next.add(groupId)
       return next
     })
   }
@@ -139,9 +151,10 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
   const [absorbing, setAbsorbing] = useState(false)
   const [absorbMsg, setAbsorbMsg] = useState('')
 
-  // Inline type/tier editing
+  // Inline type/tier/level editing
   const [editingTypeId, setEditingTypeId] = useState<string | null>(null)
   const [editingTierId, setEditingTierId] = useState<string | null>(null)
+  const [editingLevelId, setEditingLevelId] = useState<string | null>(null)
 
   // Excerpts for the selected entity
   const [excerpts, setExcerpts] = useState<EntityExcerpt[]>([])
@@ -163,6 +176,18 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
   }, [documentId])
 
   useEffect(() => { load() }, [load])
+
+  // Auto-expand Rooms & Features when catalog review starts
+  useEffect(() => {
+    if (isReviewingCatalog) {
+      setCollapsedCatalogGroups(prev => {
+        if (!prev.has(2)) return prev
+        const next = new Set(prev)
+        next.delete(2)
+        return next
+      })
+    }
+  }, [isReviewingCatalog])
 
   // ── Derived hierarchy ────────────────────────────────────────────────────────
 
@@ -408,13 +433,38 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
           <span style={{ fontSize: '0.86rem', color: 'var(--ink)', flex: 1 }}>
             {entity.name}
           </span>
-          <span style={{
-            fontSize: '0.55rem', fontFamily: "'Space Mono', monospace",
-            color: 'var(--ink-faint)', flexShrink: 0, letterSpacing: '0.04em',
-            opacity: 0.6,
-          }}>
-            L{entity.payload.spatial_level != null ? (entity.payload.spatial_level as number) : depthOf.get(id)}
-          </span>
+          {!readOnly && editingLevelId === id ? (
+            <select
+              autoFocus
+              value={entity.payload.spatial_level != null ? String(entity.payload.spatial_level) : ''}
+              onClick={e => e.stopPropagation()}
+              onChange={e => handlePatchLevel(id, e.target.value)}
+              onBlur={() => setEditingLevelId(null)}
+              style={{
+                fontSize: '0.62rem', padding: '0.1rem 0.25rem',
+                border: '1px solid var(--border-warm)', borderRadius: '3px',
+                background: 'var(--parchment-alt)', color: 'var(--ink-muted)',
+                flexShrink: 0, maxWidth: '72px',
+              }}
+            >
+              <option value="">— (auto)</option>
+              {[0, 1, 2, 3].map(l => <option key={l} value={String(l)}>L{l}</option>)}
+            </select>
+          ) : (
+            <span
+              onClick={readOnly ? undefined : (e => { e.stopPropagation(); setEditingLevelId(id) })}
+              title={readOnly ? undefined : 'Click to set spatial level'}
+              style={{
+                fontSize: '0.55rem', fontFamily: "'Space Mono', monospace",
+                color: 'var(--ink-faint)', flexShrink: 0, letterSpacing: '0.04em',
+                opacity: 0.6,
+                cursor: readOnly ? 'default' : 'pointer',
+                borderBottom: readOnly ? 'none' : '1px dotted rgba(212,188,138,0.3)',
+              }}
+            >
+              L{entity.payload.spatial_level != null ? (entity.payload.spatial_level as number) : depthOf.get(id)}
+            </span>
+          )}
           {!readOnly && editingTypeId === id ? (
             <select
               autoFocus
@@ -479,7 +529,7 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
           {(() => {
             const colors = entity.payload.colors as { primary?: string; atmosphere?: string; accent?: string } | undefined
             return (
-              <span style={{ display: 'flex', gap: '2px', flexShrink: 0, alignItems: 'center' }}>
+              <span style={{ display: 'flex', gap: '4px', flexShrink: 0, alignItems: 'center' }}>
                 {(['primary', 'atmosphere', 'accent'] as const).map(role => {
                   const hex = colors?.[role]
                   return (
@@ -489,8 +539,8 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
                       style={{
                         display: 'inline-block',
                         width: '11px',
-                        height: '14px',
-                        borderRadius: '2px',
+                        height: '11px',
+                        borderRadius: '0',
                         background: hex ?? 'transparent',
                         border: hex ? 'none' : '1px dashed rgba(212,188,138,0.25)',
                         flexShrink: 0,
@@ -538,6 +588,14 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
     setSaving(entityId)
     setEditingTierId(null)
     try { await patchAtlasEntity(documentId, entityId, { tier }); await load() }
+    finally { setSaving(null) }
+  }
+
+  async function handlePatchLevel(entityId: string, level: string) {
+    setSaving(entityId)
+    setEditingLevelId(null)
+    const spatial_level = level === '' ? -1 : parseInt(level, 10)
+    try { await patchAtlasEntity(documentId, entityId, { spatial_level }); await load() }
     finally { setSaving(null) }
   }
 
@@ -685,47 +743,101 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
 
           {/* Tree */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '0.35rem 0.5rem 1rem' }}>
-            {/* Catalog candidates (shown during catalog review, reject by clicking) */}
-            {catalogCandidates.map(c => (
-              <div
-                key={c.id}
-                onMouseEnter={e => {
-                  if (!c.excerpt) return
-                  const rect = e.currentTarget.getBoundingClientRect()
-                  setCatalogTooltip({ id: c.id, x: rect.right + 10, y: rect.top })
-                }}
-                onMouseLeave={() => setCatalogTooltip(null)}
-                onClick={() => onToggleCatalogReject?.(c.id)}
-                style={{
-                  paddingLeft: '0.5rem', paddingTop: '0.3rem', paddingBottom: '0.3rem', paddingRight: '0.5rem',
-                  display: 'flex', alignItems: 'center', gap: '0.45rem',
-                  borderRadius: '4px', cursor: 'pointer',
-                  opacity: c.isRejected ? 0.4 : 1,
-                  border: '1px solid transparent',
-                  userSelect: 'none',
-                }}
-              >
-                <span style={{
-                  width: '0.75rem', height: '0.75rem', borderRadius: '50%', flexShrink: 0,
-                  border: c.isRejected ? '1px solid rgba(180,60,60,0.5)' : '1px solid var(--gold)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: '0.38rem', color: c.isRejected ? 'rgba(180,60,60,0.7)' : 'var(--gold)',
-                }}>
-                  {c.isRejected ? '✕' : '◉'}
-                </span>
-                <span style={{ fontSize: '0.86rem', color: c.isRejected ? 'var(--ink-faint)' : 'var(--ink)', flex: 1, textDecoration: c.isRejected ? 'line-through' : 'none' }}>
-                  {c.name}
-                </span>
-                {c.source === 'gap' && (
-                  <span style={{ fontSize: '0.52rem', color: 'var(--ink-faint)', flexShrink: 0, letterSpacing: '0.08em', opacity: 0.7 }}>gap</span>
-                )}
-              </div>
-            ))}
+            {/* Catalog candidates — grouped by spatial level */}
+            {catalogCandidates.length > 0 && (() => {
+              const CATALOG_GROUPS = [
+                { id: 0, label: 'Realms & Regions', color: '#C9A84C', test: (lvl: number | null | undefined) => lvl === 0 || lvl === 1 },
+                { id: 1, label: 'Places & Structures', color: '#7A9BB5', test: (lvl: number | null | undefined) => lvl === 2 },
+                { id: 2, label: 'Rooms & Features', color: '#8FAF8F', test: (lvl: number | null | undefined) => lvl === 3 || lvl == null },
+              ]
+              return CATALOG_GROUPS.map(group => {
+                const members = catalogCandidates.filter(c => group.test(c.spatialLevel))
+                if (members.length === 0) return null
+                const collapsed = collapsedCatalogGroups.has(group.id)
+                const kept = members.filter(c => !c.isRejected).length
+                return (
+                  <div key={group.id}>
+                    <div
+                      onClick={() => toggleCatalogGroup(group.id)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '0.4rem',
+                        padding: '0.55rem 0.5rem 0.25rem',
+                        cursor: 'pointer', userSelect: 'none',
+                        borderTop: group.id > 0 ? '1px solid rgba(212,188,138,0.1)' : undefined,
+                        marginTop: group.id > 0 ? '0.25rem' : undefined,
+                      }}
+                    >
+                      <span style={{ fontSize: '0.48rem', color: group.color, flexShrink: 0, lineHeight: 1 }}>{collapsed ? '▶' : '▼'}</span>
+                      <span style={{ fontSize: '0.68rem', fontWeight: 600, color: group.color, letterSpacing: '0.07em', textTransform: 'uppercase', flex: 1 }}>
+                        {group.label}
+                      </span>
+                      <span style={{ fontSize: '0.62rem', color: 'var(--ink-faint)', flexShrink: 0 }}>
+                        {kept < members.length ? `${kept} / ${members.length}` : members.length}
+                      </span>
+                    </div>
+                    {!collapsed && members.map(c => (
+                      <div
+                        key={c.id}
+                        onMouseEnter={e => {
+                          if (!c.excerpt) return
+                          const rect = e.currentTarget.getBoundingClientRect()
+                          setCatalogTooltip({ id: c.id, x: rect.right + 10, y: rect.top })
+                        }}
+                        onMouseLeave={() => setCatalogTooltip(null)}
+                        onClick={() => onToggleCatalogReject?.(c.id)}
+                        style={{
+                          paddingLeft: '0.5rem', paddingTop: '0.3rem', paddingBottom: '0.3rem', paddingRight: '0.5rem',
+                          display: 'flex', alignItems: 'flex-start', gap: '0.45rem',
+                          borderRadius: '4px', cursor: 'pointer',
+                          opacity: c.isRejected ? 0.4 : 1,
+                          border: '1px solid transparent',
+                          userSelect: 'none',
+                        }}
+                      >
+                        <span style={{
+                          width: '0.75rem', height: '0.75rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.1rem',
+                          border: c.isRejected ? '1px solid rgba(180,60,60,0.5)' : '1px solid var(--gold)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: '0.38rem', color: c.isRejected ? 'rgba(180,60,60,0.7)' : 'var(--gold)',
+                        }}>
+                          {c.isRejected ? '✕' : '◉'}
+                        </span>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '0.86rem', color: c.isRejected ? 'var(--ink-faint)' : 'var(--ink)', textDecoration: c.isRejected ? 'line-through' : 'none' }}>
+                              {c.name}
+                            </span>
+                            {c.placeType && (
+                              <span style={{ fontSize: '0.58rem', color: group.color, letterSpacing: '0.05em', opacity: 0.85, flexShrink: 0 }}>
+                                {c.spatialLevel != null ? `L${c.spatialLevel} · ` : ''}{c.placeType}
+                              </span>
+                            )}
+                          </span>
+                          {(c.parentContext || c.sectionTitle) && (
+                            <span style={{ display: 'block', fontSize: '0.72rem', color: 'var(--ink-faint)', opacity: 0.75, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {c.parentContext ? `in ${c.parentContext}` : ''}{c.parentContext && c.sectionTitle ? ' · ' : ''}{c.sectionTitle ?? ''}
+                            </span>
+                          )}
+                          {c.note && (
+                            <span style={{ display: 'block', fontSize: '0.70rem', color: 'var(--ink-faint)', opacity: 0.6, fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {c.note}
+                            </span>
+                          )}
+                        </span>
+                        {c.source === 'gap' && (
+                          <span style={{ fontSize: '0.52rem', color: 'var(--ink-faint)', flexShrink: 0, letterSpacing: '0.08em', opacity: 0.7, marginTop: '0.15rem' }}>gap</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )
+              })
+            })()}
             {/* Real entity tree */}
             {rootIds.map(id => renderNode(id, 0))}
             {entities.length === 0 && catalogCandidates.length === 0 && (
               <p style={{ padding: '1rem 0.75rem', fontSize: '0.82rem', color: 'var(--ink-faint)' }}>
-                No entities in atlas yet.
+                {isReviewingCatalog ? 'No places found. This may be a preamble or title section — click Skip to continue to the next section, or add a place manually.' : 'No entities in atlas yet.'}
               </p>
             )}
           </div>
@@ -895,8 +1007,8 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
             </div>
           </div>}
 
-          {/* Confirm catalog sticky bar */}
-          {catalogCandidates.length > 0 && onConfirmCatalog && (
+          {/* Confirm catalog sticky bar — shown whenever handler is provided, even with 0 gap candidates */}
+          {onConfirmCatalog && (
             <div style={{
               flexShrink: 0, borderTop: '1px solid rgba(212,188,138,0.3)',
               padding: '0.55rem 1.25rem',

@@ -1,7 +1,7 @@
 ﻿import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { CandidatesTable } from '../candidates/CandidatesTable'
 import { type Candidate, fetchCandidates, fetchDocumentEntityCandidates, patchCandidateReviewState } from '../candidates/candidateApi'
-import { fetchPreflight, triggerDocumentCatalog, getDocumentCatalogStatus, confirmDocumentCatalog, triggerEvidenceExtraction, getExtractionProgress, fetchPlaceSuggestions, addManualCandidate, triggerDocumentCatalogGap, getDocumentCatalogGapStatus, triggerDedupPass, getDedupStatus, promoteDedup, fetchDedupCandidates, triggerCatalogExtraction, triggerSectionCatalogGap, confirmSectionCatalog, type DedupCandidate } from './extractionApi'
+import { fetchPreflight, triggerDocumentCatalog, getDocumentCatalogStatus, confirmDocumentCatalog, triggerEvidenceExtraction, getExtractionProgress, fetchPlaceSuggestions, addManualCandidate, triggerDocumentCatalogGap, getDocumentCatalogGapStatus, triggerDedupPass, getDedupStatus, promoteDedup, fetchDedupCandidates, triggerCatalogExtraction, triggerSectionCatalogGap, confirmSectionCatalog, openDocumentEventStream, type DedupCandidate } from './extractionApi'
 import type { Document, Section } from './sourceApi'
 import { fetchAtlas } from '../atlas/atlasApi'
 import { triggerVisualSynthesis, getSynthesisProgress } from '../synthesis/synthesisApi'
@@ -193,6 +193,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const synthPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const evidencePollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const esRef = useRef<EventSource | null>(null)
   const catalogPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [dedupDone, setDedupDone] = useState(false)
   const [runningDedup, setRunningDedup] = useState(false)
@@ -233,6 +234,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
       if (evidencePollRef.current) clearInterval(evidencePollRef.current)
       if (synthPollRef.current) clearInterval(synthPollRef.current)
       if (dedupPollRef.current) clearInterval(dedupPollRef.current)
+      if (esRef.current) { esRef.current.close(); esRef.current = null }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [document.id, sections.length])
@@ -466,7 +468,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
 
     const section = sections[idx]
     setCatalogSectionIdx(idx)
-    setCurrentIdx(idx + 1)
+    setCurrentIdx(idx)
     setCurrentTitle(section.title)
     setPhase('cataloging')
     setRejectedCandidateIds(new Set())
@@ -480,6 +482,18 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
     setCurrentSectionCandidates(entityCands)
     if (timerRef.current) clearInterval(timerRef.current)
     setPhase('catalog-review')
+  }
+
+  async function handleRerunSection() {
+    setWorkflowError(null)
+    try {
+      await _runCatalogForSection(catalogSectionIdx, true)
+    } catch (e) {
+      if (timerRef.current) clearInterval(timerRef.current)
+      setWorkflowError(e instanceof Error ? e.message : 'Catalog failed.')
+      setErrorInStep(1)
+      setPhase('error')
+    }
   }
 
   async function handleRunCatalog(force = false) {
@@ -600,28 +614,25 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
     const startTime = Date.now()
     timerRef.current = setInterval(() => setElapsedMs(Date.now() - startTime), 100)
 
+    esRef.current = openDocumentEventStream(document.id, (event) => {
+      if (event.type === 'phase_change' && event.stage === 'evidence') {
+        setEvidenceSubPhase(event.phase)
+      }
+    })
+
     try {
       let total = 0
       for (let i = 0; i < sections.length; i++) {
         setCurrentIdx(i + 1)
         setCurrentTitle(sections[i].title)
         setEvidenceSubPhase(null)
-
-        const sectionId = sections[i].id
-        evidencePollRef.current = setInterval(async () => {
-          try {
-            const prog = await getExtractionProgress(sectionId)
-            if (prog.current_phase) setEvidenceSubPhase(prog.current_phase)
-          } catch { /* ignore transient poll errors */ }
-        }, 1500)
-
-        await triggerEvidenceExtraction(sectionId)
-        if (evidencePollRef.current) clearInterval(evidencePollRef.current)
-        const sectionCandidates = await fetchCandidates(sectionId)
+        await triggerEvidenceExtraction(sections[i].id)
+        const sectionCandidates = await fetchCandidates(sections[i].id)
         total += sectionCandidates.filter(c => c.kind !== 'entity').length
         setCandidatesSoFar(total)
       }
 
+      if (esRef.current) { esRef.current.close(); esRef.current = null }
       if (timerRef.current) clearInterval(timerRef.current)
       setTotalElapsedMs(Date.now() - startTime)
 
@@ -635,8 +646,8 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
       setTotalCandidates(grandTotal)
       setPhase('inspecting')
     } catch (e) {
+      if (esRef.current) { esRef.current.close(); esRef.current = null }
       if (timerRef.current) clearInterval(timerRef.current)
-      if (evidencePollRef.current) clearInterval(evidencePollRef.current)
       setWorkflowError(e instanceof Error ? e.message : 'Spatial claims failed.')
       setErrorInStep(2)
       setPhase('error')
@@ -650,24 +661,21 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
     setSynthPhase(null)
     const synthStart = Date.now()
     timerRef.current = setInterval(() => setSynthElapsedMs(Date.now() - synthStart), 100)
-    synthPollRef.current = setInterval(async () => {
-      try {
-        const prog = await getSynthesisProgress(document.id)
-        if (prog.current_phase) setSynthPhase(prog.current_phase)
-      } catch { /* ignore transient poll errors */ }
-    }, 2000)
+    esRef.current = openDocumentEventStream(document.id, (event) => {
+      if (event.type === 'phase_change') setSynthPhase(event.phase)
+    })
     try {
       await triggerVisualSynthesis(document.id)
+      if (esRef.current) { esRef.current.close(); esRef.current = null }
       if (timerRef.current) clearInterval(timerRef.current)
-      if (synthPollRef.current) clearInterval(synthPollRef.current)
       const atlas = await fetchAtlas(document.id)
       setCanonicalEntityCount(atlas.entity_count)
       setCanonicalClaimCount(atlas.claim_count)
       setAtlasKey(k => k + 1)
       setPhase('done')
     } catch (e) {
+      if (esRef.current) { esRef.current.close(); esRef.current = null }
       if (timerRef.current) clearInterval(timerRef.current)
-      if (synthPollRef.current) clearInterval(synthPollRef.current)
       setWorkflowError(e instanceof Error ? e.message : 'Building claims failed.')
       setErrorInStep(3)
       setPhase('error')
@@ -838,7 +846,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
   const atlasError = phase === 'error' && errorInStep === 3
 
   const totalCostBase = totalCost ?? sections.length * 0.0020
-  const catalogCostBase = totalCostBase / 8
+  const catalogCostBase = totalCostBase / 4  // catalog pass + gap pass per section (≈ 2× catalog alone)
   const catalogCostLo = catalogCostBase * 0.85
   const catalogCostHi = catalogCostBase * 1.15
   const evidenceCostBase = (totalCostBase * 7) / 8
@@ -928,9 +936,10 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
             Est. <span style={{ fontFamily: 'monospace', color: 'var(--sidebar-text)' }}>
               {totalCost !== null ? `$${catalogCostLo.toFixed(2)}–$${catalogCostHi.toFixed(2)}` : '…'}
             </span>
+            <span style={{ fontSize: '0.68rem', marginLeft: '0.3rem', opacity: 0.7 }}>catalog + gap · all {sections.length} sections</span>
           </span>
           <span style={{ fontSize: '0.72rem', color: 'var(--sidebar-muted)', fontFamily: 'monospace' }}>
-            {sections.length} section{sections.length !== 1 ? 's' : ''}{cachedCount > 0 ? ` · ${cachedCount} cached` : ''}
+            {cachedCount > 0 ? `${cachedCount} of ${sections.length} cached` : `${sections.length} section${sections.length !== 1 ? 's' : ''}`}
           </span>
           <button className="btn-cta" type="button" onClick={() => handleRunCatalog()} style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>Find places</button>
         </div>
@@ -994,12 +1003,21 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
               </div>
             )}
           </div>
+          {perSectionMode && (
+            <button type="button" onClick={handleRerunSection}
+              style={{ background: 'none', border: '1px solid var(--sidebar-border)', borderRadius: '3px', cursor: 'pointer', fontSize: '0.72rem', color: 'var(--gold)', padding: '0.25rem 0.6rem' }}
+              title="Force re-run catalog for this section">
+              ↺ Re-run
+            </button>
+          )}
           <button className="btn-cta" type="button"
             onClick={perSectionMode ? handleConfirmSection : handleConfirmCatalog}
             disabled={confirmingCatalog}
             style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>
             {confirmingCatalog ? 'Confirming…' : perSectionMode
-              ? (catalogSectionIdx + 1 < sections.length ? `Confirm §${catalogSectionIdx + 1} →` : 'Confirm catalog →')
+              ? (currentSectionCandidates.length === 0 && catalogSectionIdx + 1 < sections.length
+                  ? `Skip §${catalogSectionIdx + 1} →`
+                  : catalogSectionIdx + 1 < sections.length ? `Confirm §${catalogSectionIdx + 1} →` : 'Confirm catalog →')
               : 'Confirm catalog →'}
           </button>
           {workflowError && <span style={{ fontSize: '0.72rem', color: 'var(--error-text)' }}>{workflowError}</span>}
@@ -1229,6 +1247,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
           return next
         })}
         hideHeader={true}
+        isReviewingCatalog={perSectionMode && phase === 'catalog-review'}
         onConfirmCatalog={(phase === 'catalog-review' || gapReviewPending) ? (perSectionMode ? handleConfirmSection : handleConfirmCatalog) : undefined}
         confirmingCatalog={confirmingCatalog}
         confirmCatalogSlot={phase === 'catalog-review' || gapReviewPending ? (
@@ -1434,7 +1453,9 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
           const isCataloging = phase === 'cataloging'
           const label = isCataloging ? 'Finding…' : catalogRunOnce ? 'Catalog +' : 'Catalog'
           const clickable = !isCataloging && phase !== 'preflight'
-          const handler = catalogRunOnce ? handleGapPass : () => handleRunCatalog(false)
+          const handler = catalogRunOnce
+            ? (perSectionMode ? handleRerunSection : handleGapPass)
+            : () => handleRunCatalog(false)
           return (
             <>
               <button type="button"

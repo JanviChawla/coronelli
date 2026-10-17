@@ -1128,3 +1128,34 @@ def get_run(run_id: str, db: Session = Depends(get_db)) -> RunResponse:
     if run is None:
         raise HTTPException(status_code=404, detail=f"Extraction run '{run_id}' not found.")
     return RunResponse.model_validate(run)
+
+
+@router.get("/api/documents/{document_id}/events")
+def document_event_stream(document_id: str) -> "StreamingResponse":
+    """SSE stream — emits phase_change events while extraction/synthesis runs."""
+    import queue as _queue
+    from fastapi.responses import StreamingResponse
+    from app import events as ev
+
+    def generate():
+        q = ev.subscribe(document_id)
+        try:
+            yield 'data: {"type":"connected"}\n\n'
+            while True:
+                try:
+                    chunk = q.get(timeout=25)
+                    if chunk is None:
+                        break
+                    yield chunk
+                except _queue.Empty:
+                    yield ": heartbeat\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            ev.unsubscribe(document_id, q)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
