@@ -158,9 +158,8 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
   const [loadingExcerpts, setLoadingExcerpts] = useState(false)
   const [catalogTooltip, setCatalogTooltip] = useState<{ id: string; x: number; y: number } | null>(null)
 
-  // Containment/SAME_AS filter toggles
+  // Containment filter toggle (SAME_AS always excluded from relationships panel)
   const [showContainment, setShowContainment] = useState(true)
-  const [showSameAs, setShowSameAs] = useState(true)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -259,22 +258,28 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
   const CONTAINMENT_ONLY = new Set(['LOCATED_IN', 'CONTAINS'])
   const spatialClaims = allSpatialClaims.filter(c => {
     const pred = c.predicate ?? ''
+    if (pred === 'SAME_AS') return false
     if (!showContainment && CONTAINMENT_ONLY.has(pred)) return false
-    if (!showSameAs && pred === 'SAME_AS') return false
     return true
   })
 
   // Pending claims from evidence extraction (shown when no synthesized claims exist yet)
   const filteredPendingClaims = (pendingClaims ?? []).filter(c => {
+    if (c.predicate === 'SAME_AS') return false
     if (!showContainment && CONTAINMENT_ONLY.has(c.predicate)) return false
-    if (!showSameAs && c.predicate === 'SAME_AS') return false
     return true
   })
-  // Show pending evidence when no non-SAME_AS synthesized claims exist yet.
-  // SAME_AS claims from manual absorb are always shown (they're created immediately on merge).
   const showingPending = allSpatialClaims.filter(c => c.predicate !== 'SAME_AS').length === 0 && filteredPendingClaims.length > 0
-  const permanentSameAsClaims = showingPending ? spatialClaims.filter(c => c.predicate === 'SAME_AS') : []
   const sortedEntities = [...entities].sort((a, b) => a.name.localeCompare(b.name))
+
+  // Focused entity drives center detail panel + right panel entity filter
+  const focusedId = selectedIds[0] ?? null
+  const focusedEntity = focusedId ? entityMap.get(focusedId) : null
+
+  // Right panel: filter claims to focused entity when one is selected
+  const visibleSpatialClaims = focusedId
+    ? spatialClaims.filter(c => c.subject_ref === focusedId || (c.object_refs ?? []).includes(focusedId))
+    : spatialClaims
 
   // ── Drag-and-drop handlers ───────────────────────────────────────────────────
 
@@ -699,12 +704,12 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
         </div>
       )}
 
-      {/* ── Two-panel body ───────────────────────────────────────────────────── */}
+      {/* ── Three-panel body ─────────────────────────────────────────────────── */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
         {/* ── Left: Containment tree ──────────────────────────────────────── */}
         <div style={{
-          width: '38%', flexShrink: 0,
+          width: '26%', flexShrink: 0,
           borderRight: '1px solid var(--border-warm)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}>
@@ -842,127 +847,15 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
             )}
           </div>
 
-          {/* Selection detail + absorb footer */}
+          {/* Absorb action row */}
           {!readOnly && <div style={{
-            borderTop: '1px solid rgba(212,188,138,0.25)',
-            flexShrink: 0,
-            display: 'flex', flexDirection: 'column',
-            maxHeight: selectedIds.length > 0 ? '38%' : '2.8rem',
-            transition: 'max-height 0.2s ease',
-            overflow: 'hidden',
-          }}>
-            {/* Excerpt pane — visible when 1+ selected */}
-            {selectedIds.length >= 1 && (
-              <div style={{ flex: 1, overflowY: 'auto', padding: '0.6rem 1.25rem 0.4rem' }}>
-                <div style={{ fontSize: '0.58rem', color: 'var(--ink-faint)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: '0.4rem' }}>
-                  {entityMap.get(selectedIds[0])?.name}
-                  {selectedIds.length === 2 && (
-                    <span style={{ opacity: 0.55 }}> · click Absorb below to merge with {entityMap.get(selectedIds[1])?.name}</span>
-                  )}
-                </div>
-                {loadingExcerpts && (
-                  <p style={{ fontSize: '0.75rem', color: 'var(--ink-faint)', margin: 0 }}>Loading excerpts…</p>
-                )}
-                {!loadingExcerpts && excerpts.length === 0 && (
-                  <p style={{ fontSize: '0.75rem', color: 'var(--ink-faint)', margin: 0, fontStyle: 'italic' }}>No excerpts found for this place.</p>
-                )}
-                {!loadingExcerpts && excerpts.map((ex, i) => (
-                  <div key={i} style={{ marginBottom: '0.6rem' }}>
-                    {ex.section_title && (
-                      <div style={{ fontSize: '0.58rem', color: 'var(--gold)', opacity: 0.7, marginBottom: '0.15rem', letterSpacing: '0.04em' }}>
-                        {ex.section_title}
-                      </div>
-                    )}
-                    <p style={{
-                      fontSize: '0.78rem', color: 'var(--ink-muted)', margin: 0,
-                      lineHeight: 1.55, fontStyle: 'italic',
-                      borderLeft: '2px solid rgba(212,188,138,0.3)', paddingLeft: '0.6rem',
-                    }}>
-                      "{ex.excerpt}"
-                    </p>
-                  </div>
-                ))}
-                {(() => {
-                  const selectedEntity = entityMap.get(selectedIds[0])
-                  if (!selectedEntity) return null
-
-                  // Pre-synthesis: show raw extraction candidates
-                  if (pendingVisualClaims.length > 0) {
-                    const names = new Set([
-                      selectedEntity.name.toLowerCase(),
-                      ...(selectedEntity.aliases ?? []).map(a => a.toLowerCase()),
-                    ])
-                    const matching = pendingVisualClaims.filter(v => names.has(v.subject.toLowerCase()))
-                    if (matching.length === 0) return null
-                    return (
-                      <div style={{ marginTop: '0.75rem' }}>
-                        <div style={{ fontSize: '0.58rem', color: 'var(--ink-faint)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: '0.4rem', borderTop: '1px solid rgba(212,188,138,0.15)', paddingTop: '0.55rem' }}>
-                          Visual observations · {matching.length}
-                        </div>
-                        {matching.map(v => (
-                          <div key={v.id} style={{ marginBottom: '0.55rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', marginBottom: '0.15rem' }}>
-                              {v.section_title && (
-                                <span style={{ fontSize: '0.58rem', color: 'var(--gold)', opacity: 0.7, letterSpacing: '0.04em' }}>{v.section_title}</span>
-                              )}
-                              <span style={{ fontSize: '0.55rem', color: 'var(--ink-faint)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>{v.category}</span>
-                            </div>
-                            <p style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', margin: 0, lineHeight: 1.5, borderLeft: '2px solid rgba(139,171,202,0.35)', paddingLeft: '0.6rem' }}>
-                              {v.observation}
-                            </p>
-                            {v.excerpt && v.excerpt !== v.observation && (
-                              <p style={{ fontSize: '0.72rem', color: 'var(--ink-faint)', margin: '0.2rem 0 0 0.6rem', lineHeight: 1.4, fontStyle: 'italic' }}>
-                                "{v.excerpt}"
-                              </p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )
-                  }
-
-                  // Post-synthesis: show promoted MapClaim visual records from entity.claims
-                  const visualClaims = (selectedEntity.claims ?? []).filter(c => c.claim_type === 'visual')
-                  if (visualClaims.length === 0) return null
-                  return (
-                    <div style={{ marginTop: '0.75rem' }}>
-                      <div style={{ fontSize: '0.58rem', color: 'var(--ink-faint)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: '0.4rem', borderTop: '1px solid rgba(212,188,138,0.15)', paddingTop: '0.55rem' }}>
-                        Visual observations · {visualClaims.length}
-                      </div>
-                      {visualClaims.map(v => {
-                        const category = String(v.payload.category ?? v.payload.visual_property ?? '')
-                        const observation = String(v.payload.observation ?? v.payload.value ?? '')
-                        return (
-                          <div key={v.id} style={{ marginBottom: '0.55rem' }}>
-                            {category && (
-                              <span style={{ fontSize: '0.55rem', color: 'var(--ink-faint)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: '0.15rem' }}>{category}</span>
-                            )}
-                            <p style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', margin: 0, lineHeight: 1.5, borderLeft: '2px solid rgba(139,171,202,0.35)', paddingLeft: '0.6rem' }}>
-                              {observation}
-                            </p>
-                            {v.excerpt && v.excerpt !== observation && (
-                              <p style={{ fontSize: '0.72rem', color: 'var(--ink-faint)', margin: '0.2rem 0 0 0.6rem', lineHeight: 1.4, fontStyle: 'italic' }}>
-                                "{v.excerpt}"
-                              </p>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )
-                })()}
-              </div>
-            )}
-
-            {/* Absorb action row */}
-            <div style={{
               padding: '0.5rem 1.25rem',
               borderTop: selectedIds.length >= 1 ? '1px solid rgba(212,188,138,0.15)' : 'none',
               display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', flexShrink: 0,
             }}>
               {selectedIds.length === 0 && (
                 <p style={{ fontSize: '0.72rem', color: 'var(--ink-faint)', margin: 0 }}>
-                  Click a place to inspect excerpts. Click two to absorb.
+                  Click a place to inspect it. Click two to absorb.
                 </p>
               )}
               {selectedIds.length === 1 && (
@@ -1004,7 +897,6 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
               {absorbMsg && (
                 <span style={{ fontSize: '0.72rem', color: 'var(--ink-muted)', width: '100%' }}>{absorbMsg}</span>
               )}
-            </div>
           </div>}
 
           {/* Confirm catalog sticky bar — shown whenever handler is provided, even with 0 gap candidates */}
@@ -1034,7 +926,147 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
           )}
         </div>
 
-        {/* ── Right: Relationships + Merge ────────────────────────────────── */}
+        {/* ── Center: Entity detail ───────────────────────────────────────── */}
+        <div style={{
+          width: '32%', flexShrink: 0,
+          borderRight: '1px solid var(--border-warm)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}>
+          <div style={{ padding: '0.8rem 1.25rem 0.5rem', borderBottom: '1px solid rgba(212,188,138,0.25)', flexShrink: 0 }}>
+            <div style={{ fontSize: '0.58rem', color: 'var(--ink-faint)', letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: '0.22rem' }}>
+              Place Detail
+            </div>
+            {focusedEntity ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.88rem', color: 'var(--ink)', fontWeight: 600 }}>{focusedEntity.name}</span>
+                {(() => {
+                  const colors = focusedEntity.payload.colors as { primary?: string; atmosphere?: string; accent?: string } | undefined
+                  return (
+                    <span style={{ display: 'flex', gap: '4px', flexShrink: 0, alignItems: 'center' }}>
+                      {(['primary', 'atmosphere', 'accent'] as const).map(role => {
+                        const hex = colors?.[role]
+                        return (
+                          <span key={role} title={hex ? `${role}: ${hex}` : `${role}: none`} style={{
+                            width: '10px', height: '10px', borderRadius: '2px', flexShrink: 0,
+                            background: hex ?? 'transparent',
+                            border: hex ? '1px solid rgba(0,0,0,0.15)' : '1px dashed rgba(212,188,138,0.3)',
+                          }} />
+                        )
+                      })}
+                    </span>
+                  )
+                })()}
+                {selectedIds.length === 2 && (
+                  <span style={{ fontSize: '0.65rem', color: 'var(--ink-faint)', fontStyle: 'italic' }}>
+                    · absorbs {entityMap.get(selectedIds[1])?.name}
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div style={{ fontSize: '0.73rem', color: 'var(--ink-faint)', fontStyle: 'italic' }}>
+                Click a place to inspect it
+              </div>
+            )}
+          </div>
+
+          <div style={{ flex: 1, overflowY: 'auto', padding: '0.6rem 1.25rem 1rem' }}>
+            {focusedEntity ? (
+              <>
+                {loadingExcerpts && (
+                  <p style={{ fontSize: '0.75rem', color: 'var(--ink-faint)', margin: 0 }}>Loading excerpts…</p>
+                )}
+                {!loadingExcerpts && excerpts.length === 0 && (
+                  <p style={{ fontSize: '0.75rem', color: 'var(--ink-faint)', margin: 0, fontStyle: 'italic' }}>No excerpts found for this place.</p>
+                )}
+                {!loadingExcerpts && excerpts.map((ex, i) => (
+                  <div key={i} style={{ marginBottom: '0.6rem' }}>
+                    {ex.section_title && (
+                      <div style={{ fontSize: '0.58rem', color: 'var(--gold)', opacity: 0.7, marginBottom: '0.15rem', letterSpacing: '0.04em' }}>
+                        {ex.section_title}
+                      </div>
+                    )}
+                    <p style={{
+                      fontSize: '0.78rem', color: 'var(--ink-muted)', margin: 0,
+                      lineHeight: 1.55, fontStyle: 'italic',
+                      borderLeft: '2px solid rgba(212,188,138,0.3)', paddingLeft: '0.6rem',
+                    }}>
+                      "{ex.excerpt}"
+                    </p>
+                  </div>
+                ))}
+                {(() => {
+                  if (pendingVisualClaims.length > 0) {
+                    const names = new Set([
+                      focusedEntity.name.toLowerCase(),
+                      ...(focusedEntity.aliases ?? []).map(a => a.toLowerCase()),
+                    ])
+                    const matching = pendingVisualClaims.filter(v => names.has(v.subject.toLowerCase()))
+                    if (matching.length === 0) return null
+                    return (
+                      <div style={{ marginTop: '0.75rem' }}>
+                        <div style={{ fontSize: '0.58rem', color: 'var(--ink-faint)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: '0.4rem', borderTop: '1px solid rgba(212,188,138,0.15)', paddingTop: '0.55rem' }}>
+                          Visual observations · {matching.length}
+                        </div>
+                        {matching.map(v => (
+                          <div key={v.id} style={{ marginBottom: '0.55rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', marginBottom: '0.15rem' }}>
+                              {v.section_title && (
+                                <span style={{ fontSize: '0.58rem', color: 'var(--gold)', opacity: 0.7, letterSpacing: '0.04em' }}>{v.section_title}</span>
+                              )}
+                              <span style={{ fontSize: '0.55rem', color: 'var(--ink-faint)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>{v.category}</span>
+                            </div>
+                            <p style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', margin: 0, lineHeight: 1.5, borderLeft: '2px solid rgba(139,171,202,0.35)', paddingLeft: '0.6rem' }}>
+                              {v.observation}
+                            </p>
+                            {v.excerpt && v.excerpt !== v.observation && (
+                              <p style={{ fontSize: '0.72rem', color: 'var(--ink-faint)', margin: '0.2rem 0 0 0.6rem', lineHeight: 1.4, fontStyle: 'italic' }}>
+                                "{v.excerpt}"
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  }
+                  const visualClaims = (focusedEntity.claims ?? []).filter(c => c.claim_type === 'visual')
+                  if (visualClaims.length === 0) return null
+                  return (
+                    <div style={{ marginTop: '0.75rem' }}>
+                      <div style={{ fontSize: '0.58rem', color: 'var(--ink-faint)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: '0.4rem', borderTop: '1px solid rgba(212,188,138,0.15)', paddingTop: '0.55rem' }}>
+                        Visual observations · {visualClaims.length}
+                      </div>
+                      {visualClaims.map(v => {
+                        const category = String(v.payload.category ?? v.payload.visual_property ?? '')
+                        const observation = String(v.payload.observation ?? v.payload.value ?? '')
+                        return (
+                          <div key={v.id} style={{ marginBottom: '0.55rem' }}>
+                            {category && (
+                              <span style={{ fontSize: '0.55rem', color: 'var(--ink-faint)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: '0.15rem' }}>{category}</span>
+                            )}
+                            <p style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', margin: 0, lineHeight: 1.5, borderLeft: '2px solid rgba(139,171,202,0.35)', paddingLeft: '0.6rem' }}>
+                              {observation}
+                            </p>
+                            {v.excerpt && v.excerpt !== observation && (
+                              <p style={{ fontSize: '0.72rem', color: 'var(--ink-faint)', margin: '0.2rem 0 0 0.6rem', lineHeight: 1.4, fontStyle: 'italic' }}>
+                                "{v.excerpt}"
+                              </p>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                })()}
+              </>
+            ) : (
+              <p style={{ fontSize: '0.78rem', color: 'var(--ink-faint)', margin: 0, fontStyle: 'italic', lineHeight: 1.6 }}>
+                Select a place in the containment tree to see its excerpts and visual observations here.
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* ── Right: Relationships ─────────────────────────────────────────── */}
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
 
           {/* Spatial relationships panel */}
@@ -1051,8 +1083,10 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
                 </div>
                 <div style={{ fontSize: '0.73rem', color: 'var(--ink-muted)' }}>
                   {showingPending
-                    ? `${filteredPendingClaims.length} pending${permanentSameAsClaims.length > 0 ? ` · ${permanentSameAsClaims.length} absorbed` : ''}`
-                    : `${spatialClaims.length} claim${spatialClaims.length !== 1 ? 's' : ''}`}
+                    ? `${filteredPendingClaims.length} pending`
+                    : focusedId
+                      ? `${visibleSpatialClaims.length} of ${spatialClaims.length} claim${spatialClaims.length !== 1 ? 's' : ''}`
+                      : `${spatialClaims.length} claim${spatialClaims.length !== 1 ? 's' : ''}`}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
@@ -1069,20 +1103,6 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
                   }}
                 >
                   {showContainment ? '✓' : '○'} Containment
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowSameAs(v => !v)}
-                  style={{
-                    fontSize: '0.62rem', padding: '0.18rem 0.5rem',
-                    border: '1px solid var(--border-warm)',
-                    borderRadius: '4px', cursor: 'pointer',
-                    background: showSameAs ? 'rgba(212,188,138,0.18)' : 'var(--parchment-alt)',
-                    color: showSameAs ? 'var(--ink-muted)' : 'var(--ink-faint)',
-                    fontWeight: showSameAs ? 500 : 400,
-                  }}
-                >
-                  {showSameAs ? '✓' : '○'} Same As
                 </button>
                 {!readOnly && !addingRel && (
                   <button
@@ -1172,8 +1192,8 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
                 </div>
               )}
 
-              {/* Claims list */}
-              {[...spatialClaims]
+              {/* Claims list (filtered to focused entity when one is selected) */}
+              {[...visibleSpatialClaims]
                 .sort((a, b) => {
                   const sa = entityMap.get(a.subject_ref ?? '')?.name ?? ''
                   const sb = entityMap.get(b.subject_ref ?? '')?.name ?? ''
@@ -1240,26 +1260,6 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
                   )
                 })}
 
-              {/* SAME_AS claims from manual absorb — always visible even before synthesis */}
-              {permanentSameAsClaims.map(c => {
-                const subj = entityMap.get(c.subject_ref ?? '')?.name ?? c.subject_ref ?? ''
-                const obj = entityMap.get((c.object_refs ?? [])[0] ?? '')?.name ?? (c.object_refs ?? [])[0] ?? ''
-                return (
-                  <div key={c.id} style={{
-                    display: 'flex', gap: '0.45rem', alignItems: 'center',
-                    padding: '0.38rem 0.6rem', marginBottom: '0.18rem',
-                    borderRadius: '4px', fontSize: '0.82rem',
-                    background: 'rgba(212,188,138,0.05)',
-                    border: '1px solid rgba(212,188,138,0.25)',
-                  }}>
-                    <span style={{ color: 'var(--ink)', flexShrink: 0 }}>{subj}</span>
-                    <span style={{ color: 'var(--ink-faint)', fontSize: '0.68rem', letterSpacing: '0.05em', flexShrink: 0 }}>SAME_AS</span>
-                    <span style={{ color: 'var(--ink)', flexShrink: 0 }}>{obj}</span>
-                    <span style={{ marginLeft: 'auto', fontSize: '0.6rem', color: 'var(--gold)', opacity: 0.7, flexShrink: 0 }}>absorbed</span>
-                  </div>
-                )
-              })}
-
               {/* Pending claims (evidence candidates from step 2, before synthesis) */}
               {showingPending && filteredPendingClaims.map(c => (
                 <div
@@ -1280,9 +1280,11 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
                 </div>
               ))}
 
-              {spatialClaims.length === 0 && !showingPending && permanentSameAsClaims.length === 0 && !addingRel && (
+              {visibleSpatialClaims.length === 0 && !showingPending && !addingRel && (
                 <p style={{ padding: '0.75rem 0', fontSize: '0.82rem', color: 'var(--ink-faint)' }}>
-                  No spatial relationships yet — add one with + Add above.
+                  {focusedId
+                    ? `No relationships for ${focusedEntity?.name ?? 'this place'} yet.`
+                    : 'No spatial relationships yet — add one with + Add above.'}
                 </p>
               )}
             </div>
