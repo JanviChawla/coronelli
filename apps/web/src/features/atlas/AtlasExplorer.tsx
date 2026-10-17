@@ -20,6 +20,10 @@ const TIER_LABEL: Record<string, string> = {
 const TIER_BAR: Record<string, string> = {
   peak: '#8AABCA', elevated: '#C4884A', surface: '#4A7A4A', underground: '#6A5A7A', deep: '#3A1A2A',
 }
+// Brighter fills for 3D node geometry — TIER_BAR is too dark for mesh colour
+const TIER_NODE_HEX: Record<string, string> = {
+  peak: '#8FBBDA', elevated: '#D4944A', surface: '#C8BC9E', underground: '#8A6AAA', deep: '#AA5A8A',
+}
 
 // ── Geometry per kind_descriptor (exact from artifact) ────────────────────────
 
@@ -438,7 +442,7 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
       const vcCols = entity.claims
         .filter(c => c.claim_type === 'visual')
         .flatMap(c => (c.payload.palette as Array<{ color?: string; hex?: string; c?: string }> | null) ?? [])
-      const rawHex = vcCols[0]?.color ?? vcCols[0]?.hex ?? vcCols[0]?.c ?? TIER_BAR[(entity.payload.tier as string)] ?? '#A8904A'
+      const rawHex = vcCols[0]?.color ?? vcCols[0]?.hex ?? vcCols[0]?.c ?? TIER_NODE_HEX[(entity.payload.tier as string)] ?? '#C8BC9E'
       const planeColor = new THREE.Color(rawHex)
 
       // Fill circle
@@ -497,7 +501,7 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
       const vcColors   = entity.claims
         .filter(c => c.claim_type === 'visual')
         .flatMap(c => (c.payload.palette as Array<{ color?: string; hex?: string; c?: string }> | null) ?? [])
-      const rawHex     = vcColors[0]?.color ?? vcColors[0]?.hex ?? vcColors[0]?.c ?? TIER_BAR[tier] ?? '#B8943A'
+      const rawHex     = vcColors[0]?.color ?? vcColors[0]?.hex ?? vcColors[0]?.c ?? TIER_NODE_HEX[tier] ?? '#C8BC9E'
       const col        = new THREE.Color(rawHex)
       const r          = rForKind(kindDesc)
       const effectiveR = (isL3 ? r * 0.65 : r) * containerBoost
