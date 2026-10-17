@@ -372,7 +372,7 @@ SELF-CHECK: For every movement item, verify both from_place and to_place are in 
 
 # ── Visual palette pass ────────────────────────────────────────────────────────
 
-VISUAL_PALETTE_VERSION = "palette-1.0"
+VISUAL_PALETTE_VERSION = "palette-1.1"
 
 VISUAL_PALETTE_SYNTHESIS_PROMPT = """\
 CORONELLI ATLAS — Visual Palette Pass
@@ -414,6 +414,7 @@ RULES:
 1. Produce EXACTLY ONE visual_palette item per entity — even if many candidates exist.
 2. When candidates carry palette hex arrays, use those values as your primary source.
    Prefer attested hex values over inference. Blend multiple hints toward the dominant impression.
+   A hex array in the input is a direct measurement — trust it over any mood or semantic inference.
 3. When palette hints are sparse, infer colours from the observation text
    (materials, light quality, weather, decay state, season).
 4. Skip entities that have NO colour-relevant candidates and NO descriptive observation text.
@@ -422,4 +423,12 @@ RULES:
    If one role has no evidence, choose a neutral that complements the other two.
 6. Only emit items of kind "visual_palette". Do not emit any other kind.
 7. entity_name must exactly match one of the canonical names provided.
+8. COLOUR MODIFIERS — adjectives like "smouldering", "glowing", "luminous", "faded", "dusty",
+   "deep", "pale", "dim", "unclean" modify the base colour; they do NOT change it to grey or black.
+   "Smouldering yellow" → warm yellow (e.g. #C8A030). "Faded rose" → soft pink. "Deep crimson" → dark red.
+   Never interpret a mood adjective as charcoal or grey unless "grey", "ash", or "dark" is explicit.
+9. BOTANICAL INFERENCE — when the only evidence is a plant or flower reference with no explicit
+   hex, infer the species' typical colour:
+   roses → warm red/pink #C07878 · ivy/leaves → dark green #4A6B3A · wisteria → soft purple #9878B8
+   jasmine/white flowers → cream #E8E0C8 · sunflowers → bright yellow #D4A030 · violets → deep purple #6A4A8A
 """

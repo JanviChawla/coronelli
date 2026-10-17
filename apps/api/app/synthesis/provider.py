@@ -456,13 +456,28 @@ class OpenAISynthesisProvider:
             entity_names.extend(a for a in (e.get("aliases") or []) if a)
         entity_names_json = json.dumps(entity_names, ensure_ascii=False)
 
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            f_claims = executor.submit(
-                self._run_visual_claims_pass, visual_candidates, entity_names_json, entity_names
-            )
-            f_palette = executor.submit(self.synthesize_palette, evidence_ledger, canonical_entity_map)
-            claim_items = f_claims.result()
-            palette_result = f_palette.result()
+        # Step 1: visual claims — produces canonical, palette-forwarding items
+        claim_items = self._run_visual_claims_pass(visual_candidates, entity_names_json, entity_names)
+
+        # Step 2: palette synthesis using the refined claim items as evidence.
+        # Running palette AFTER claims means the LLM sees consolidated observations
+        # with correctly-forwarded palette hex arrays, not raw extraction candidates.
+        # Fall back to raw candidates only if the claims pass produced nothing.
+        palette_input = (
+            [
+                {
+                    "kind": "visual_claim",
+                    "payload": item.payload,
+                    "confidence": item.confidence,
+                    "excerpt": "",
+                    "review_state": "proposed",
+                }
+                for item in claim_items
+            ]
+            if claim_items
+            else visual_candidates
+        )
+        palette_result = self.synthesize_palette(palette_input, canonical_entity_map)
 
         all_items = claim_items + palette_result.items
         _log.info(

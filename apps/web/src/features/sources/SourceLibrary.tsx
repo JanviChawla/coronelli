@@ -25,9 +25,41 @@ function planetColor(id: string): THREE.Color {
   return new THREE.Color().setHSL(hues[h % hues.length], 0.62, 0.40)
 }
 
+function clamp255(v: number): number { return Math.max(0, Math.min(255, v | 0)) }
+
+function makePlanetTexture(baseColor: THREE.Color, seed: number): THREE.CanvasTexture {
+  const sz = 256
+  const cv = document.createElement('canvas'); cv.width = cv.height = sz
+  const ctx = cv.getContext('2d')!
+  const [r, g, b] = [baseColor.r * 255 | 0, baseColor.g * 255 | 0, baseColor.b * 255 | 0]
+  ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(0, 0, sz, sz)
+  let s = seed >>> 0
+  const rand = () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; return (s >>> 0) / 4294967296 }
+  for (let i = 0; i < 80; i++) {
+    const x = rand() * sz, y = rand() * sz, rad = 6 + rand() * sz * 0.22
+    const bright = rand() > 0.5, a = 0.04 + rand() * 0.13, d = bright ? 55 : -45
+    const gr = ctx.createRadialGradient(x, y, 0, x, y, rad)
+    gr.addColorStop(0, `rgba(${clamp255(r+d)},${clamp255(g+d)},${clamp255(b+d)},${a})`)
+    gr.addColorStop(1, `rgba(${r},${g},${b},0)`)
+    ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill()
+  }
+  for (let i = 0; i < 5; i++) {
+    const y = rand() * sz, bh = 2 + rand() * 18, a = 0.05 + rand() * 0.09
+    const d = rand() > 0.5 ? 38 : -32
+    ctx.fillStyle = `rgba(${clamp255(r+d)},${clamp255(g+d)},${clamp255(b+d)},${a})`
+    ctx.fillRect(0, y, sz, bh)
+  }
+  return new THREE.CanvasTexture(cv)
+}
+
 interface PlanetData {
   mesh: THREE.Mesh
   ring?: THREE.Mesh
+  glow?: THREE.Mesh
+  moon?: THREE.Mesh
+  moonDist: number
+  orbitAngle: number
+  orbitSpeed: number
   docId: string
   phase: number
   baseY: number
@@ -151,7 +183,7 @@ export function SourceLibrary() {
     } else {
       if (burnTimerRef.current) clearTimeout(burnTimerRef.current)
       setConfirmingBurnId(doc.id)
-      burnTimerRef.current = setTimeout(() => setConfirmingBurnId(null), 3000)
+      burnTimerRef.current = setTimeout(() => setConfirmingBurnId(null), 5000)
     }
   }
 
@@ -253,6 +285,15 @@ export function SourceLibrary() {
         p.mesh.position.y = p.baseY + Math.sin(t * 0.6 + p.phase) * 0.28
         p.mesh.rotation.y += 0.0045
         if (p.ring) p.ring.position.y = p.mesh.position.y
+        if (p.glow) p.glow.position.y = p.mesh.position.y
+        if (p.moon) {
+          p.orbitAngle += p.orbitSpeed
+          p.moon.position.set(
+            p.mesh.position.x + Math.cos(p.orbitAngle) * p.moonDist,
+            p.mesh.position.y + Math.sin(p.orbitAngle * 0.4) * p.moonDist * 0.15,
+            p.mesh.position.z + Math.sin(p.orbitAngle) * p.moonDist,
+          )
+        }
 
         const el = labelRefsMap.current.get(p.docId)
         if (el && rect.width > 0) {
@@ -303,7 +344,7 @@ export function SourceLibrary() {
             setHoveredDoc(null)
             if (hoverOverlayRef.current) hoverOverlayRef.current.style.display = 'none'
           }
-        }, 280)
+        }, 800)
       }
 
       renderer.render(scene, camera)
@@ -326,8 +367,13 @@ export function SourceLibrary() {
   useEffect(() => {
     const scene = sceneRef.current; if (!scene) return
     for (const p of planetsRef.current) {
-      scene.remove(p.mesh); if (p.ring) scene.remove(p.ring)
-      p.mesh.geometry.dispose(); (p.mesh.material as THREE.Material).dispose()
+      scene.remove(p.mesh)
+      const mat = p.mesh.material as THREE.MeshStandardMaterial
+      if (mat.map) mat.map.dispose()
+      mat.dispose(); p.mesh.geometry.dispose()
+      if (p.ring) { scene.remove(p.ring); p.ring.geometry.dispose(); (p.ring.material as THREE.Material).dispose() }
+      if (p.glow) { scene.remove(p.glow); p.glow.geometry.dispose(); (p.glow.material as THREE.Material).dispose() }
+      if (p.moon) { scene.remove(p.moon); p.moon.geometry.dispose(); (p.moon.material as THREE.Material).dispose() }
     }
     planetsRef.current = []
 
@@ -336,21 +382,44 @@ export function SourceLibrary() {
       const h = hashStr(doc.id)
       const radius = 1.1 + (h % 10) / 10 * 1.1
       const color = planetColor(doc.id)
+      const tex = makePlanetTexture(color, h)
       const geo = new THREE.SphereGeometry(radius, 48, 32)
-      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.70 + (h % 4) / 20, metalness: 0.05, emissive: color, emissiveIntensity: 0.08 })
+      const mat = new THREE.MeshStandardMaterial({ map: tex, color, roughness: 0.65 + (h % 4) / 20, metalness: 0.05, emissive: color, emissiveIntensity: 0.08 })
       const mesh = new THREE.Mesh(geo, mat); mesh.userData.docId = doc.id
-      const angle = i * GOLDEN, r = 8 + i * 5.5 + ((h % 5) - 2), baseY = ((h % 7) - 3) * 1.2
-      mesh.position.set(Math.cos(angle) * r, baseY, Math.sin(angle) * r)
+      const angle = i * GOLDEN, orbitR = 8 + i * 5.5 + ((h % 5) - 2), baseY = ((h % 7) - 3) * 1.2
+      mesh.position.set(Math.cos(angle) * orbitR, baseY, Math.sin(angle) * orbitR)
       scene.add(mesh)
 
-      let ring: THREE.Mesh | undefined
-      if (h % 3 === 0) {
-        const rg = new THREE.RingGeometry(radius * 1.45, radius * 2.2, 48); rg.rotateX(-Math.PI / 2.8)
-        const rm = new THREE.MeshBasicMaterial({ color: new THREE.Color().setHSL(((h * 37) % 360) / 360, 0.5, 0.3), transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false })
-        ring = new THREE.Mesh(rg, rm); ring.position.copy(mesh.position); scene.add(ring)
-      }
+      // Atmospheric glow
+      const glowGeo = new THREE.SphereGeometry(radius * 1.28, 16, 16)
+      const glowMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.13, side: THREE.BackSide, depthWrite: false })
+      const glow = new THREE.Mesh(glowGeo, glowMat); glow.position.copy(mesh.position); scene.add(glow)
 
-      planetsRef.current.push({ mesh, ring, docId: doc.id, phase: (h % 100) / 100 * Math.PI * 2, baseY, radius })
+      // Ring (every planet — varying tilt and opacity)
+      const ringInner = radius * 1.4 + (h % 4) * 0.12
+      const ringOuter = ringInner + radius * 0.65 + (h % 6) * 0.15
+      const rg = new THREE.RingGeometry(ringInner, ringOuter, 48)
+      rg.rotateX(-(Math.PI / 3 + ((h % 7) / 7) * (Math.PI / 3.5)))
+      const rm = new THREE.MeshBasicMaterial({ color: new THREE.Color().setHSL(((h * 37 + 60) % 360) / 360, 0.55, 0.38), transparent: true, opacity: 0.18 + (h % 5) * 0.05, side: THREE.DoubleSide, depthWrite: false })
+      const ring = new THREE.Mesh(rg, rm); ring.position.copy(mesh.position); scene.add(ring)
+
+      // Orbiting moon
+      const moonDist = radius * 2.3 + (h % 5) * 0.25
+      const moonR = radius * 0.17 + (h % 4) * 0.04
+      const moonColor = new THREE.Color().setHSL(((h * 53 + 180) % 360) / 360, 0.75, 0.68)
+      const moonGeo = new THREE.SphereGeometry(moonR, 10, 10)
+      const moonMat = new THREE.MeshStandardMaterial({ color: moonColor, emissive: moonColor, emissiveIntensity: 1.4, roughness: 0.4 })
+      const moon = new THREE.Mesh(moonGeo, moonMat); scene.add(moon)
+
+      planetsRef.current.push({
+        mesh, ring, glow, moon,
+        moonDist,
+        orbitAngle: (h % 73) / 73 * Math.PI * 2,
+        orbitSpeed: 0.009 + (h % 8) * 0.001,
+        docId: doc.id,
+        phase: (h % 100) / 100 * Math.PI * 2,
+        baseY, radius,
+      })
     })
   }, [documents])
 
@@ -432,7 +501,7 @@ export function SourceLibrary() {
               hoverIdRef.current = null; setHoveredDoc(null)
               if (hoverOverlayRef.current) hoverOverlayRef.current.style.display = 'none'
             }
-          }, 120)
+          }, 600)
         }}
         style={{ position: 'absolute', display: 'none', flexDirection: 'column', alignItems: 'center', gap: '0.55rem', transform: 'translate(-50%, -100%)', zIndex: 10 }}>
         <div style={{ fontFamily: Cinzel, fontSize: '0.88rem', color: '#D4B060', letterSpacing: '0.12em', textShadow: '0 0 24px rgba(0,0,0,0.95)', whiteSpace: 'nowrap' }}>

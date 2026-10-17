@@ -960,6 +960,11 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
               §{catalogSectionIdx + 1} / {sections.length}{sections[catalogSectionIdx]?.title ? ` — ${sections[catalogSectionIdx].title}` : ''}
             </span>
           )}
+          {perSectionMode && (
+            <div style={{ width: '8rem', height: '2px', borderRadius: '1px', background: 'rgba(212,188,138,0.15)', overflow: 'hidden' }}>
+              <div style={{ height: '100%', background: 'var(--gold)', width: `${sections.length > 0 ? Math.round(((catalogSectionIdx + 1) / sections.length) * 100) : 0}%` }} />
+            </div>
+          )}
           <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-muted)' }}>
             {perSectionMode
               ? `${currentSectionApproved} kept · ${currentSectionRejected} rejected`
@@ -1528,11 +1533,12 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
       </div>
 
       {/* ── Section progress bar ─────────────────────────────────────────────── */}
-      {(phase === 'cataloging' || phase === 'extracting' || runningGapPass) && sections.length > 0 && (
+      {(phase === 'cataloging' || phase === 'extracting' || runningGapPass || (phase === 'catalog-review' && perSectionMode)) && sections.length > 0 && (
         <div style={{ flexShrink: 0, background: 'var(--parchment)', borderBottom: '1px solid var(--border-warm)', padding: '0.3rem 1.5rem 0.35rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           {(() => {
-            const sectionsDone = runningGapPass ? gapSectionsDone : currentIdx
-            const label = runningGapPass ? 'Gap scan' : phase === 'cataloging' ? 'Cataloging' : 'Extracting'
+            const isReviewing = phase === 'catalog-review' && perSectionMode
+            const sectionsDone = runningGapPass ? gapSectionsDone : isReviewing ? catalogSectionIdx : currentIdx
+            const label = runningGapPass ? 'Gap scan' : phase === 'cataloging' ? 'Cataloging' : isReviewing ? 'Reviewing' : 'Extracting'
             const barDone = phase === 'extracting' ? sectionsDone - 1 : sectionsDone
             const pct = Math.max(2, (barDone / sections.length) * 100)
             return (

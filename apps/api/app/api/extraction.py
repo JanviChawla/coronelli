@@ -1004,12 +1004,29 @@ def get_dedup_status(document_id: str, db: Session = Depends(get_db)) -> Enrichm
 
 
 def _build_global_catalog(db: Session, document_id: str) -> list[dict]:
-    """Collect all non-rejected entity candidates + active map entities for a document."""
+    """Collect all non-rejected entity candidates + active map entities for a document.
+
+    Entities that have been explicitly deleted or merged out of the atlas are excluded
+    even if their source candidates are still present and not individually rejected.
+    """
     all_section_ids = [
         s.id for s in db.query(SourceSection).filter(
             SourceSection.document_id == document_id
         ).all()
     ]
+
+    # Names that have been explicitly removed from the atlas (deleted or absorbed into another)
+    inactive_names: set[str] = set()
+    for e in db.query(MapEntity).filter(
+        MapEntity.provenance_document_id == document_id,
+        MapEntity.state.in_(["deleted", "merged"]),
+    ).all():
+        if e.name:
+            inactive_names.add(e.name.strip().lower())
+        for alias in (e.aliases or []):
+            if alias:
+                inactive_names.add(alias.strip().lower())
+
     entity_candidates = (
         db.query(Candidate)
         .filter(
@@ -1033,7 +1050,7 @@ def _build_global_catalog(db: Session, document_id: str) -> list[dict]:
     catalog: list[dict] = []
     for ec in entity_candidates:
         name = (ec.payload.get("name") or "").strip()
-        if name and name not in seen:
+        if name and name not in seen and name.lower() not in inactive_names:
             seen.add(name)
             entry: dict = {
                 "name": name,

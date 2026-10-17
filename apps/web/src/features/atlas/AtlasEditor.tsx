@@ -270,7 +270,10 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
     if (!showSameAs && c.predicate === 'SAME_AS') return false
     return true
   })
-  const showingPending = allSpatialClaims.length === 0 && filteredPendingClaims.length > 0
+  // Show pending evidence when no non-SAME_AS synthesized claims exist yet.
+  // SAME_AS claims from manual absorb are always shown (they're created immediately on merge).
+  const showingPending = allSpatialClaims.filter(c => c.predicate !== 'SAME_AS').length === 0 && filteredPendingClaims.length > 0
+  const permanentSameAsClaims = showingPending ? spatialClaims.filter(c => c.predicate === 'SAME_AS') : []
   const sortedEntities = [...entities].sort((a, b) => a.name.localeCompare(b.name))
 
   // ── Drag-and-drop handlers ───────────────────────────────────────────────────
@@ -1048,7 +1051,7 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
                 </div>
                 <div style={{ fontSize: '0.73rem', color: 'var(--ink-muted)' }}>
                   {showingPending
-                    ? `${filteredPendingClaims.length} pending`
+                    ? `${filteredPendingClaims.length} pending${permanentSameAsClaims.length > 0 ? ` · ${permanentSameAsClaims.length} absorbed` : ''}`
                     : `${spatialClaims.length} claim${spatialClaims.length !== 1 ? 's' : ''}`}
                 </div>
               </div>
@@ -1236,6 +1239,26 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
                     </div>
                   )
                 })}
+
+              {/* SAME_AS claims from manual absorb — always visible even before synthesis */}
+              {permanentSameAsClaims.map(c => {
+                const subj = entityMap.get(c.subject_ref ?? '')?.name ?? c.subject_ref ?? ''
+                const obj = entityMap.get((c.object_refs ?? [])[0] ?? '')?.name ?? (c.object_refs ?? [])[0] ?? ''
+                return (
+                  <div key={c.id} style={{
+                    display: 'flex', gap: '0.45rem', alignItems: 'center',
+                    padding: '0.38rem 0.6rem', marginBottom: '0.18rem',
+                    borderRadius: '4px', fontSize: '0.82rem',
+                    background: 'rgba(212,188,138,0.05)',
+                    border: '1px solid rgba(212,188,138,0.25)',
+                  }}>
+                    <span style={{ color: 'var(--ink)', flexShrink: 0 }}>{subj}</span>
+                    <span style={{ color: 'var(--ink-faint)', fontSize: '0.68rem', letterSpacing: '0.05em', flexShrink: 0 }}>SAME_AS</span>
+                    <span style={{ color: 'var(--ink)', flexShrink: 0 }}>{obj}</span>
+                    <span style={{ marginLeft: 'auto', fontSize: '0.6rem', color: 'var(--gold)', opacity: 0.7, flexShrink: 0 }}>absorbed</span>
+                  </div>
+                )
+              })}
 
               {/* Pending claims (evidence candidates from step 2, before synthesis) */}
               {showingPending && filteredPendingClaims.map(c => (
