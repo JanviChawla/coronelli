@@ -519,6 +519,42 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
     }
   }
 
+  async function handleRunCatalogParallel(force = false) {
+    setPerSectionMode(false)
+    setCurrentIdx(0)
+    setWorkflowError(null)
+    setEntityCandidates([])
+    setCatalogPasses([])
+    setCurrentSectionCandidates([])
+    setRejectedCandidateIds(new Set())
+    setTotalApprovedAcrossSections(0)
+    if (force) { setEvidenceStale(true); setAtlasStale(true) }
+
+    const startTime = Date.now()
+    if (timerRef.current) clearInterval(timerRef.current)
+    timerRef.current = setInterval(() => setElapsedMs(Date.now() - startTime), 100)
+    setElapsedMs(0)
+    setPhase('cataloging')
+
+    let completedCount = 0
+    try {
+      await Promise.all(sections.map(async (section) => {
+        await triggerCatalogExtraction(section.id, force)
+        await triggerSectionCatalogGap(section.id)
+        completedCount++
+        setCurrentIdx(completedCount)
+        setCurrentTitle(section.title)
+      }))
+      if (timerRef.current) clearInterval(timerRef.current)
+      await _finishCatalogAndReview()
+    } catch (e) {
+      if (timerRef.current) clearInterval(timerRef.current)
+      setWorkflowError(e instanceof Error ? e.message : 'Catalog failed.')
+      setErrorInStep(1)
+      setPhase('error')
+    }
+  }
+
   async function handleAutoRunCatalog(force = false) {
     autoRunRef.current = true
     setAutoRunMode(true)
@@ -989,7 +1025,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
           <span style={{ fontSize: '0.72rem', color: 'var(--sidebar-muted)', fontFamily: 'monospace' }}>
             {cachedCount > 0 ? `${cachedCount} of ${sections.length} cached` : `${sections.length} section${sections.length !== 1 ? 's' : ''}`}
           </span>
-          <button className="btn-cta" type="button" onClick={() => handleRunCatalog()} style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>Find places</button>
+          <button className="btn-cta" type="button" onClick={() => handleRunCatalogParallel()} style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>Find places</button>
           <button type="button" onClick={() => handleAutoRunCatalog()} style={{ background: 'none', border: '1px solid var(--sidebar-border)', borderRadius: '3px', cursor: 'pointer', fontSize: '0.72rem', color: 'var(--gold)', padding: '0.25rem 0.6rem' }} title="Run catalog through all sections automatically without manual review">Auto-run all</button>
         </div>
       )
@@ -1393,7 +1429,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.18rem', alignItems: 'flex-start' }}>
         <button type="button" disabled={isRunning || phase === 'preflight'}
-          onClick={() => !isRunning && !catalogError ? handleRunCatalog(catalogConfirmed) : handleRunCatalog()}
+          onClick={() => !isRunning ? (catalogError ? handleRunCatalog() : catalogConfirmed ? handleRunCatalog(true) : handleRunCatalogParallel()) : undefined}
           style={cBtn(!(isRunning || phase === 'preflight'))}>
           {isRunning ? 'Finding…' : catalogConfirmed ? 'Re-catalog' : 'Catalog'}
           <span style={{ opacity: 0.55, fontSize: '0.67rem' }}>
