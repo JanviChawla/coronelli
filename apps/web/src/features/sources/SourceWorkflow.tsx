@@ -211,6 +211,8 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
   const [catalogSectionIdx, setCatalogSectionIdx] = useState(0)
   const [currentSectionCandidates, setCurrentSectionCandidates] = useState<Candidate[]>([])
   const [totalApprovedAcrossSections, setTotalApprovedAcrossSections] = useState(0)
+  const [autoRunMode, setAutoRunMode] = useState(false)
+  const autoRunRef = useRef(false)
 
   // ── Toast notifications ───────────────────────────────────────────────────
   const [toasts, setToasts] = useState<Array<{ id: string; message: string; kind: 'info' | 'success' | 'warn' }>>([])
@@ -514,6 +516,52 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
       setWorkflowError(e instanceof Error ? e.message : 'Catalog failed.')
       setErrorInStep(1)
       setPhase('error')
+    }
+  }
+
+  async function handleAutoRunCatalog(force = false) {
+    autoRunRef.current = true
+    setAutoRunMode(true)
+    setPerSectionMode(true)
+    setCurrentIdx(0)
+    setCatalogSectionIdx(0)
+    setWorkflowError(null)
+    setEntityCandidates([])
+    setCatalogPasses([])
+    setCurrentSectionCandidates([])
+    setRejectedCandidateIds(new Set())
+    setTotalApprovedAcrossSections(0)
+    if (force) { setEvidenceStale(true); setAtlasStale(true) }
+    let approved = 0
+    try {
+      for (let idx = 0; idx < sections.length; idx++) {
+        if (!autoRunRef.current) break
+        await _runCatalogForSection(idx, force)
+        if (!autoRunRef.current) break
+        // Auto-confirm: accept all candidates for this section
+        const sectionCands = await fetchCandidates(sections[idx].id)
+        const entityCands = sectionCands.filter(c => c.kind === 'entity')
+        await confirmSectionCatalog(sections[idx].id)
+        approved += entityCands.length
+        setTotalApprovedAcrossSections(approved)
+        setAtlasKey(k => k + 1)
+      }
+      if (autoRunRef.current) {
+        await confirmDocumentCatalog(document.id)
+        setCurrentSectionCandidates([])
+        setGapReviewPending(false)
+        setGapFindings(null)
+        setPhase('evidence-ready')
+        addToast(`Auto-catalog done — ${approved} place${approved !== 1 ? 's' : ''} across ${sections.length} section${sections.length !== 1 ? 's' : ''}.`, 'success')
+      }
+    } catch (e) {
+      if (timerRef.current) clearInterval(timerRef.current)
+      setWorkflowError(e instanceof Error ? e.message : 'Auto-catalog failed.')
+      setErrorInStep(1)
+      setPhase('error')
+    } finally {
+      autoRunRef.current = false
+      setAutoRunMode(false)
     }
   }
 
@@ -942,6 +990,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
             {cachedCount > 0 ? `${cachedCount} of ${sections.length} cached` : `${sections.length} section${sections.length !== 1 ? 's' : ''}`}
           </span>
           <button className="btn-cta" type="button" onClick={() => handleRunCatalog()} style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>Find places</button>
+          <button type="button" onClick={() => handleAutoRunCatalog()} style={{ background: 'none', border: '1px solid var(--sidebar-border)', borderRadius: '3px', cursor: 'pointer', fontSize: '0.72rem', color: 'var(--gold)', padding: '0.25rem 0.6rem' }} title="Run catalog through all sections automatically without manual review">Auto-run all</button>
         </div>
       )
       if (phase === 'cataloging') return (
@@ -1008,23 +1057,35 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
               </div>
             )}
           </div>
-          {perSectionMode && (
-            <button type="button" onClick={handleRerunSection}
-              style={{ background: 'none', border: '1px solid var(--sidebar-border)', borderRadius: '3px', cursor: 'pointer', fontSize: '0.72rem', color: 'var(--gold)', padding: '0.25rem 0.6rem' }}
-              title="Force re-run catalog for this section">
-              ↺ Re-run
-            </button>
+          {autoRunMode ? (
+            <>
+              <span style={{ fontSize: '0.72rem', color: 'var(--sidebar-muted)', fontStyle: 'italic' }}>Auto-running…</span>
+              <button type="button" onClick={() => { autoRunRef.current = false; setAutoRunMode(false) }}
+                style={{ background: 'none', border: '1px solid var(--error-text)', borderRadius: '3px', cursor: 'pointer', fontSize: '0.72rem', color: 'var(--error-text)', padding: '0.25rem 0.6rem' }}>
+                Stop
+              </button>
+            </>
+          ) : (
+            <>
+              {perSectionMode && (
+                <button type="button" onClick={handleRerunSection}
+                  style={{ background: 'none', border: '1px solid var(--sidebar-border)', borderRadius: '3px', cursor: 'pointer', fontSize: '0.72rem', color: 'var(--gold)', padding: '0.25rem 0.6rem' }}
+                  title="Force re-run catalog for this section">
+                  ↺ Re-run
+                </button>
+              )}
+              <button className="btn-cta" type="button"
+                onClick={perSectionMode ? handleConfirmSection : handleConfirmCatalog}
+                disabled={confirmingCatalog}
+                style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>
+                {confirmingCatalog ? 'Confirming…' : perSectionMode
+                  ? (currentSectionCandidates.length === 0 && catalogSectionIdx + 1 < sections.length
+                      ? `Skip §${catalogSectionIdx + 1} →`
+                      : catalogSectionIdx + 1 < sections.length ? `Confirm §${catalogSectionIdx + 1} →` : 'Confirm catalog →')
+                  : 'Confirm catalog →'}
+              </button>
+            </>
           )}
-          <button className="btn-cta" type="button"
-            onClick={perSectionMode ? handleConfirmSection : handleConfirmCatalog}
-            disabled={confirmingCatalog}
-            style={{ fontSize: '0.78rem', padding: '0.3rem 0.9rem', width: 'auto' }}>
-            {confirmingCatalog ? 'Confirming…' : perSectionMode
-              ? (currentSectionCandidates.length === 0 && catalogSectionIdx + 1 < sections.length
-                  ? `Skip §${catalogSectionIdx + 1} →`
-                  : catalogSectionIdx + 1 < sections.length ? `Confirm §${catalogSectionIdx + 1} →` : 'Confirm catalog →')
-              : 'Confirm catalog →'}
-          </button>
           {workflowError && <span style={{ fontSize: '0.72rem', color: 'var(--error-text)' }}>{workflowError}</span>}
         </div>
       )
@@ -1538,7 +1599,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
           {(() => {
             const isReviewing = phase === 'catalog-review' && perSectionMode
             const sectionsDone = runningGapPass ? gapSectionsDone : isReviewing ? catalogSectionIdx : currentIdx
-            const label = runningGapPass ? 'Gap scan' : phase === 'cataloging' ? 'Cataloging' : isReviewing ? 'Reviewing' : 'Extracting'
+            const label = runningGapPass ? 'Gap scan' : phase === 'cataloging' ? (autoRunMode ? 'Auto-cataloging' : 'Cataloging') : isReviewing ? (autoRunMode ? 'Auto-cataloging' : 'Reviewing') : 'Extracting'
             const barDone = phase === 'extracting' ? sectionsDone - 1 : sectionsDone
             const pct = Math.max(2, (barDone / sections.length) * 100)
             return (

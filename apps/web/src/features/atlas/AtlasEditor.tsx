@@ -709,7 +709,7 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
 
         {/* ── Left: Containment tree ──────────────────────────────────────── */}
         <div style={{
-          width: '26%', flexShrink: 0,
+          width: 'calc(100% / 3)', flexShrink: 0,
           borderRight: '1px solid var(--border-warm)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}>
@@ -928,7 +928,7 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
 
         {/* ── Center: Entity detail ───────────────────────────────────────── */}
         <div style={{
-          width: '32%', flexShrink: 0,
+          width: 'calc(100% / 3)', flexShrink: 0,
           borderRight: '1px solid var(--border-warm)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}>
