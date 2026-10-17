@@ -1,7 +1,7 @@
 ﻿import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { CandidatesTable } from '../candidates/CandidatesTable'
 import { type Candidate, fetchCandidates, fetchDocumentEntityCandidates, patchCandidateReviewState } from '../candidates/candidateApi'
-import { fetchPreflight, triggerDocumentCatalog, getDocumentCatalogStatus, confirmDocumentCatalog, triggerEvidenceExtraction, getExtractionProgress, fetchPlaceSuggestions, addManualCandidate, triggerDocumentCatalogGap, getDocumentCatalogGapStatus, triggerDedupPass, getDedupStatus, promoteDedup, fetchDedupCandidates, triggerCatalogExtraction, triggerSectionCatalogGap, confirmSectionCatalog, openDocumentEventStream, type DedupCandidate } from './extractionApi'
+import { fetchPreflight, triggerDocumentCatalog, getDocumentCatalogStatus, confirmDocumentCatalog, triggerEvidenceExtraction, getExtractionProgress, fetchPlaceSuggestions, addManualCandidate, triggerDocumentCatalogGap, getDocumentCatalogGapStatus, triggerDedupPass, getDedupStatus, promoteDedup, fetchDedupCandidates, triggerCatalogExtraction, triggerSectionCatalogGap, confirmSectionCatalog, openDocumentEventStream, validateCatalog, type DedupCandidate, type CatalogValidationSuggestion } from './extractionApi'
 import type { Document, Section } from './sourceApi'
 import { fetchAtlas, promoteContainmentHierarchy } from '../atlas/atlasApi'
 import { triggerVisualSynthesis, getSynthesisProgress } from '../synthesis/synthesisApi'
@@ -213,6 +213,8 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
   const [totalApprovedAcrossSections, setTotalApprovedAcrossSections] = useState(0)
   const [autoRunMode, setAutoRunMode] = useState(false)
   const autoRunRef = useRef(false)
+  const [webSuggestions, setWebSuggestions] = useState<CatalogValidationSuggestion[] | null>(null)
+  const [validatingWeb, setValidatingWeb] = useState(false)
 
   // ── Toast notifications ───────────────────────────────────────────────────
   const [toasts, setToasts] = useState<Array<{ id: string; message: string; kind: 'info' | 'success' | 'warn' }>>([])
@@ -1048,6 +1050,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
         </div>
       )
       if (phase === 'catalog-review') return (
+        <>
         <div style={row}>
           {perSectionMode && (
             <span style={{ fontSize: '0.78rem', color: 'var(--sidebar-text)', fontFamily: 'monospace' }}>
@@ -1069,6 +1072,17 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
             <button type="button" onClick={handleGapPass} disabled={runningGapPass}
               style={{ background: 'none', border: '1px solid var(--sidebar-border)', borderRadius: '3px', cursor: runningGapPass ? 'default' : 'pointer', fontSize: '0.72rem', color: 'var(--gold)', opacity: runningGapPass ? 0.5 : 1, padding: '0.25rem 0.6rem' }}>
               {runningGapPass ? 'Scanning…' : '+ Gap pass'}
+            </button>
+          )}
+          {!perSectionMode && (
+            <button type="button" disabled={validatingWeb}
+              onClick={async () => {
+                setValidatingWeb(true)
+                try { setWebSuggestions(await validateCatalog(document.id)) } catch { /* ignore */ } finally { setValidatingWeb(false) }
+              }}
+              style={{ background: 'none', border: '1px solid var(--sidebar-border)', borderRadius: '3px', cursor: validatingWeb ? 'default' : 'pointer', fontSize: '0.72rem', color: 'var(--ink-muted)', opacity: validatingWeb ? 0.5 : 1, padding: '0.25rem 0.6rem' }}
+              title="Ask the AI what named places might be missing based on its knowledge of this book">
+              {validatingWeb ? 'Checking…' : '? Check web'}
             </button>
           )}
           <div ref={addPlaceRef} style={{ position: 'relative' }}>
@@ -1133,6 +1147,24 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
           )}
           {workflowError && <span style={{ fontSize: '0.72rem', color: 'var(--error-text)' }}>{workflowError}</span>}
         </div>
+        {webSuggestions && webSuggestions.length > 0 && (
+          <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center', padding: '0.3rem 0', borderTop: '1px solid rgba(212,188,138,0.15)', marginTop: '0.1rem' }}>
+            <span style={{ fontSize: '0.68rem', color: 'var(--ink-faint)', flexShrink: 0 }}>AI suggests:</span>
+            {webSuggestions.map(s => (
+              <button key={s.name} type="button" onClick={() => handleAddManualPlace(s.name)}
+                title={s.reason}
+                style={{ fontSize: '0.68rem', padding: '0.15rem 0.45rem', background: 'rgba(212,188,138,0.08)', border: '1px solid rgba(212,188,138,0.25)', borderRadius: '3px', cursor: 'pointer', color: 'var(--ink-muted)' }}>
+                + {s.name}
+              </button>
+            ))}
+            <button type="button" onClick={() => setWebSuggestions(null)}
+              style={{ fontSize: '0.68rem', padding: '0.15rem 0.35rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-faint)', marginLeft: 'auto' }}>×</button>
+          </div>
+        )}
+        {webSuggestions !== null && webSuggestions.length === 0 && (
+          <span style={{ fontSize: '0.68rem', color: 'var(--ink-faint)', padding: '0.2rem 0' }}>No missing places found by AI check.</span>
+        )}
+        </>
       )
       if (catalogConfirmed) return (
         <div style={row}>

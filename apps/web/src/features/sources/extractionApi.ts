@@ -237,6 +237,22 @@ export type SSEPhaseEvent =
   | { type: 'phase_change'; stage: string; phase: string; section_id?: string }
   | { type: 'done'; stage: string }
 
+export type CatalogValidationSuggestion = {
+  name: string
+  reason: string
+}
+
+export async function validateCatalog(documentId: string): Promise<CatalogValidationSuggestion[]> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/catalog/validate`, { method: 'POST' })
+  if (!res.ok) {
+    let detail = `Validation failed (HTTP ${res.status})`
+    try { const body = await res.json(); if (body?.detail) detail = body.detail } catch { /* ignore */ }
+    throw new Error(detail)
+  }
+  const data: { suggestions: CatalogValidationSuggestion[] } = await res.json()
+  return data.suggestions
+}
+
 export function openDocumentEventStream(
   documentId: string,
   onEvent: (event: SSEPhaseEvent) => void,

@@ -1204,6 +1204,98 @@ def merge_entities(body: EntityMergeRequest, db: Session = Depends(get_db)):
     )
 
 
+# ── Catalog web validation ────────────────────────────────────────────────────
+
+class CatalogValidationResponse(BaseModel):
+    suggestions: list[dict]
+
+
+@router.post("/api/documents/{document_id}/catalog/validate", response_model=CatalogValidationResponse)
+def validate_catalog(document_id: str, db: Session = Depends(get_db)) -> CatalogValidationResponse:
+    import json
+    import os
+
+    from fastapi import HTTPException
+
+    doc = db.get(SourceDocument, document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    api_key = os.environ.get("OPENAI_API_KEY")
+    model = os.environ.get("OPENAI_EXTRACTION_MODEL", "gpt-4o-mini")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="LLM not configured")
+
+    # Gather known names from active entities and non-rejected candidates
+    entities = (
+        db.query(MapEntity)
+        .filter(MapEntity.provenance_document_id == document_id, MapEntity.state == "active")
+        .all()
+    )
+    section_ids = [
+        s.id for s in db.query(SourceSection)
+        .filter(SourceSection.document_id == document_id)
+        .all()
+    ]
+    from app.extraction.models import Candidate
+    candidates = (
+        db.query(Candidate)
+        .filter(
+            Candidate.section_id.in_(section_ids),
+            Candidate.kind == "entity",
+            Candidate.review_state != "rejected",
+        )
+        .all()
+    ) if section_ids else []
+
+    known: set[str] = set()
+    for e in entities:
+        known.add(e.name.lower())
+        for alias in (e.aliases or []):
+            known.add(alias.lower())
+    for c in candidates:
+        n = (c.payload or {}).get("name", "")
+        if n:
+            known.add(n.lower())
+
+    title = doc.title or ""
+    author = doc.author or ""
+    known_list = sorted(known)[:200]
+
+    prompt = (
+        f'You are a literary expert. The book "{title}"'
+        f"{(' by ' + author) if author else ''} has been partially cataloged for named locations.\n\n"
+        "Already cataloged (case-insensitive):\n"
+        + "\n".join(f"- {n}" for n in known_list)
+        + "\n\nBased on your knowledge of this specific book, list up to 10 named locations "
+        "that APPEAR IN THE BOOK but are NOT in the catalog above. Be conservative — only include "
+        "places you are highly confident appear in the text. For books you don't know well, return "
+        'an empty suggestions list.\n\n'
+        'Return JSON: {"suggestions": [{"name": "Exact Place Name As In Book", "reason": "brief reason"}]}'
+    )
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            max_tokens=800,
+            response_format={"type": "json_object"},
+        )
+        raw = resp.choices[0].message.content or "{}"
+        parsed = json.loads(raw)
+        suggestions = parsed.get("suggestions", [])
+        filtered = [
+            s for s in suggestions
+            if isinstance(s, dict) and s.get("name") and s["name"].lower() not in known
+        ]
+        return CatalogValidationResponse(suggestions=filtered[:10])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Validation failed: {str(e)}")
+
+
 # ── Oracle evaluation ──────────────────────────────────────────────────────────
 
 class OracleRequest(BaseModel):
