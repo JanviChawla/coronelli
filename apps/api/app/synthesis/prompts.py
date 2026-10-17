@@ -268,14 +268,12 @@ YOUR TASK: Produce ONLY items of kind "claim" — spatial relationships between 
 
 Payload: {"subject": "canonical place", "predicate": "PREDICATE", "object": "canonical place"}
 
-Predicates: CONTAINS, LOCATED_IN, PART_OF, LEADS_TO, OPENS_TOWARD, ADJACENT_TO, NEAR, UNDER, ABOVE,
-DESCENDS_TO, ENDS_AT, HAS_OPENING, REACHED_FROM, SAME_AS, IN_OR_ADJACENT_TO, BLOCKS_ACCESS_TO,
-SURROUNDED_BY, BORDERS, PORTAL_TO, VISIBLE_FROM, ON_BANK_OF,
-NORTH_OF, SOUTH_OF, EAST_OF, WEST_OF, NORTHEAST_OF, NORTHWEST_OF, SOUTHEAST_OF, SOUTHWEST_OF
+Predicates: LOCATED_IN, LEADS_TO, ADJACENT_TO
 
-ON_BANK_OF: a land place sits on the bank, shore, or waterfront edge of a body of water.
-Use instead of LOCATED_IN when the land place borders the water but is not inside it.
-Example: "Van Tassel's mansion ON_BANK_OF the Hudson" (the mansion overlooks the river; it is not in the river).
+LOCATED_IN: subject is physically inside or part of object (room LOCATED_IN house).
+LEADS_TO: subject is a traversable connection to object (path LEADS_TO bridge).
+ADJACENT_TO: everything else — beside, near, visible from, on the bank of, flows through, borders,
+  above, below, any compass direction. Use when the relationship is spatial but not containment or traversal.
 
 Rules:
 - Both subject AND object must be in the canonical entity list (exact canonical name or any listed alias).
@@ -291,10 +289,8 @@ Rules:
   A town that is merely near a hollow or vale uses IN_OR_ADJACENT_TO, not LOCATED_IN.
   Buildings and landmarks do NOT share this restriction — they may be LOCATED_IN a named region
   when the text supports it.
-- Include proximity and visibility (NEAR, ADJACENT_TO, REACHED_FROM, VISIBLE_FROM) when the text supports it.
-- Emit SAME_AS when two canonical names clearly refer to the same place.
-- If an evidence candidate has predicate PART_OF or VISIBLE_FROM and both places are in the entity list (or aliases), always emit it.
-- Do NOT change predicates from the evidence — if evidence says LOCATED_IN, emit LOCATED_IN (not NEAR or CONTAINS).
+- Include proximity and connectivity (ADJACENT_TO, LEADS_TO) when the text supports it.
+- Do NOT change predicates from the evidence — if evidence says LOCATED_IN, emit LOCATED_IN (not ADJACENT_TO).
 
 ARCHITECTURAL NESTING — infer these even when evidence is sparse:
 - Interior passages and structural features (stairs, staircase, corridor, hallway, cellar, attic, porch,

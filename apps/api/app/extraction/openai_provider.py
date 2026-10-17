@@ -622,7 +622,7 @@ class OpenAIExtractionProvider:
             text=section.text or "",
             place_catalog_json=catalog_json,
         )
-        _CONTAINMENT_PREDICATES = {"CONTAINS", "LOCATED_IN", "PART_OF"}
+        _CONTAINMENT_PREDICATES = {"LOCATED_IN", "CONTAINS", "PART_OF"}  # CONTAINS/PART_OF normalised downstream
         try:
             resp = self._client.chat.completions.create(
                 model=self._model,

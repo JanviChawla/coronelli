@@ -99,27 +99,27 @@ CH1_CANDIDATES = [
     # scene anchor
     _rc("scene_anchor", {"place": "Riverbank", "scene_role": "opening"}),
     # place entities
-    _rc("entity", {"name": "Riverbank", "type": "exterior"}, excerpt="sitting on the bank"),
+    _rc("entity", {"name": "Riverbank", "type": "grounds"}, excerpt="sitting on the riverbank"),
     _rc("entity", {"name": "Rabbit Hole", "type": "portal"}, excerpt="popped down a large rabbit-hole"),
     _rc("entity", {"name": "Rabbit-Hole Tunnel", "type": "tunnel"}, excerpt="tunnel for some way"),
-    _rc("entity", {"name": "Deep Well / Fall Shaft", "type": "shaft"}, excerpt="fell down a very deep well"),
-    _rc("entity", {"name": "Landing", "type": "exterior"}, status="inferred", confidence=0.7,
-        excerpt="upon a heap of sticks"),
+    _rc("entity", {"name": "Deep Well / Fall Shaft", "type": "tunnel"}, excerpt="fell down a very deep well"),
+    _rc("entity", {"name": "Landing", "type": "grounds"}, status="inferred", confidence=0.7,
+        excerpt="landing upon a heap of sticks"),
     _rc("entity", {"name": "Long Low Hall", "type": "hall"}, excerpt="long, low hall"),
-    _rc("entity", {"name": "Little Door", "type": "door"}, excerpt="little door about fifteen inches high"),
+    _rc("entity", {"name": "Little Door", "type": "portal"}, excerpt="little door about fifteen inches high"),
     _rc("entity", {"name": "Small Passage", "type": "passage"}, excerpt="small passage"),
     _rc("entity", {"name": "Garden", "type": "site"}, temporal="discovery",
         excerpt="most beautiful garden you ever saw"),
     # topology claims
-    _rc("claim", {"subject": "Rabbit Hole", "predicate": "UNDER", "object": "Hedge"},
+    _rc("claim", {"subject": "Rabbit Hole", "predicate": "ADJACENT_TO", "object": "Hedge"},
         excerpt="rabbit-hole went straight on like a tunnel"),
-    _rc("claim", {"subject": "Long Low Hall", "predicate": "CONTAINS", "object": "Little Door"},
+    _rc("claim", {"subject": "Little Door", "predicate": "LOCATED_IN", "object": "Long Low Hall"},
         excerpt="little door about fifteen inches high"),
     _rc("claim", {"subject": "Little Door", "predicate": "LEADS_TO", "object": "Small Passage"},
         excerpt="leading to a small passage"),
-    _rc("claim", {"subject": "Small Passage", "predicate": "OPENS_TOWARD", "object": "Garden"},
+    _rc("claim", {"subject": "Small Passage", "predicate": "LEADS_TO", "object": "Garden"},
         excerpt="could see a little way"),
-    _rc("claim", {"subject": "Little Door", "predicate": "BLOCKS_ACCESS_TO", "object": "Garden"},
+    _rc("claim", {"subject": "Little Door", "predicate": "ADJACENT_TO", "object": "Garden"},
         status="inferred", confidence=0.85,
         excerpt="was too large to get through the doorway"),
     # travel rule
@@ -157,7 +157,7 @@ def test_ch1_required_entities_present(db):
 def test_ch1_at_least_one_transition_claim(db):
     section = _make_section(db, "I — Down the Rabbit-Hole", ordinal=1)
     _, candidates, _ = run_extraction(db, section.id, _provider(CH1_CANDIDATES))
-    transition_predicates = {"LEADS_TO", "OPENS_TOWARD", "CONTAINS", "BLOCKS_ACCESS_TO"}
+    transition_predicates = {"LEADS_TO", "LOCATED_IN", "ADJACENT_TO"}
     claim_predicates = {c.payload.get("predicate") for c in candidates if c.kind == "claim"}
     assert claim_predicates & transition_predicates, f"No transition claim found; got: {claim_predicates}"
 
@@ -232,10 +232,10 @@ def test_ch4_white_rabbits_house_contains_upstairs_room(db):
     section = _make_section(db, "IV — The Rabbit Sends in a Little Bill", ordinal=4)
     candidates_in = [
         _rc("scene_anchor", {"place": "White Rabbit's House", "scene_role": "primary"}),
-        _rc("entity", {"name": "White Rabbit's House", "type": "building"}),
-        _rc("entity", {"name": "Upstairs Room", "type": "room"}),
-        _rc("entity", {"name": "Thick Wood", "type": "region"}),
-        _rc("claim", {"subject": "White Rabbit's House", "predicate": "CONTAINS", "object": "Upstairs Room"},
+        _rc("entity", {"name": "White Rabbit's House", "type": "building"}, excerpt="White Rabbit's house"),
+        _rc("entity", {"name": "Upstairs Room", "type": "room"}, excerpt="upstairs room"),
+        _rc("entity", {"name": "Thick Wood", "type": "region"}, excerpt="thick wood beyond"),
+        _rc("claim", {"subject": "Upstairs Room", "predicate": "LOCATED_IN", "object": "White Rabbit's House"},
             excerpt="little room"),
     ]
     _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
@@ -245,11 +245,11 @@ def test_ch4_white_rabbits_house_contains_upstairs_room(db):
     assert "Thick Wood" in entity_names
     containment = [
         c for c in candidates if c.kind == "claim"
-        and c.payload.get("subject") == "White Rabbit's House"
-        and c.payload.get("predicate") == "CONTAINS"
-        and c.payload.get("object") == "Upstairs Room"
+        and c.payload.get("subject") == "Upstairs Room"
+        and c.payload.get("predicate") == "LOCATED_IN"
+        and c.payload.get("object") == "White Rabbit's House"
     ]
-    assert containment, "White Rabbit's House CONTAINS Upstairs Room claim missing"
+    assert containment, "Upstairs Room LOCATED_IN White Rabbit's House claim missing"
 
 
 # ── Chapter VI: no compass directions ────────────────────────────────────────
@@ -279,7 +279,7 @@ def test_ch6_no_compass_predicates(db):
         _rc("entity", {"name": "Hatter's Residence", "type": "building"}, status="inferred",
             confidence=0.5, excerpt="Mad Hatter"),
         # Correct: unknown relative direction, not a compass bearing claim
-        _rc("claim", {"subject": "Cheshire Cat Tree", "predicate": "NEAR", "object": "Duchess's House"},
+        _rc("claim", {"subject": "Cheshire Cat Tree", "predicate": "ADJACENT_TO", "object": "Duchess's House"},
             status="inferred", confidence=0.6),
     ]
     _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
@@ -326,7 +326,7 @@ def test_ch7_garden_discovery_update_preserved(db):
         _rc("scene_anchor", {"place": "Garden", "scene_role": "ending"}),
         _rc("entity", {"name": "Garden", "type": "site"}, temporal="world_state_change",
             status="inferred", confidence=0.8,
-            excerpt="at last she came upon it"),
+            excerpt="at last she found the garden"),
     ]
     _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
     garden_entity = [c for c in candidates if c.kind == "entity" and c.payload.get("name") == "Garden"]
@@ -342,7 +342,7 @@ def test_ch9_trial_court_entity_present(db):
         _rc("scene_anchor", {"place": "Trial Court", "scene_role": "primary"}),
         _rc("entity", {"name": "Trial Court", "type": "court"}, excerpt="court of justice"),
         _rc("entity", {"name": "Jury Box", "type": "room"}, excerpt="jury-box"),
-        _rc("claim", {"subject": "Trial Court", "predicate": "CONTAINS", "object": "Jury Box"},
+        _rc("claim", {"subject": "Jury Box", "predicate": "LOCATED_IN", "object": "Trial Court"},
             status="inferred", confidence=0.8),
     ]
     _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
@@ -357,7 +357,7 @@ def test_ch9_court_geography_unresolved(db):
         _rc("scene_anchor", {"place": "Trial Court", "scene_role": "primary"}),
         _rc("entity", {"name": "Trial Court", "type": "court"}),
         # Only the arrival route claim is acceptable — not LOCATED_IN Garden/Palace
-        _rc("claim", {"subject": "Trial Court", "predicate": "REACHED_FROM", "object": "Queen's Croquet Ground"},
+        _rc("claim", {"subject": "Queen's Croquet Ground", "predicate": "LEADS_TO", "object": "Trial Court"},
             status="explicit", confidence=0.85,
             excerpt="came upon the trial"),
     ]
@@ -392,7 +392,7 @@ def test_one_sided_relation_skipped_not_fatal(db):
             relation_kind="supersedes",
             relation_target_id=None,  # missing — should be skipped, not fatal
         ),
-        _rc("entity", {"name": "Place Y", "type": "room"}),
+        _rc("entity", {"name": "Place Y", "type": "room"}, excerpt="place y described here"),
     ]
     _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
     # The bad candidate is gone but the rest survive
@@ -426,11 +426,11 @@ def test_no_duplicate_map_entity_on_same_name(db):
 
 _ATLAS_READY_CANDIDATES = [
     _rc("scene_anchor", {"place": "Riverbank", "scene_role": "opening"}, excerpt="sitting on the bank"),
-    _rc("entity", {"name": "Riverbank", "type": "exterior"}, excerpt="sitting on the bank"),
+    _rc("entity", {"name": "Riverbank", "type": "grounds"}, excerpt="sitting on the bank"),
     _rc("entity", {"name": "Long Low Hall", "type": "hall"}, excerpt="long, low hall"),
-    _rc("entity", {"name": "Little Door", "type": "door"}, excerpt="little door about fifteen inches high"),
+    _rc("entity", {"name": "Little Door", "type": "portal"}, excerpt="little door about fifteen inches high"),
     _rc("entity", {"name": "Garden", "type": "site"}, excerpt="most beautiful garden"),
-    _rc("claim", {"subject": "Long Low Hall", "predicate": "CONTAINS", "object": "Little Door"},
+    _rc("claim", {"subject": "Little Door", "predicate": "LOCATED_IN", "object": "Long Low Hall"},
         excerpt="little door about fifteen inches high"),
     _rc("claim", {"subject": "Little Door", "predicate": "LEADS_TO", "object": "Garden"},
         excerpt="leading to a small passage"),
@@ -518,9 +518,9 @@ def test_ch6_duchess_house_contains_kitchen(db):
     section = _make_section(db, "VI — Pig and Pepper", ordinal=6)
     candidates_in = [
         _rc("scene_anchor", {"place": "Duchess's House", "scene_role": "opening"}),
-        _rc("entity", {"name": "Duchess's House", "type": "building"}),
+        _rc("entity", {"name": "Duchess's House", "type": "building"}, excerpt="Duchess's house"),
         _rc("entity", {"name": "Kitchen", "type": "room"}, excerpt="large kitchen"),
-        _rc("claim", {"subject": "Duchess's House", "predicate": "CONTAINS", "object": "Kitchen"},
+        _rc("claim", {"subject": "Kitchen", "predicate": "LOCATED_IN", "object": "Duchess's House"},
             excerpt="large kitchen which seemed full of smoke"),
     ]
     _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
@@ -529,11 +529,11 @@ def test_ch6_duchess_house_contains_kitchen(db):
     assert "Kitchen" in entity_names
     containment = [
         c for c in candidates if c.kind == "claim"
-        and c.payload.get("subject") == "Duchess's House"
-        and c.payload.get("predicate") == "CONTAINS"
-        and c.payload.get("object") == "Kitchen"
+        and c.payload.get("subject") == "Kitchen"
+        and c.payload.get("predicate") == "LOCATED_IN"
+        and c.payload.get("object") == "Duchess's House"
     ]
-    assert containment, "Duchess's House CONTAINS Kitchen claim missing"
+    assert containment, "Kitchen LOCATED_IN Duchess's House claim missing"
 
 
 # ── Excluded entity validation ────────────────────────────────────────────────
@@ -609,7 +609,7 @@ def test_claim_non_spatial_object_rejected(db):
                       "object": "absence of jurymen"},
             excerpt="absence of the jury"),
         # Valid claim to ensure others survive
-        _rc("claim", {"subject": "Trial Court", "predicate": "CONTAINS", "object": "Jury Box"},
+        _rc("claim", {"subject": "Jury Box", "predicate": "LOCATED_IN", "object": "Trial Court"},
             excerpt="jury-box"),
     ]
     _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
@@ -620,7 +620,7 @@ def test_claim_non_spatial_object_rejected(db):
     assert not bad_claims, "Claim with 'absence of jurymen' as object must be rejected"
     valid_claims = [
         c for c in candidates if c.kind == "claim"
-        and c.payload.get("object") == "Jury Box"
+        and c.payload.get("subject") == "Jury Box"
     ]
     assert valid_claims, "Valid claim after rejected one must survive"
 
@@ -637,7 +637,7 @@ def test_claim_disallowed_predicate_rejected(db):
                       "object": "Duchess's House"},
             excerpt="somewhere in the countryside"),
         # Valid claim
-        _rc("claim", {"subject": "March Hare's House", "predicate": "NEAR",
+        _rc("claim", {"subject": "March Hare's House", "predicate": "ADJACENT_TO",
                       "object": "Duchess's House"},
             excerpt="about two miles off"),
     ]
@@ -649,13 +649,13 @@ def test_claim_disallowed_predicate_rejected(db):
     assert not bad_claims, "LOCATED_AMID is not an allowed predicate and must be rejected"
     valid_claims = [
         c for c in candidates if c.kind == "claim"
-        and (c.payload.get("predicate") or "").upper() == "NEAR"
+        and (c.payload.get("predicate") or "").upper() == "ADJACENT_TO"
     ]
-    assert valid_claims, "Valid NEAR claim must survive after rejected LOCATED_AMID"
+    assert valid_claims, "Valid ADJACENT_TO claim must survive after rejected LOCATED_AMID"
 
 
-def test_compass_predicate_accepted_when_explicit(db):
-    """A compass predicate is valid when the source text explicitly states a direction."""
+def test_compass_predicate_rejected_use_adjacent_to(db):
+    """Compass predicates are no longer in the schema — ADJACENT_TO replaces them."""
     section = _make_section(db, "VI — Pig and Pepper", ordinal=6)
     candidates_in = [
         _rc("scene_anchor", {"place": "Duchess's House", "scene_role": "primary"}),
@@ -665,13 +665,22 @@ def test_compass_predicate_accepted_when_explicit(db):
                       "object": "Duchess's House"},
             status="explicit", confidence=0.85,
             excerpt="two miles to the north"),
+        _rc("claim", {"subject": "March Hare's House", "predicate": "ADJACENT_TO",
+                      "object": "Duchess's House"},
+            status="inferred", confidence=0.65,
+            excerpt="two miles to the north"),
     ]
     _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
     compass_claims = [
         c for c in candidates if c.kind == "claim"
         and (c.payload.get("predicate") or "").upper() == "NORTH_OF"
     ]
-    assert compass_claims, "NORTH_OF is a valid predicate when source explicitly states a direction"
+    assert not compass_claims, "NORTH_OF is no longer an allowed predicate"
+    valid_claims = [
+        c for c in candidates if c.kind == "claim"
+        and (c.payload.get("predicate") or "").upper() == "ADJACENT_TO"
+    ]
+    assert valid_claims, "ADJACENT_TO should survive as the replacement for compass directions"
 
 
 # ── Chapter IV: no fabricated open-field anchor ───────────────────────────────

@@ -414,59 +414,30 @@ OUTPUT FORMAT:
   ]
 }
 
-PREDICATES  (use exact uppercase strings)
+PREDICATES  (use exact uppercase strings — there are only three)
 
-CONTAINMENT — extract only when physically accurate AND textually supported
-  CONTAINS          subject physically encloses object             (house CONTAINS room)
-  LOCATED_IN        object is the broader container                (room LOCATED_IN house)
-  PART_OF           object is a structural component of subject    (tower PART_OF castle)
-  SURROUNDED_BY     subject is enclosed on all sides by object
+LOCATED_IN  subject is physically inside or part of object         (room LOCATED_IN house)
+LEADS_TO    subject is a traversable connection to object          (path LEADS_TO bridge)
+ADJACENT_TO subject is beside, near, or spatially related to object (garden ADJACENT_TO house)
 
-  CONTAINMENT RULES — read these before emitting any CONTAINS or LOCATED_IN:
+CONTAINMENT RULES — read before emitting LOCATED_IN:
   - Require explicit textual evidence: the text must say or clearly imply one place is inside another.
     Narrative proximity (two places mentioned in the same paragraph) is NOT evidence of containment.
   - Physical plausibility: the container must be large enough to hold the contained thing.
     A tree, forest, hill, river, or other outdoor/natural feature cannot be LOCATED_IN a building or room.
     A building cannot be LOCATED_IN a room or furniture item.
-    If the relationship would be physically absurd, use ADJACENT_TO or NEAR instead.
+    If the relationship would be physically absurd, use ADJACENT_TO instead.
   - When in doubt between LOCATED_IN and ADJACENT_TO, prefer ADJACENT_TO.
 
-CONNECTIONS — highest priority; these form traversal edges in the atlas
-  LEADS_TO          subject connects to or opens into object       (path LEADS_TO bridge)
-  PORTAL_TO         subject is a door/gate/arch giving access      (gate PORTAL_TO courtyard)
-  DESCENDS_TO       subject leads downward to object               (staircase DESCENDS_TO cellar)
-  ENDS_AT           subject terminates at object                   (road ENDS_AT village)
-  OPENS_TOWARD      subject has an opening facing object           (window OPENS_TOWARD garden)
-  HAS_OPENING       subject has an aperture leading to object
-  BLOCKS_ACCESS_TO  subject prevents passage to object             (gate BLOCKS_ACCESS_TO manor)
+LEADS_TO covers any navigable connection: doors, gates, paths, stairs, passages, portals.
 
-RELATIVE POSITION
-  ADJACENT_TO       directly beside, sharing a wall or edge
-  NEAR              in the vicinity, a short walk or ride
-  ABOVE             directly above                                  (balcony ABOVE courtyard)
-  UNDER             directly below                                  (cellar UNDER house)
-  IN_OR_ADJACENT_TO inside or immediately beside — use ONLY when genuinely ambiguous
-  VISIBLE_FROM      can be seen from subject                       (tower VISIBLE_FROM road)
-  ON_BANK_OF        subject is on the shore or bank of object      (town ON_BANK_OF river)
-  FLOWS_THROUGH     subject flows through or traverses object      (river FLOWS_THROUGH valley)
-  BORDERS           shares a boundary with                         (forest BORDERS road)
-
-COMPASS  — only when the text EXPLICITLY states a cardinal direction
-  NORTH_OF  SOUTH_OF  EAST_OF  WEST_OF
-  NORTHEAST_OF  NORTHWEST_OF  SOUTHEAST_OF  SOUTHWEST_OF
-
-TRAVEL
-  REACHED_FROM      subject is accessed starting from object
-
-IDENTITY — dedup only; use sparingly
-  SAME_AS           subject and object are the same place under different names
+ADJACENT_TO covers everything else: beside, near, visible from, flows through, borders, on the bank of,
+  above, below, north/south/east/west of — any spatial relationship that is not containment or traversal.
 
 EXTRACTION PRIORITY
-  1. CONTAINS / LOCATED_IN — hull edges; extract only physically accurate, textually supported instances
-  2. LEADS_TO / PORTAL_TO / DESCENDS_TO — traversal edges; extract every one
-  3. PART_OF / SURROUNDED_BY / ENDS_AT
-  4. Relative position predicates
-  5. SAME_AS last — only for confirmed aliases, confidence ≥ 0.80
+  1. LOCATED_IN — only physically accurate, textually supported instances
+  2. LEADS_TO — traversal edges; extract every one
+  3. ADJACENT_TO — any proximity or positional relationship not covered above
 
 RULES
   - subject must not equal object
@@ -736,13 +707,11 @@ You are extracting spatial containment relationships from a passage of literary 
 TASK
 Read the section carefully. For every place that the text positions INSIDE, WITHIN, or AS PART OF another catalog place, emit one containment claim.
 
-CONTAINMENT PREDICATES — use the most specific fit:
-  CONTAINS   — subject physically encloses the object
-               ("the house contained a nursery at the top")
-  LOCATED_IN — subject is inside the object
-               ("she was in the nursery of the old house")
-  PART_OF    — subject is a structural section of the object
-               ("the west wing of the mansion")
+CONTAINMENT PREDICATE:
+  LOCATED_IN — subject is physically inside or part of the object
+               ("she was in the nursery of the old house" → nursery LOCATED_IN house)
+               ("the house contained a nursery" → nursery LOCATED_IN house)
+               ("the west wing of the mansion" → west wing LOCATED_IN mansion)
 
 Both subject and object MUST be exact names from the World Atlas Catalog.
 
@@ -753,7 +722,7 @@ OUTPUT FORMAT:
       "kind":       "claim",
       "payload":    {
         "subject":   "<exact catalog name>",
-        "predicate": "CONTAINS",
+        "predicate": "LOCATED_IN",
         "object":    "<exact catalog name>"
       },
       "status":     "explicit",

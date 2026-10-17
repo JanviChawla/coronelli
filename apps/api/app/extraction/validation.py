@@ -6,21 +6,9 @@ _log = logging.getLogger(__name__)
 _VALID_SCENE_ROLES = {"opening", "primary", "ending"}
 
 _ALLOWED_PREDICATES = frozenset({
-    # Containment / placement
-    "CONTAINS", "LOCATED_IN", "PART_OF", "SURROUNDED_BY",
-    # Connections / transitions
-    "LEADS_TO", "PORTAL_TO", "DESCENDS_TO", "ENDS_AT",
-    "OPENS_TOWARD", "HAS_OPENING", "BLOCKS_ACCESS_TO",
-    # Relative position
-    "ADJACENT_TO", "NEAR", "ABOVE", "UNDER", "IN_OR_ADJACENT_TO",
-    "VISIBLE_FROM", "ON_BANK_OF", "FLOWS_THROUGH", "BORDERS",
-    # Compass — only when explicitly stated in source text
-    "NORTH_OF", "SOUTH_OF", "EAST_OF", "WEST_OF",
-    "NORTHEAST_OF", "NORTHWEST_OF", "SOUTHEAST_OF", "SOUTHWEST_OF",
-    # Travel
-    "REACHED_FROM",
-    # Identity / dedup
-    "SAME_AS",
+    "LOCATED_IN",   # containment — subject is inside/part of object
+    "LEADS_TO",     # traversal — navigable connection between places
+    "ADJACENT_TO",  # proximity — beside, near, or any non-traversable spatial relation
 })
 
 _ALLOWED_ENTITY_TYPES = frozenset({

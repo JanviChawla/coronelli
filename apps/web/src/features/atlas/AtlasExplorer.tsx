@@ -77,8 +77,8 @@ function easeOutBack(x: number): number {
 
 // ── Edge predicates (exact from artifact) ─────────────────────────────────────
 
-const CONTAIN_RE = /LOCATED_IN|CONTAINS|ABOVE|UNDER/
-const TRAVEL_RE  = /LEADS_TO|HAS_OPENING|REACHED_FROM|OPENS_TOWARD|PORTAL_TO/
+const CONTAIN_RE = /LOCATED_IN|CONTAINS/  // CONTAINS kept for backward compat with existing DB data
+const TRAVEL_RE  = /LEADS_TO/
 
 // ── Detail panel ─────────────────────────────────────────────────────────────
 

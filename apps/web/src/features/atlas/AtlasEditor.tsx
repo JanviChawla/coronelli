@@ -13,7 +13,7 @@ import {
 import type { EntityExcerpt } from './atlasApi'
 
 // Predicates managed by drag-and-drop or Absorb on the left — excluded from the right panel
-const HIERARCHY_PREDICATES = new Set(['LOCATED_IN', 'CONTAINS', 'PART_OF', 'SAME_AS'])
+const HIERARCHY_PREDICATES = new Set(['LOCATED_IN', 'CONTAINS'])  // CONTAINS kept for old DB data; SAME_AS is not spatial
 
 const ENTITY_TYPES = [
   'world', 'region', 'island', 'district', 'settlement',
@@ -30,11 +30,8 @@ const TIER_COLOR: Record<string, string> = {
 
 // Predicates available in the right-panel "Add relationship" form
 const RELATIONSHIP_PREDICATES = [
-  'ADJACENT_TO', 'NEAR', 'LEADS_TO', 'PORTAL_TO', 'OPENS_TOWARD',
-  'HAS_OPENING', 'VISIBLE_FROM', 'ON_BANK_OF', 'FLOWS_THROUGH', 'BORDERS',
-  'ABOVE', 'UNDER', 'DESCENDS_TO', 'ENDS_AT', 'BLOCKS_ACCESS_TO',
-  'IN_OR_ADJACENT_TO', 'SURROUNDED_BY', 'REACHED_FROM',
-  'NORTH_OF', 'SOUTH_OF', 'EAST_OF', 'WEST_OF',
+  'LEADS_TO',
+  'ADJACENT_TO',
 ]
 
 type PendingClaim = { id: string; subject: string; predicate: string; object: string }
@@ -259,7 +256,7 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
   const allSpatialClaims = entities.flatMap(e =>
     e.claims.filter(c => c.claim_type === 'spatial')
   )
-  const CONTAINMENT_ONLY = new Set(['LOCATED_IN', 'CONTAINS', 'PART_OF'])
+  const CONTAINMENT_ONLY = new Set(['LOCATED_IN', 'CONTAINS'])
   const spatialClaims = allSpatialClaims.filter(c => {
     const pred = c.predicate ?? ''
     if (!showContainment && CONTAINMENT_ONLY.has(pred)) return false
