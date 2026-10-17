@@ -9,6 +9,7 @@ import {
   mergeEntities,
   patchAtlasClaim,
   patchAtlasEntity,
+  promoteContainmentHierarchy,
 } from './atlasApi'
 import type { EntityExcerpt } from './atlasApi'
 
@@ -157,6 +158,8 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
   const [excerpts, setExcerpts] = useState<EntityExcerpt[]>([])
   const [loadingExcerpts, setLoadingExcerpts] = useState(false)
   const [catalogTooltip, setCatalogTooltip] = useState<{ id: string; x: number; y: number } | null>(null)
+
+  const [arrangingHierarchy, setArrangingHierarchy] = useState(false)
 
   // Containment filter toggle (SAME_AS always excluded from relationships panel)
   const [showContainment, setShowContainment] = useState(true)
@@ -715,8 +718,24 @@ export function AtlasEditor({ documentId, onDone, readOnly = false, canExplore =
         }}>
           {/* Panel header */}
           <div style={{ padding: '0.8rem 1.25rem 0.5rem', borderBottom: '1px solid rgba(212,188,138,0.25)', flexShrink: 0 }}>
-            <div style={{ fontSize: '0.58rem', color: 'var(--ink-faint)', letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: '0.22rem' }}>
-              Containment Hierarchy
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.22rem' }}>
+              <div style={{ fontSize: '0.58rem', color: 'var(--ink-faint)', letterSpacing: '0.16em', textTransform: 'uppercase', flex: 1 }}>
+                Containment Hierarchy
+              </div>
+              {!readOnly && (
+                <button
+                  type="button"
+                  disabled={arrangingHierarchy}
+                  onClick={async () => {
+                    setArrangingHierarchy(true)
+                    try { await promoteContainmentHierarchy(documentId); await load() } catch { /* ignore */ } finally { setArrangingHierarchy(false) }
+                  }}
+                  title="Auto-build hierarchy from LOCATED_IN spatial claims"
+                  style={{ fontSize: '0.62rem', padding: '0.15rem 0.45rem', background: 'none', border: '1px solid var(--sidebar-border)', borderRadius: '3px', cursor: arrangingHierarchy ? 'wait' : 'pointer', color: 'var(--gold)', opacity: arrangingHierarchy ? 0.5 : 1, flexShrink: 0 }}
+                >
+                  {arrangingHierarchy ? 'Arranging…' : 'Auto-arrange'}
+                </button>
+              )}
             </div>
             <div style={{ fontSize: '0.73rem', color: 'var(--ink-muted)', lineHeight: 1.45 }}>
               Drag to re-parent. Drop onto root zone to remove parent.

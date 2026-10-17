@@ -3,7 +3,7 @@ import { CandidatesTable } from '../candidates/CandidatesTable'
 import { type Candidate, fetchCandidates, fetchDocumentEntityCandidates, patchCandidateReviewState } from '../candidates/candidateApi'
 import { fetchPreflight, triggerDocumentCatalog, getDocumentCatalogStatus, confirmDocumentCatalog, triggerEvidenceExtraction, getExtractionProgress, fetchPlaceSuggestions, addManualCandidate, triggerDocumentCatalogGap, getDocumentCatalogGapStatus, triggerDedupPass, getDedupStatus, promoteDedup, fetchDedupCandidates, triggerCatalogExtraction, triggerSectionCatalogGap, confirmSectionCatalog, openDocumentEventStream, type DedupCandidate } from './extractionApi'
 import type { Document, Section } from './sourceApi'
-import { fetchAtlas } from '../atlas/atlasApi'
+import { fetchAtlas, promoteContainmentHierarchy } from '../atlas/atlasApi'
 import { triggerVisualSynthesis, getSynthesisProgress } from '../synthesis/synthesisApi'
 import { AtlasEditor } from '../atlas/AtlasEditor'
 import { AtlasExplorer } from '../atlas/AtlasExplorer'
@@ -752,11 +752,20 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
       await triggerVisualSynthesis(document.id)
       if (esRef.current) { esRef.current.close(); esRef.current = null }
       if (timerRef.current) clearInterval(timerRef.current)
+      // Promote containment hierarchy from LOCATED_IN claims after synthesis
+      let hierarchyClaims = 0
+      try {
+        const hResult = await promoteContainmentHierarchy(document.id)
+        hierarchyClaims = hResult.claims_created
+      } catch { /* non-critical */ }
       const atlas = await fetchAtlas(document.id)
       setCanonicalEntityCount(atlas.entity_count)
       setCanonicalClaimCount(atlas.claim_count)
       setAtlasKey(k => k + 1)
       setPhase('done')
+      if (hierarchyClaims > 0) {
+        addToast(`Hierarchy auto-built from ${hierarchyClaims} spatial relationship${hierarchyClaims !== 1 ? 's' : ''}.`, 'success')
+      }
     } catch (e) {
       if (esRef.current) { esRef.current.close(); esRef.current = null }
       if (timerRef.current) clearInterval(timerRef.current)

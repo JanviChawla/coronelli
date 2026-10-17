@@ -148,6 +148,12 @@ export async function createAtlasClaim(
   return res.json()
 }
 
+export async function promoteContainmentHierarchy(documentId: string): Promise<{ status: string; claims_created: number }> {
+  const res = await fetch(`${BASE}/api/documents/${documentId}/assign-containment`, { method: 'POST' })
+  if (!res.ok) throw new Error('Hierarchy promotion failed')
+  return res.json()
+}
+
 export async function downloadAtlasPackage(documentId: string, documentTitle: string): Promise<void> {
   const res = await fetch(`${BASE}/api/documents/${documentId}/atlas-package`)
   if (!res.ok) throw new Error('Failed to export atlas package')
