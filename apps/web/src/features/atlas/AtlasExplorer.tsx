@@ -204,6 +204,68 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       positions.set(e.id, new THREE.Vector3(Math.cos(angle) * (rootRadius + 2), TIER_Y[tier] ?? 0, Math.sin(angle) * (rootRadius + 2)))
     }
 
+    // ── Force-directed pass on X/Z (Y stays pinned to tier) ──────────────────
+    // ADJACENT_TO / LEADS_TO / FLOWS_THROUGH pull connected nodes together.
+    // Containment edges use a weak spring (hierarchy already placed them).
+    // Runs once at setup time — not per frame.
+    ;(() => {
+      const SPRING: Record<string, { k: number; rest: number }> = {
+        ADJACENT_TO:   { k: 0.55, rest: 2.8 },
+        LEADS_TO:      { k: 0.30, rest: 4.0 },
+        FLOWS_THROUGH: { k: 0.30, rest: 4.0 },
+        LOCATED_IN:    { k: 0.08, rest: 2.5 },
+        CONTAINS:      { k: 0.08, rest: 2.5 },
+      }
+      const REPULSION = 14.0
+      const DAMPING   = 0.50
+      const ITERS     = 160
+
+      const vel = new Map<string, [number, number]>()
+      for (const e of entities) vel.set(e.id, [0, 0])
+
+      for (let iter = 0; iter < ITERS; iter++) {
+        const cooling = 1 - iter / ITERS   // reduces force strength over time
+        const force = new Map<string, [number, number]>()
+        for (const e of entities) force.set(e.id, [0, 0])
+
+        // Repulsion
+        for (let i = 0; i < entities.length; i++) {
+          for (let j = i + 1; j < entities.length; j++) {
+            const pa = positions.get(entities[i].id)!, pb = positions.get(entities[j].id)!
+            const dx = pa.x - pb.x, dz = pa.z - pb.z
+            const d2 = Math.max(dx*dx + dz*dz, 0.25)
+            const d  = Math.sqrt(d2)
+            const f  = (REPULSION / d2) * cooling
+            const fa = force.get(entities[i].id)!, fb = force.get(entities[j].id)!
+            fa[0] += f * dx / d; fa[1] += f * dz / d
+            fb[0] -= f * dx / d; fb[1] -= f * dz / d
+          }
+        }
+
+        // Springs along edges
+        for (const edge of edges) {
+          const sp = SPRING[edge.pred]
+          if (!sp) continue
+          const pa = positions.get(edge.sid), pb = positions.get(edge.oid)
+          if (!pa || !pb) continue
+          const dx = pb.x - pa.x, dz = pb.z - pa.z
+          const d  = Math.max(Math.sqrt(dx*dx + dz*dz), 0.001)
+          const f  = sp.k * (d - sp.rest) * cooling
+          const fa = force.get(edge.sid)!, fb = force.get(edge.oid)!
+          fa[0] += f * dx / d; fa[1] += f * dz / d
+          fb[0] -= f * dx / d; fb[1] -= f * dz / d
+        }
+
+        // Apply with damping; keep Y fixed
+        for (const e of entities) {
+          const p = positions.get(e.id)!, f = force.get(e.id)!, v = vel.get(e.id)!
+          v[0] = (v[0] + f[0]) * DAMPING
+          v[1] = (v[1] + f[1]) * DAMPING
+          p.x += v[0]; p.z += v[1]
+        }
+      }
+    })()
+
     // Bounding centre + max radius after layout
     let cx = 0, cz = 0
     for (const e of entities) { const p = positions.get(e.id)!; cx += p.x; cz += p.z }
