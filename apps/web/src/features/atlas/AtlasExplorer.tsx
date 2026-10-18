@@ -210,8 +210,8 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     // Runs once at setup time — not per frame.
     ;(() => {
       const SPRING: Record<string, { k: number; rest: number }> = {
-        LOCATED_IN:    { k: 0.80, rest: 1.8 },
-        CONTAINS:      { k: 0.80, rest: 1.8 },
+        LOCATED_IN:    { k: 0.08, rest: 2.5 },
+        CONTAINS:      { k: 0.08, rest: 2.5 },
         ADJACENT_TO:   { k: 0.45, rest: 2.8 },
         LEADS_TO:      { k: 0.20, rest: 4.5 },
         FLOWS_THROUGH: { k: 0.20, rest: 4.5 },
@@ -265,6 +265,14 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
         }
       }
     })()
+
+    // Snap cross-tier contained nodes directly above/below their parent (same X/Z)
+    for (const [childId, parentId] of parentOf) {
+      if (resolvedTier(childId) !== resolvedTier(parentId)) {
+        const pp = positions.get(parentId), cp = positions.get(childId)
+        if (pp && cp) { cp.x = pp.x; cp.z = pp.z }
+      }
+    }
 
     // Bounding centre + max radius after layout
     let cx = 0, cz = 0
