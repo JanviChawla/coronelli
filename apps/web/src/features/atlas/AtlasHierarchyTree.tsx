@@ -389,10 +389,11 @@ export function AtlasHierarchyTree({
       <div style={{ flex: 1, overflowY: 'auto', padding: '0.35rem 0.5rem 1rem' }}>
         {catalogCandidates.length > 0 && CATALOG_GROUPS.map(group => {
           const members = catalogCandidates
-            .filter(c => group.test(c.spatialLevel) && !c.isRejected)
+            .filter(c => group.test(c.spatialLevel) && (isReviewingCatalog || !c.isRejected))
             .sort((a, b) => a.name.localeCompare(b.name))
           if (members.length === 0) return null
           const collapsed = collapsedCatalogGroups.has(group.id)
+          const keptCount = isReviewingCatalog ? members.filter(c => !c.isRejected).length : members.length
           return (
             <div key={group.id}>
               <div
@@ -410,7 +411,7 @@ export function AtlasHierarchyTree({
                   {group.label}
                 </span>
                 <span style={{ fontSize: '0.62rem', color: 'var(--ink-faint)', flexShrink: 0 }}>
-                  {members.length}
+                  {keptCount < members.length ? `${keptCount} / ${members.length}` : members.length}
                 </span>
               </div>
               {!collapsed && members.map(c => (
@@ -427,21 +428,22 @@ export function AtlasHierarchyTree({
                     paddingLeft: '0.5rem', paddingTop: '0.3rem', paddingBottom: '0.3rem', paddingRight: '0.5rem',
                     display: 'flex', alignItems: 'flex-start', gap: '0.45rem',
                     borderRadius: '4px', cursor: 'pointer',
+                    opacity: c.isRejected ? 0.4 : 1,
                     border: '1px solid transparent',
                     userSelect: 'none',
                   }}
                 >
                   <span style={{
                     width: '0.75rem', height: '0.75rem', borderRadius: '50%', flexShrink: 0, marginTop: '0.1rem',
-                    border: '1px solid var(--gold)',
+                    border: c.isRejected ? '1px solid rgba(180,60,60,0.5)' : '1px solid var(--gold)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: '0.38rem', color: 'var(--gold)',
+                    fontSize: '0.38rem', color: c.isRejected ? 'rgba(180,60,60,0.7)' : 'var(--gold)',
                   }}>
-                    ◉
+                    {c.isRejected ? '✕' : '◉'}
                   </span>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: '0.86rem', color: 'var(--ink)' }}>
+                      <span style={{ fontSize: '0.86rem', color: c.isRejected ? 'var(--ink-faint)' : 'var(--ink)', textDecoration: c.isRejected ? 'line-through' : 'none' }}>
                         {c.name}
                       </span>
                       {c.placeType && (
