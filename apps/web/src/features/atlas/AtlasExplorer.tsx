@@ -14,7 +14,7 @@ interface Props {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
+export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
   const canvasRef       = useRef<HTMLCanvasElement>(null)
   const labelsRef       = useRef<HTMLDivElement>(null)
   const selectedIdRef   = useRef<string | null>(null)
@@ -41,7 +41,7 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
         if (cur === undefined || m.section_ordinal < cur) om.set(m.entity_id, m.section_ordinal)
       }
       ordinalMapRef.current = om
-      const maxOrdinal = mentions.length > 0 ? Math.max(...mentions.map(m => m.section_ordinal)) : 1
+      const maxOrdinal = mentions.length > 0 ? Math.max(...mentions.map(m => m.section_ordinal)) : sections.length
       setSectionCount(maxOrdinal)
       setRevealUpTo(maxOrdinal)
       revealUpToRef.current = maxOrdinal
@@ -721,6 +721,10 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
           <AtlasExplorerDetailPanel
             entity={selectedEntity}
             entityMap={entityMap}
+            allEntities={atlas?.entities ?? []}
+            documentId={documentId}
+            sections={sections}
+            firstSeenOrdinal={selectedId ? ordinalMapRef.current.get(selectedId) : undefined}
             onClose={() => { setSelectedId(null); selectedIdRef.current = null }}
           />
         </div>

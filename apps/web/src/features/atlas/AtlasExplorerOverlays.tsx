@@ -68,7 +68,7 @@ export function AtlasExplorerOverlays({ loading, error, atlas, selectedId, secti
       )}
 
       {/* Provenance scrubber */}
-      {!loading && !error && sectionCount > 1 && (
+      {!loading && !error && sectionCount >= 1 && (
         <div style={{ position: 'absolute', bottom: 18, left: selectedId ? 308 : 18, right: 120, display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(6,12,24,0.72)', borderRadius: 4, padding: '8px 14px', zIndex: 20, backdropFilter: 'blur(8px)' }}>
           <span style={{ fontFamily: SM, fontSize: 8, color: '#6B6352', letterSpacing: '.1em', whiteSpace: 'nowrap' }}>§1</span>
           <input
