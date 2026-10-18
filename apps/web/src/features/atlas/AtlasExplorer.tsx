@@ -216,10 +216,11 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     const atmBase = new THREE.Color(0x060C18)
     let atmColor = atmBase.clone()
     for (const l0e of entities.filter(e => l0Set.has(e.id))) {
+      const pc = l0e.payload.colors as { primary?: string } | null
       const vcCols = l0e.claims
         .filter(c => c.claim_type === 'visual')
         .flatMap(c => (c.payload.palette as Array<{ color?: string; hex?: string; c?: string }> | null) ?? [])
-      const hex = vcCols[0]?.color ?? vcCols[0]?.hex ?? vcCols[0]?.c
+      const hex = pc?.primary ?? vcCols[0]?.color ?? vcCols[0]?.hex ?? vcCols[0]?.c
       if (hex) { try { atmColor = atmBase.clone().lerp(new THREE.Color(hex), 0.12) } catch { /* skip */ } break }
     }
     renderer.setClearColor(atmColor, 1)
@@ -256,10 +257,11 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
         const d = Math.sqrt((p.x - center.x) ** 2 + (p.z - center.z) ** 2)
         if (d + 2.0 > hullR) hullR = d + 2.0
       }
+      const pc = entity.payload.colors as { primary?: string } | null
       const vcCols = entity.claims
         .filter(c => c.claim_type === 'visual')
         .flatMap(c => (c.payload.palette as Array<{ color?: string; hex?: string; c?: string }> | null) ?? [])
-      const rawHex = vcCols[0]?.color ?? vcCols[0]?.hex ?? vcCols[0]?.c ?? TIER_NODE_HEX[(entity.payload.tier as string)] ?? '#C8BC9E'
+      const rawHex = pc?.primary ?? vcCols[0]?.color ?? vcCols[0]?.hex ?? vcCols[0]?.c ?? TIER_NODE_HEX[(entity.payload.tier as string)] ?? '#C8BC9E'
       const planeColor = new THREE.Color(rawHex)
 
       // Fill circle
@@ -314,12 +316,18 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       // Containers grow proportionally to how much they hold (capped at 2×)
       const containerBoost = descCount > 0 ? Math.min(1 + descCount * 0.14, 2.0) : 1
 
-      // Palette lives on visual claims (claim_type='visual'), not on the entity payload
-      const vcColors   = entity.claims
+      // Palette: entity.payload.colors {primary, atmosphere, accent} (synthesis path)
+      // Fall back to palette arrays on visual claims (extraction-only runs)
+      const payloadCols = entity.payload.colors as { primary?: string; atmosphere?: string; accent?: string } | null
+      const vcColors = entity.claims
         .filter(c => c.claim_type === 'visual')
         .flatMap(c => (c.payload.palette as Array<{ color?: string; hex?: string; c?: string }> | null) ?? [])
-      const rawHex     = vcColors[0]?.color ?? vcColors[0]?.hex ?? vcColors[0]?.c ?? TIER_NODE_HEX[tier] ?? '#C8BC9E'
-      const col        = new THREE.Color(rawHex)
+      const rawHex      = payloadCols?.primary ?? vcColors[0]?.color ?? vcColors[0]?.hex ?? vcColors[0]?.c ?? TIER_NODE_HEX[tier] ?? '#C8BC9E'
+      const atmHex      = payloadCols?.atmosphere ?? rawHex
+      const accentHex   = payloadCols?.accent ?? rawHex
+      const col         = new THREE.Color(rawHex)
+      const colAtm      = new THREE.Color(atmHex)
+      const colAccent   = new THREE.Color(accentHex)
       const r          = rForKind(kindDesc)
       const effectiveR = (isL3 ? r * 0.65 : r) * containerBoost
       const pos        = positions.get(entity.id)!
@@ -346,13 +354,13 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       })
       group.add(new THREE.Mesh(geoForKind(kindDesc), coreMat))
 
-      // Inner halo
+      // Inner halo — atmosphere color
       group.add(new THREE.Mesh(new THREE.SphereGeometry(1.9, 12, 12),
-        new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide })))
+        new THREE.MeshBasicMaterial({ color: colAtm, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide })))
 
-      // Outer halo
+      // Outer halo — accent color
       group.add(new THREE.Mesh(new THREE.SphereGeometry(3.0, 10, 10),
-        new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.11, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide })))
+        new THREE.MeshBasicMaterial({ color: colAccent, transparent: true, opacity: 0.11, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide })))
 
       // Cage wireframe for L2 container nodes (signals "this holds things")
       if (hasChildren && !isL3) {
@@ -458,10 +466,11 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     // Derive mote color from aggregate entity palettes — gives a per-book tint
     let mR = 0, mG = 0, mB = 0, moteCount = 0
     for (const entity of entities) {
+      const pc = entity.payload.colors as { primary?: string } | null
       const vcCols = entity.claims
         .filter(c => c.claim_type === 'visual')
         .flatMap(c => (c.payload.palette as Array<{ color?: string; hex?: string; c?: string }> | null) ?? [])
-      const hex = vcCols[0]?.color ?? vcCols[0]?.hex ?? vcCols[0]?.c
+      const hex = pc?.primary ?? vcCols[0]?.color ?? vcCols[0]?.hex ?? vcCols[0]?.c
       if (!hex) continue
       try { const c = new THREE.Color(hex); mR += c.r; mG += c.g; mB += c.b; moteCount++ } catch { /* skip */ }
     }

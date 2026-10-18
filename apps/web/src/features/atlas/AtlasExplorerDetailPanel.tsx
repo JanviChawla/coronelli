@@ -28,15 +28,29 @@ export function AtlasExplorerDetailPanel({ entity, entityMap, allEntities, docum
       .catch(() => {})
   }, [documentId, entity.id])
 
-  // Palette from visual claims
-  const paletteRaw = entity.claims
+  // Palette: prefer entity.payload.colors {primary, atmosphere, accent} (set by synthesis),
+  // fall back to palette arrays on visual claims (extraction-only runs)
+  const payloadColors = entity.payload.colors as { primary?: string; atmosphere?: string; accent?: string } | null
+  const paletteFromPayload: Array<{ hex: string; label: string }> = payloadColors
+    ? ([
+        payloadColors.primary   ? { hex: payloadColors.primary,    label: 'primary'    } : null,
+        payloadColors.atmosphere && payloadColors.atmosphere !== payloadColors.primary
+          ? { hex: payloadColors.atmosphere, label: 'atmosphere' } : null,
+        payloadColors.accent && payloadColors.accent !== payloadColors.primary && payloadColors.accent !== payloadColors.atmosphere
+          ? { hex: payloadColors.accent,     label: 'accent'     } : null,
+      ].filter(Boolean) as Array<{ hex: string; label: string }>)
+    : []
+
+  const paletteFromClaims = entity.claims
     .filter(c => c.claim_type === 'visual' && Array.isArray(c.payload.palette))
     .flatMap(c => c.payload.palette as Array<{ color?: string; hex?: string; c?: string; label?: string; l?: string }>)
+    .map(p => ({ hex: p.color ?? p.hex ?? p.c ?? '', label: p.label ?? p.l ?? '' }))
+    .filter(p => p.hex)
+
   const seenHex = new Set<string>()
-  const palette = paletteRaw.filter(p => {
-    const h = p.color ?? p.hex ?? p.c ?? ''
-    if (!h || seenHex.has(h)) return false
-    seenHex.add(h); return true
+  const palette = (paletteFromPayload.length > 0 ? paletteFromPayload : paletteFromClaims).filter(p => {
+    if (!p.hex || seenHex.has(p.hex)) return false
+    seenHex.add(p.hex); return true
   }).slice(0, 6)
 
   const tier     = (entity.payload.tier as string) ?? 'surface'
@@ -180,15 +194,12 @@ export function AtlasExplorerDetailPanel({ entity, entityMap, allEntities, docum
               Palette
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {palette.map((p, i) => {
-                const hex = p.color ?? p.hex ?? p.c ?? '#6B6352'
-                return (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ width: 18, height: 18, borderRadius: 4, background: hex, display: 'inline-block', flexShrink: 0, boxShadow: `0 0 8px ${hex}AA, 0 0 2px ${hex}` }} />
-                    <span style={{ fontFamily: SM, fontSize: 8, color: '#8A7A60' }}>{p.label ?? p.l ?? ''}</span>
-                  </div>
-                )
-              })}
+              {palette.map((p, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 18, height: 18, borderRadius: 4, background: p.hex, display: 'inline-block', flexShrink: 0, boxShadow: `0 0 8px ${p.hex}AA, 0 0 2px ${p.hex}` }} />
+                  <span style={{ fontFamily: SM, fontSize: 8, color: '#8A7A60' }}>{p.label}</span>
+                </div>
+              ))}
             </div>
           </>
         )}
