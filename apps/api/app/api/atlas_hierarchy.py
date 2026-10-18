@@ -15,7 +15,7 @@ router = APIRouter(tags=["atlas"])
 # ── Containment assignment ─────────────────────────────────────────────────────
 
 @router.post("/api/documents/{document_id}/assign-containment")
-def assign_containment(document_id: str, db: Session = Depends(get_db)):
+def assign_containment(document_id: str, db: Session = Depends(get_db)) -> dict:
     from app.extraction.prompts import CONTAINMENT_EVIDENCE_VERSION
 
     section_ids = [
@@ -146,11 +146,11 @@ def assign_containment(document_id: str, db: Session = Depends(get_db)):
 
 
 def _llm_infer_containment(
-    db,
+    db: Session,
     document_id: str,
-    entities: list,
-    name_to_id: dict,
-    existing: set,
+    entities: list[MapEntity],
+    name_to_id: dict[str, str],
+    existing: set[tuple[str, str]],
 ) -> int:
     import json
     import os
@@ -264,7 +264,7 @@ def _llm_infer_containment(
 # ── Dedup promotion ────────────────────────────────────────────────────────────
 
 @router.post("/api/documents/{document_id}/promote-dedup")
-def promote_dedup(document_id: str, db: Session = Depends(get_db)):
+def promote_dedup(document_id: str, db: Session = Depends(get_db)) -> dict:
     from fastapi import HTTPException
 
     run = (

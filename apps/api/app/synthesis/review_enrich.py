@@ -65,7 +65,6 @@ def _write_entity_mentions(session: Session, document_id: str) -> None:
                 section_id=section.id,
                 section_ordinal=section.ordinal,
                 mention_kind=kind,
-                payload={},
             ))
 
     session.flush()

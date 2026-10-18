@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import Any, Callable
 
 _log = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class OpenAIExtractionProvider:
         self,
         section: SourceSection,
         full_catalog_list: list[dict],
-        phase_callback=None,
+        phase_callback: Callable[[str], None] | None = None,
     ) -> tuple[list[RawCandidate], int, int]:
         """Run all 5 focused evidence sub-passes and return merged candidates + token counts."""
 
@@ -372,7 +372,7 @@ class OpenAIExtractionProvider:
         self,
         section: SourceSection,
         global_catalog: list[dict],
-        phase_callback=None,
+        phase_callback: Callable[[str], None] | None = None,
     ) -> ExtractionResult:
         """Global evidence pass: 7 focused sub-passes using the full global catalog."""
         catalog_names = [e.get("name", "?") for e in global_catalog[:8]]
@@ -400,7 +400,7 @@ class OpenAIExtractionProvider:
     def run_global_enrichment(
         self,
         global_catalog: list[dict],
-        phase_callback=None,
+        phase_callback: Callable[[str], None] | None = None,
         passes: list[str] | None = None,
     ) -> ExtractionResult:
         """Global enrichment: containment sweep + dedup, once per document using full catalog."""

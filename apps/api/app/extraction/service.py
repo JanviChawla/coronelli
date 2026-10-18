@@ -1,6 +1,7 @@
 import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Callable
 
 _log = logging.getLogger(__name__)
 
@@ -134,7 +135,7 @@ def _finish_run(run: "ExtractionRun", result: "ExtractionResult", prompt_version
 def run_catalog_extraction(
     session: Session,
     section_id: str,
-    provider,
+    provider: "ExtractionProvider",
     force: bool = False,
 ) -> tuple["ExtractionRun", list["Candidate"], bool]:
     """Global pre-pass: catalog-only extraction, stores entity candidates for this section."""
@@ -255,7 +256,7 @@ def run_catalog_extraction(
 def run_catalog_gap_extraction(
     session: Session,
     section_id: str,
-    provider,
+    provider: "ExtractionProvider",
 ) -> tuple["ExtractionRun", list["Candidate"]]:
     """Gap pass: re-read section with already-found entities as context, find missed places."""
     section = session.get(SourceSection, section_id)
@@ -304,7 +305,7 @@ def run_catalog_gap_extraction(
 def run_evidence_extraction(
     session: Session,
     section_id: str,
-    provider,
+    provider: "ExtractionProvider",
     global_catalog: list[dict],
     pre_created_run_id: str | None = None,
 ) -> tuple["ExtractionRun", list["Candidate"]]:
@@ -385,7 +386,7 @@ def run_evidence_extraction(
 def run_global_enrichment(
     session: Session,
     document_id: str,
-    provider,
+    provider: "ExtractionProvider",
     global_catalog: list[dict],
     passes: list[str] | None = None,
 ) -> tuple["ExtractionRun", list["Candidate"]]:
