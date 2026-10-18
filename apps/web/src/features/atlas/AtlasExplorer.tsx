@@ -210,11 +210,11 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     // Runs once at setup time — not per frame.
     ;(() => {
       const SPRING: Record<string, { k: number; rest: number }> = {
-        ADJACENT_TO:   { k: 0.55, rest: 2.8 },
-        LEADS_TO:      { k: 0.30, rest: 4.0 },
-        FLOWS_THROUGH: { k: 0.30, rest: 4.0 },
-        LOCATED_IN:    { k: 0.08, rest: 2.5 },
-        CONTAINS:      { k: 0.08, rest: 2.5 },
+        LOCATED_IN:    { k: 0.80, rest: 1.8 },
+        CONTAINS:      { k: 0.80, rest: 1.8 },
+        ADJACENT_TO:   { k: 0.45, rest: 2.8 },
+        LEADS_TO:      { k: 0.20, rest: 4.5 },
+        FLOWS_THROUGH: { k: 0.20, rest: 4.5 },
       }
       const REPULSION = 14.0
       const DAMPING   = 0.50
