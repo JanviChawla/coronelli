@@ -2,199 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { fetchAtlas, fetchEntityMentions } from './atlasApi'
 import type { AtlasResponse, AtlasEntity } from './atlasApi'
+import { TIER_Y, TIER_NODE_HEX, CONTAIN_RE, TRAVEL_RE, geoForKind, rForKind, easeOutBack } from './atlasExplorerUtils'
+import { AtlasExplorerDetailPanel } from './AtlasExplorerDetailPanel'
+import { AtlasExplorerOverlays } from './AtlasExplorerOverlays'
 
 interface Props {
   documentId: string
   sections: Array<{ id: string; title: string }>
   onAtlasLoaded: (entityCount: number) => void
-}
-
-// ── Tier maps ─────────────────────────────────────────────────────────────────
-
-const TIER_Y: Record<string, number> = {
-  peak: 4, elevated: 2, surface: 0, underground: -2, deep: -4,
-}
-const TIER_LABEL: Record<string, string> = {
-  peak: 'Peak', elevated: 'Elevated', surface: 'Surface', underground: 'Underground', deep: 'Deep',
-}
-const TIER_BAR: Record<string, string> = {
-  peak: '#8AABCA', elevated: '#C4884A', surface: '#4A7A4A', underground: '#6A5A7A', deep: '#3A1A2A',
-}
-// Brighter fills for 3D node geometry — TIER_BAR is too dark for mesh colour
-const TIER_NODE_HEX: Record<string, string> = {
-  peak: '#8FBBDA', elevated: '#D4944A', surface: '#C8BC9E', underground: '#8A6AAA', deep: '#AA5A8A',
-}
-
-// ── Geometry per kind_descriptor (exact from artifact) ────────────────────────
-
-function geoForKind(kind: string): THREE.BufferGeometry {
-  const k = (kind ?? '').toLowerCase()
-  if (/^tower/.test(k))                                           return new THREE.BoxGeometry(.58, 2.2, .58)
-  if (/^hall/.test(k))                                           return new THREE.CylinderGeometry(1.35, 1.05, .30, 8)
-  if (/settlement/.test(k))                                      return new THREE.CylinderGeometry(1, .86, .54, 6)
-  if (/^region/.test(k))                                         return new THREE.IcosahedronGeometry(1, 1)
-  if (/forest|wood/.test(k))                                     return new THREE.ConeGeometry(.88, 1.75, 6)
-  if (/water|lake|river|lagoon|pool|swamp|wetland|sea/.test(k))  return new THREE.TorusGeometry(.76, .22, 6, 14)
-  if (/^portal|^threshold|^door/.test(k))                        return new THREE.TorusGeometry(.52, .13, 8, 16)
-  if (/^mountain|^pass/.test(k))                                 return new THREE.ConeGeometry(.86, 2., 4)
-  if (/^vessel/.test(k))                                         return new THREE.CylinderGeometry(.36, .68, 1.3, 8)
-  if (/^dungeon/.test(k))                                        return new THREE.OctahedronGeometry(.95)
-  if (/^room/.test(k))                                           return new THREE.BoxGeometry(1, 1, 1)
-  if (/^landmark/.test(k))                                       return new THREE.TetrahedronGeometry(.95)
-  if (/^grounds|^exterior|^terrain|^farm/.test(k))               return new THREE.DodecahedronGeometry(.9)
-  if (/^building|^estate|^infrastructure|^barrier/.test(k))      return new THREE.BoxGeometry(1.05, 1.18, 1.05)
-  if (/^route/.test(k))                                          return new THREE.IcosahedronGeometry(.7)
-  return new THREE.IcosahedronGeometry(.95)
-}
-
-// Visual scale radius — small values matching artifact (camera closeness drives perceived size)
-function rForKind(kind: string): number {
-  const k = (kind ?? '').toLowerCase()
-  if (/^region/.test(k))                                         return 0.38
-  if (/settlement/.test(k))                                      return 0.26
-  if (/^estate/.test(k))                                         return 0.32
-  if (/^grounds|^exterior|^terrain|^farm/.test(k))               return 0.22
-  if (/forest|wood/.test(k))                                     return 0.26
-  if (/water|lake|river|lagoon|pool|swamp|wetland|sea/.test(k))  return 0.30
-  if (/^dungeon/.test(k))                                        return 0.22
-  if (/^hall/.test(k))                                           return 0.22
-  if (/^building|^infrastructure/.test(k))                       return 0.20
-  if (/^room/.test(k))                                           return 0.16
-  if (/^landmark/.test(k))                                       return 0.16
-  if (/^mountain|^pass/.test(k))                                 return 0.20
-  if (/^portal|^threshold|^door/.test(k))                        return 0.13
-  if (/^barrier/.test(k))                                        return 0.14
-  if (/^vessel/.test(k))                                         return 0.22
-  if (/^route/.test(k))                                          return 0.16
-  if (/^tower/.test(k))                                          return 0.18
-  return 0.18
-}
-
-function easeOutBack(x: number): number {
-  const c1 = 1.70158, c3 = c1 + 1
-  return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2)
-}
-
-// ── Edge predicates (exact from artifact) ─────────────────────────────────────
-
-const CONTAIN_RE = /LOCATED_IN|CONTAINS/  // CONTAINS kept for backward compat with existing DB data
-const TRAVEL_RE  = /LEADS_TO/
-
-// ── Detail panel ─────────────────────────────────────────────────────────────
-
-function DetailPanel({ entity, entityMap, onClose }: {
-  entity: AtlasEntity
-  entityMap: Map<string, AtlasEntity>
-  onClose: () => void
-}) {
-  // Palette lives on visual claims (claim_type='visual'), not on the entity payload
-  const paletteRaw = entity.claims
-    .filter(c => c.claim_type === 'visual' && Array.isArray(c.payload.palette))
-    .flatMap(c => c.payload.palette as Array<{ color?: string; hex?: string; c?: string; label?: string; l?: string }>)
-  const seenHex = new Set<string>()
-  const palette = paletteRaw.filter(p => {
-    const h = p.color ?? p.hex ?? p.c ?? ''
-    if (!h || seenHex.has(h)) return false
-    seenHex.add(h); return true
-  }).slice(0, 6)
-  const tier     = (entity.payload.tier as string) ?? 'surface'
-  const kindDesc = (entity.payload.kind_descriptor as string) ?? entity.place_kind ?? ''
-  const sl       = (entity.payload.spatial_level as number) ?? 2
-  const yv       = TIER_Y[tier] ?? 0
-
-  const conns: Array<{ pred: string; name: string }> = []
-  const seen = new Set<string>()
-  for (const claim of entity.claims) {
-    if (!claim.predicate || !claim.object_refs?.length) continue
-    const tid = claim.object_refs[0], key = `${claim.predicate}|${tid}`
-    if (seen.has(key)) continue; seen.add(key)
-    const target = entityMap.get(tid)
-    if (target) conns.push({ pred: claim.predicate, name: target.name })
-  }
-
-  const SM = "'Space Mono', monospace"
-  const SL_LABEL: Record<number, string> = { 0: 'Realm', 1: 'Territory', 2: 'Place', 3: 'Feature' }
-
-  return (
-    <div style={{
-      position: 'absolute', left: 0, top: 0, bottom: 0, width: 288,
-      background: 'rgba(5,12,26,.92)', borderRight: '1px solid rgba(184,148,58,.18)',
-      backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)',
-      display: 'flex', flexDirection: 'column', overflow: 'hidden',
-      fontFamily: "'Crimson Pro', Georgia, serif", zIndex: 30,
-      transform: 'translateX(0)', transition: 'transform .38s cubic-bezier(.16,1,.3,1)',
-    }}>
-      <button onClick={onClose} style={{
-        position: 'absolute', top: 18, right: 16, background: 'none', border: 'none',
-        cursor: 'pointer', color: '#6B6352', fontSize: 18, padding: '4px 6px', lineHeight: 1,
-        transition: 'color .15s',
-      }}>×</button>
-
-      <div style={{ padding: '54px 22px 18px', borderBottom: '1px solid rgba(184,148,58,.18)', position: 'relative' }}>
-        <div style={{ fontFamily: SM, fontSize: 8, color: '#B8943A', letterSpacing: '.14em', textTransform: 'uppercase', marginBottom: 6 }}>
-          {kindDesc || 'Place'}
-        </div>
-        <div style={{ fontFamily: "'Cinzel', serif", fontSize: 19, fontWeight: 400, color: '#D4B060', lineHeight: 1.15, marginBottom: 10 }}>
-          {entity.name}
-        </div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: SM, fontSize: 8, letterSpacing: '.08em', textTransform: 'uppercase', color: '#6B6352', padding: '3px 8px', border: '1px solid rgba(184,148,58,.18)', borderRadius: 2 }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: TIER_BAR[tier] ?? '#4A7A4A', flexShrink: 0, display: 'inline-block' }} />
-            {TIER_LABEL[tier] ?? tier}
-          </div>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: SM, fontSize: 8, letterSpacing: '.08em', textTransform: 'uppercase', color: '#6B6352', padding: '3px 8px', border: '1px solid rgba(184,148,58,.18)', borderRadius: 2 }}>
-            L{sl} · {SL_LABEL[sl] ?? 'Place'}
-          </div>
-        </div>
-      </div>
-
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 22px 24px', scrollbarWidth: 'thin', scrollbarColor: 'rgba(184,148,58,.18) transparent' }}>
-        <div style={{ fontFamily: SM, fontSize: 8, letterSpacing: '.12em', color: '#6B6352', textTransform: 'uppercase', margin: '18px 0 8px', paddingBottom: 5, borderBottom: '1px solid #25201A' }}>
-          Elevation
-        </div>
-        <div style={{ fontFamily: SM, fontSize: 22, color: '#C8BC9E', letterSpacing: '-.02em' }}>
-          {`Z ${yv >= 0 ? '+' : ''}${yv.toFixed(1)}`}
-        </div>
-        <div style={{ fontFamily: SM, fontSize: 8, color: '#6B6352', textTransform: 'uppercase', letterSpacing: '.08em', marginTop: 2 }}>
-          {TIER_LABEL[tier] ?? tier} tier
-        </div>
-
-        {palette && palette.length > 0 && (
-          <>
-            <div style={{ fontFamily: SM, fontSize: 8, letterSpacing: '.12em', color: '#6B6352', textTransform: 'uppercase', margin: '18px 0 8px', paddingBottom: 5, borderBottom: '1px solid #25201A' }}>
-              Sensory Identity
-            </div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {palette.map((p, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontFamily: SM, fontSize: 8, color: '#6B6352' }}>
-                  <span style={{ width: 12, height: 12, borderRadius: 2, background: p.color ?? p.hex ?? p.c ?? '#6B6352', display: 'inline-block', flexShrink: 0 }} />
-                  {p.label ?? p.l ?? ''}
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        {conns.length > 0 && (
-          <>
-            <div style={{ fontFamily: SM, fontSize: 8, letterSpacing: '.12em', color: '#6B6352', textTransform: 'uppercase', margin: '18px 0 8px', paddingBottom: 5, borderBottom: '1px solid #25201A' }}>
-              Spatial Relations
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {conns.map((c, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 13, color: '#C8BC9E', padding: '5px 7px', borderRadius: 3, border: '1px solid transparent', transition: 'background .12s, border-color .12s' }}>
-                  <span style={{ fontFamily: SM, fontSize: 7.5, color: '#25201A', textTransform: 'uppercase', letterSpacing: '.05em', flexShrink: 0 }}>
-                    {c.pred.replace(/_/g, ' ')}
-                  </span>
-                  {c.name}
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  )
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -395,6 +210,7 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
     cz = entities.length ? cz / entities.length : 0
     let maxR = 0
     for (const e of entities) { const p = positions.get(e.id)!; const r = Math.sqrt((p.x-cx)**2 + (p.z-cz)**2); if (r > maxR) maxR = r }
+
     // ── L0 atmosphere — tint background/fog with realm palette ───────────────
     const atmBase = new THREE.Color(0x060C18)
     let atmColor = atmBase.clone()
@@ -811,7 +627,7 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
       }
     }
 
-    // ── Animation loop (exact artifact loop body) ─────────────────────────────
+    // ── Animation loop ────────────────────────────────────────────────────────
     function loop() {
       animFrame = requestAnimationFrame(loop)
       t += 0.016
@@ -825,7 +641,7 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
         if (progress >= 1) { isGrowing = false; for (const nd of nodeData) nd.group.scale.setScalar(nd.r) }
       }
 
-      // Float + shadow + idle rotation (skipped during grow, same as artifact)
+      // Float + shadow + idle rotation (skipped during grow)
       if (!isGrowing) {
         for (const nd of nodeData) {
           const visible = nd.provenanceOrdinal <= revealUpToRef.current
@@ -896,83 +712,26 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
       {/* Imperative label layer */}
       <div ref={labelsRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }} />
 
-      {loading && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6B6352', fontFamily: "'Space Mono', monospace", fontSize: '0.8rem', pointerEvents: 'none' }}>
-          Loading atlas…
-        </div>
-      )}
-      {error && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#c44', fontFamily: "'Space Mono', monospace", fontSize: '0.8rem', pointerEvents: 'none' }}>
-          {error}
-        </div>
-      )}
-
       {/* Detail panel — data-dp used to prevent click-deselect */}
       {selectedEntity && (
         <div data-dp="">
-          <DetailPanel entity={selectedEntity} entityMap={entityMap} onClose={() => { setSelectedId(null); selectedIdRef.current = null }} />
-        </div>
-      )}
-
-      {/* Elevation legend */}
-      {!loading && !error && (
-        <div style={{ position: 'absolute', right: 18, top: '50%', transform: 'translateY(-50%)', display: 'flex', flexDirection: 'column', gap: 1, pointerEvents: 'none' }}>
-          {(['peak', 'elevated', 'surface', 'underground', 'deep'] as const).map(tier => (
-            <div key={tier} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
-              <div style={{ width: 2, height: 26, borderRadius: 1, background: TIER_BAR[tier], flexShrink: 0 }} />
-              <div>
-                <span style={{ display: 'block', fontFamily: "'Space Mono', monospace", fontSize: 7.5, letterSpacing: '.09em', color: '#6B6352', textTransform: 'uppercase' }}>{TIER_LABEL[tier]}</span>
-                <span style={{ display: 'block', fontFamily: "'Space Mono', monospace", fontSize: 7, color: '#25201A' }}>{TIER_Y[tier] >= 0 ? `Z +${TIER_Y[tier]}` : `Z ${TIER_Y[tier]}`}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Header */}
-      {!loading && !error && atlas && (
-        <header style={{ position: 'absolute', top: 0, left: 0, right: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 24px 0', pointerEvents: 'none', zIndex: 20 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-            <span style={{ fontFamily: "'Cinzel', serif", fontSize: 17, fontWeight: 400, letterSpacing: '.22em', color: '#D4B060' }}>CORONELLI</span>
-            <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 8, color: '#6B6352', letterSpacing: '.10em', textTransform: 'uppercase', border: '1px solid #25201A', padding: '2px 6px', borderRadius: 2 }}>3D Atlas</span>
-          </div>
-          <span style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontStyle: 'italic', fontSize: 13, color: '#6B6352' }}>
-            {atlas.entity_count} places
-          </span>
-        </header>
-      )}
-
-      {/* Controls */}
-      {!loading && !error && (
-        <div style={{ position: 'absolute', bottom: 18, right: 18, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5, pointerEvents: 'none', zIndex: 20 }}>
-          {[['drag', 'Orbit'], ['scroll', 'Zoom'], ['click', 'Inspect']].map(([k, l]) => (
-            <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: "'Space Mono', monospace", fontSize: 7.5, color: '#25201A', textTransform: 'uppercase', letterSpacing: '.07em' }}>
-              <span style={{ border: '1px solid #25201A', padding: '1px 5px', borderRadius: 2, fontSize: 7 }}>{k}</span>
-              {l}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Provenance scrubber */}
-      {!loading && !error && sectionCount > 1 && (
-        <div style={{ position: 'absolute', bottom: 18, left: selectedId ? 308 : 18, right: 120, display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(6,12,24,0.72)', borderRadius: 4, padding: '8px 14px', zIndex: 20, backdropFilter: 'blur(8px)' }}>
-          <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 8, color: '#6B6352', letterSpacing: '.1em', whiteSpace: 'nowrap' }}>§1</span>
-          <input
-            type="range"
-            min={1}
-            max={sectionCount}
-            value={revealUpTo}
-            onChange={e => {
-              const v = Number(e.target.value)
-              setRevealUpTo(v)
-              revealUpToRef.current = v
-            }}
-            style={{ flex: 1, accentColor: '#B8943A', cursor: 'pointer' }}
+          <AtlasExplorerDetailPanel
+            entity={selectedEntity}
+            entityMap={entityMap}
+            onClose={() => { setSelectedId(null); selectedIdRef.current = null }}
           />
-          <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 8, color: '#6B6352', letterSpacing: '.1em', whiteSpace: 'nowrap' }}>§{sectionCount}</span>
         </div>
       )}
+
+      <AtlasExplorerOverlays
+        loading={loading}
+        error={error}
+        atlas={atlas}
+        selectedId={selectedId}
+        sectionCount={sectionCount}
+        revealUpTo={revealUpTo}
+        onRevealChange={v => { setRevealUpTo(v); revealUpToRef.current = v }}
+      />
     </div>
   )
 }
