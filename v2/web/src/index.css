@@ -1,0 +1,61 @@
+:root {
+  color-scheme: dark;
+  --bg: #060C18;
+  --surface: #0E1525;
+  --surface2: #141E30;
+  --gold: #B8943A;
+  --gold-lt: #D4B060;
+  --gold-dim: rgba(184, 148, 58, 0.12);
+  --bd: rgba(184, 148, 58, 0.14);
+  --text: #C8BC9E;
+  --text-dim: #6B6352;
+  --font-serif: 'Crimson Pro', Georgia, serif;
+  --font-display: 'Cinzel', serif;
+  --font-mono: 'Space Mono', monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-serif);
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+button {
+  cursor: pointer;
+  font-family: var(--font-mono);
+}
+
+input,
+select,
+textarea {
+  font-family: var(--font-serif);
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--bd);
+  border-radius: 3px;
+  padding: 6px 10px;
+  outline: none;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--gold);
+}

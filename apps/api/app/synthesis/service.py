@@ -12,12 +12,12 @@ from app.extraction.models import ExtractionRun
 from app.extraction.prompts import GLOBAL_CATALOG_VERSION, GLOBAL_CATALOG_GAP_VERSION, GLOBAL_EVIDENCE_VERSION, GLOBAL_EVIDENCE_DEDUP_VERSION, GLOBAL_EVIDENCE_CONTAINMENT_VERSION
 from app.synthesis.models import SynthesisItem, SynthesisRun
 from app.synthesis.prompts import THREE_PASS_SYNTHESIS_VERSION
-from app.synthesis.provider import SynthesisProvider
-from app.synthesis.review import canonicalize_synthesis_run, _approve_claim, _approve_visual_palette
+from app.synthesis.provider import OpenAISynthesisProvider
+from app.synthesis.review import canonicalize_synthesis_run, apply_scene_anchor_counts, apply_catalog_fields, _approve_claim, _approve_visual_palette
 
 _log = logging.getLogger(__name__)
 
-_ALLOWED_KINDS = {"entity", "claim", "route", "visual_claim", "visual_palette", "access", "movement", "same_as", "unresolved", "reveal_event"}
+_ALLOWED_KINDS = {"entity", "claim", "route", "visual_claim", "visual_palette", "same_as", "unresolved", "reveal_event"}
 _STALE_RUN_MINUTES = 15
 
 
@@ -289,7 +289,7 @@ def _supersede_canonical_records(session: Session, document_id: str) -> None:
 def run_synthesis(
     session: Session,
     document_id: str,
-    provider: SynthesisProvider,
+    provider: OpenAISynthesisProvider,
     force: bool = False,
 ) -> tuple[SynthesisRun, list[SynthesisItem]]:
     ledger = _build_evidence_ledger(session, document_id)
@@ -376,15 +376,12 @@ def run_synthesis(
     try:
         entity_ledger = [item for item in ledger if item["kind"] == "entity"]
         evidence_ledger = [item for item in ledger if item["kind"] != "entity"]
-        if hasattr(provider, "synthesize_two_pass"):
-            result = provider.synthesize_two_pass(
-                entity_ledger,
-                evidence_ledger,
-                phase_callback=_phase_callback,
-                prev_canonical_names=prev_canonical_names,
-            )
-        else:
-            result = provider.synthesize(ledger)
+        result = provider.synthesize_two_pass(
+            entity_ledger,
+            evidence_ledger,
+            phase_callback=_phase_callback,
+            prev_canonical_names=prev_canonical_names,
+        )
 
         run.status = "completed"
         run.provider = result.provider
@@ -412,6 +409,8 @@ def run_synthesis(
 
         session.flush()
         canonical_count = canonicalize_synthesis_run(session, items, document_id)
+        apply_scene_anchor_counts(session, document_id)
+        apply_catalog_fields(session, document_id)
         session.commit()
         _log.info(
             "Synthesis completed for document %s: %d items, %d canonical records (prompt v%s)",
@@ -430,7 +429,7 @@ def run_synthesis(
 def run_visual_synthesis(
     session: Session,
     document_id: str,
-    provider: SynthesisProvider,
+    provider: OpenAISynthesisProvider,
 ) -> tuple[SynthesisRun, list[SynthesisItem]]:
     """Visual-only run: promote spatial candidates directly + LLM visual claims.
 
@@ -507,31 +506,30 @@ def run_visual_synthesis(
         ordinal = 0
 
         # Visual claims + palette sub-passes (run in parallel inside synthesize_visual)
-        if hasattr(provider, "synthesize_visual"):
-            result = provider.synthesize_visual(evidence_candidates, canonical_entity_map, _phase_callback)
-            for raw_item in result.items:
-                item = SynthesisItem(
-                    synthesis_run_id=run.id,
-                    document_id=document_id,
-                    kind=raw_item.kind,
-                    payload=raw_item.payload,
-                    confidence=raw_item.confidence,
-                    rationale=raw_item.rationale,
-                    ordinal=ordinal,
-                )
-                session.add(item)
-                items.append(item)
-                ordinal += 1
-                if raw_item.kind == "visual_claim":
-                    try:
-                        _approve_claim(session, document_id, raw_item.payload, "visual", raw_item.confidence)
-                    except Exception:
-                        _log.warning("Failed to approve visual claim %s", raw_item.payload, exc_info=True)
-                elif raw_item.kind == "visual_palette":
-                    try:
-                        _approve_visual_palette(session, document_id, raw_item.payload)
-                    except Exception:
-                        _log.warning("Failed to approve visual palette %s", raw_item.payload, exc_info=True)
+        result = provider.synthesize_visual(evidence_candidates, canonical_entity_map, _phase_callback)
+        for raw_item in result.items:
+            item = SynthesisItem(
+                synthesis_run_id=run.id,
+                document_id=document_id,
+                kind=raw_item.kind,
+                payload=raw_item.payload,
+                confidence=raw_item.confidence,
+                rationale=raw_item.rationale,
+                ordinal=ordinal,
+            )
+            session.add(item)
+            items.append(item)
+            ordinal += 1
+            if raw_item.kind == "visual_claim":
+                try:
+                    _approve_claim(session, document_id, raw_item.payload, "visual", raw_item.confidence)
+                except Exception:
+                    _log.warning("Failed to approve visual claim %s", raw_item.payload, exc_info=True)
+            elif raw_item.kind == "visual_palette":
+                try:
+                    _approve_visual_palette(session, document_id, raw_item.payload)
+                except Exception:
+                    _log.warning("Failed to approve visual palette %s", raw_item.payload, exc_info=True)
 
         # Promote spatial candidates directly (no LLM)
         spatial_candidates = [
@@ -564,7 +562,8 @@ def run_visual_synthesis(
 
         session.flush()
         run.status = "completed"
-        run.synthesis_prompt_version = result.synthesis_prompt_version if hasattr(provider, "synthesize_visual") else "visual-1.0"
+        if result is not None:
+            run.synthesis_prompt_version = result.synthesis_prompt_version
         run.completed_at = datetime.now(timezone.utc)
         session.commit()
 

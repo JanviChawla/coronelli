@@ -10,19 +10,14 @@ from app.db.models import SourceSection
 import re
 
 from app.extraction.prompts import (
-    PROMPT_VERSION, SYSTEM_PROMPT, USER_TEMPLATE,
-    COMBINED_PROMPT_VERSION,
     CATALOG_SYSTEM_PROMPT, CATALOG_USER_TEMPLATE,
     CATALOG_GAP_SYSTEM_PROMPT, CATALOG_GAP_USER_TEMPLATE,
-    EVIDENCE_SYSTEM_PROMPT, EVIDENCE_USER_TEMPLATE,
     GLOBAL_CATALOG_VERSION, GLOBAL_CATALOG_GAP_VERSION, GLOBAL_EVIDENCE_VERSION,
     EVIDENCE_SUBPASS_USER_TEMPLATE,
     CATALOG_ONLY_USER_TEMPLATE,
     SPATIAL_CLAIMS_SYSTEM_PROMPT,
     VISUAL_CLAIMS_SYSTEM_PROMPT,
     TRAVELRULE_SYSTEM_PROMPT,
-    MOVEMENT_SYSTEM_PROMPT,
-    ACCESS_SYSTEM_PROMPT,
     CONTAINMENT_SWEEP_SYSTEM_PROMPT,
     CONTAINMENT_EVIDENCE_SYSTEM_PROMPT,
     CONTAINMENT_EVIDENCE_VERSION,
@@ -30,8 +25,6 @@ from app.extraction.prompts import (
     GLOBAL_EVIDENCE_SPATIAL_VERSION,
     GLOBAL_EVIDENCE_VISUAL_VERSION,
     GLOBAL_EVIDENCE_TRAVELRULE_VERSION,
-    GLOBAL_EVIDENCE_MOVEMENT_VERSION,
-    GLOBAL_EVIDENCE_ACCESS_VERSION,
     GLOBAL_EVIDENCE_CONTAINMENT_VERSION,
     GLOBAL_EVIDENCE_DEDUP_VERSION,
     GLOBAL_ENRICHMENT_VERSION,
@@ -57,212 +50,6 @@ class OpenAIExtractionProvider:
     def __init__(self, *, client: Any, model: str) -> None:
         self._client = client
         self._model = model
-
-    def extract(
-        self,
-        section: SourceSection,
-        known_entities: list[dict],
-    ) -> ExtractionResult:
-        user_content = USER_TEMPLATE.format(
-            section_id=section.id,
-            section_order=section.ordinal,
-            title=section.title or "(untitled)",
-            text=section.text,
-            known_spatial_entities_json=json.dumps(known_entities, ensure_ascii=False),
-            known_candidate_ids_json=json.dumps([]),
-        )
-        response = self._client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=8192,
-        )
-
-        raw_text = response.choices[0].message.content
-        try:
-            parsed = json.loads(raw_text)
-            if "candidates" not in parsed or not isinstance(parsed["candidates"], list):
-                raise ValueError("missing 'candidates' array")
-        except (json.JSONDecodeError, ValueError) as exc:
-            raise ValueError(f"Failed to parse provider response: {exc}") from exc
-
-        raw_list = parsed["candidates"]
-        if not raw_list:
-            _log.warning("Provider returned 0 candidates. Raw response: %s", raw_text[:2000])
-
-        candidates: list[RawCandidate] = []
-        skipped_status: list[str] = []
-        skipped_kind: list[str] = []
-        for raw in raw_list:
-            if not isinstance(raw, dict):
-                continue
-            status = raw.get("status", "")
-            if status not in _VALID_STATUSES:
-                skipped_status.append(status)
-                continue
-            kind = raw.get("kind", "")
-            if kind not in _VALID_KINDS:
-                skipped_kind.append(kind)
-                continue
-            temporal = raw.get("temporal_interpretation", "static")
-            if temporal not in _VALID_TEMPORAL:
-                temporal = "static"
-
-            relation_kind = raw.get("relation_kind") or None
-            if relation_kind not in _VALID_RELATION_KINDS:
-                relation_kind = None
-
-            candidates.append(RawCandidate(
-                kind=kind,
-                payload=raw.get("payload", {}),
-                status=status,
-                confidence=float(raw.get("confidence", 0.5)),
-                excerpt=str(raw.get("excerpt", "")),
-                rationale=str(raw.get("rationale", "")),
-                temporal_interpretation=temporal,
-                first_revealed_at_section_id=raw.get("first_revealed_at_section_id") or None,
-                relation_kind=relation_kind,
-                relation_target_id=raw.get("relation_target_id") or None,
-            ))
-
-        if skipped_status:
-            _log.warning("Filtered %d candidates with unknown status values: %s", len(skipped_status), skipped_status)
-        if skipped_kind:
-            _log.warning("Filtered %d candidates with unknown kind values: %s", len(skipped_kind), skipped_kind)
-        if not candidates and raw_list:
-            _log.warning("All %d model candidates were filtered out. First raw item: %s", len(raw_list), raw_list[0])
-
-        try:
-            input_tokens = int(response.usage.prompt_tokens)
-            output_tokens = int(response.usage.completion_tokens)
-        except (AttributeError, TypeError, ValueError):
-            input_tokens = None
-            output_tokens = None
-
-        return ExtractionResult(
-            candidates=candidates,
-            raw_response=parsed,
-            provider="openai",
-            model=self._model,
-            prompt_version=PROMPT_VERSION,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-        )
-
-
-    def extract_two_pass(
-        self,
-        section: SourceSection,
-        cumulative_catalog: list[dict],
-    ) -> ExtractionResult:
-        """Two-pass extraction: catalog first, then evidence anchored to catalog."""
-
-        # ── Pass 1: Place Catalog ─────────────────────────────────────────────
-        known_names = [{"name": e["name"], "type": e.get("type", "")} for e in cumulative_catalog]
-        catalog_user = CATALOG_USER_TEMPLATE.format(
-            section_order=section.ordinal,
-            title=section.title or "(untitled)",
-            text=section.text or "",
-            known_names_json=json.dumps(known_names, ensure_ascii=False),
-        )
-        catalog_resp = self._client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": CATALOG_SYSTEM_PROMPT},
-                {"role": "user", "content": catalog_user},
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=4096,
-        )
-        catalog_text = catalog_resp.choices[0].message.content
-        catalog_parsed: dict = {}
-        new_places: list[dict] = []
-        try:
-            catalog_parsed = json.loads(catalog_text)
-            raw_places = catalog_parsed.get("places", [])
-            new_places = raw_places if isinstance(raw_places, list) else []
-        except json.JSONDecodeError:
-            _log.warning("Catalog pass failed to parse JSON: %s", catalog_text[:500])
-
-        try:
-            catalog_input_tokens = int(catalog_resp.usage.prompt_tokens)
-            catalog_output_tokens = int(catalog_resp.usage.completion_tokens)
-        except (AttributeError, TypeError, ValueError):
-            catalog_input_tokens = 0
-            catalog_output_tokens = 0
-
-        # Build entity RawCandidates from new catalog places
-        entity_candidates: list[RawCandidate] = []
-        for p in new_places:
-            name = (p.get("name") or "").strip()
-            ptype = (p.get("type") or "").strip().lower()
-            if not name or ptype not in _ALLOWED_ENTITY_TYPES:
-                continue
-            # Reject bare possessives: "Hans Van Ripper's" is a person, not a place.
-            # "Van Tassel's mansion" is fine — it doesn't end with "'s".
-            if _BARE_POSSESSIVE_RE.search(name):
-                _log.info("Catalog filter: dropped bare possessive %r", name)
-                continue
-            payload: dict[str, Any] = {"name": name, "type": ptype}
-            lvl = p.get("spatial_level")
-            if lvl is not None:
-                try:
-                    payload["spatial_level"] = int(lvl)
-                except (TypeError, ValueError):
-                    pass
-            if p.get("kind_descriptor"):
-                payload["kind_descriptor"] = str(p["kind_descriptor"]).strip().lower()
-            if p.get("tier"):
-                payload["tier"] = str(p["tier"]).strip().lower()
-            if p.get("parent_context"):
-                payload["parent_context"] = str(p["parent_context"]).strip()
-            if p.get("note"):
-                payload["note"] = str(p["note"]).strip()
-            aliases = [a for a in (p.get("aliases") or []) if not _BARE_POSSESSIVE_RE.search(a or "")]
-            if aliases:
-                payload["aliases"] = aliases
-            entity_candidates.append(RawCandidate(
-                kind="entity",
-                payload=payload,
-                status="explicit" if p.get("is_new", True) else "inferred",
-                confidence=float(p.get("confidence", 0.80)),
-                excerpt=str(p.get("excerpt", "")),
-                rationale="Place catalog pass 1",
-                temporal_interpretation="static",
-            ))
-
-        # ── Pass 2: Evidence — 5 focused sub-passes ──────────────────────────
-        cumulative_names = {e["name"] for e in cumulative_catalog}
-        full_catalog_list = list(cumulative_catalog) + [
-            {
-                "name": p["name"],
-                "type": p.get("type", ""),
-                "kind_descriptor": p.get("kind_descriptor", ""),
-                "tier": p.get("tier", ""),
-                "spatial_level": p.get("spatial_level"),
-                "aliases": p.get("aliases", []),
-            }
-            for p in new_places
-            if p.get("name") and p["name"] not in cumulative_names
-        ]
-        subpass_candidates, subpass_in, subpass_out = self._run_evidence_subpasses(
-            section=section,
-            full_catalog_list=full_catalog_list,
-        )
-
-        return ExtractionResult(
-            candidates=entity_candidates + subpass_candidates,
-            raw_response={"catalog": catalog_parsed},
-            provider="openai",
-            model=self._model,
-            prompt_version=COMBINED_PROMPT_VERSION,
-            input_tokens=catalog_input_tokens + subpass_in,
-            output_tokens=catalog_output_tokens + subpass_out,
-        )
-
 
     def _run_evidence_subpasses(
         self,
@@ -298,11 +85,12 @@ class OpenAIExtractionProvider:
         )
 
         # (version, label, system_prompt, user_content, allowed_kinds)
-        # C (travel rules), D (movement), E (access) omitted — feed inspector panel, not atlas explorer.
+        # D (movement) and E (access) omitted — future characters layer, not atlas explorer.
         # F (containment) and G (dedup) omitted — run once globally post-catalog, not per section.
         _SUBPASSES: list[tuple[str, str, str, str, set[str]]] = [
-            (GLOBAL_EVIDENCE_SPATIAL_VERSION, "spatial", SPATIAL_CLAIMS_SYSTEM_PROMPT, user_content, {"claim", "scene_anchor"}),
-            (GLOBAL_EVIDENCE_VISUAL_VERSION,  "visual",  VISUAL_CLAIMS_SYSTEM_PROMPT,  user_content, {"visual_claim"}),
+            (GLOBAL_EVIDENCE_SPATIAL_VERSION,    "spatial",    SPATIAL_CLAIMS_SYSTEM_PROMPT, user_content, {"claim", "scene_anchor"}),
+            (GLOBAL_EVIDENCE_VISUAL_VERSION,     "visual",     VISUAL_CLAIMS_SYSTEM_PROMPT,  user_content, {"visual_claim"}),
+            (GLOBAL_EVIDENCE_TRAVELRULE_VERSION, "travelrule", TRAVELRULE_SYSTEM_PROMPT,     user_content, {"travel_rule"}),
         ]
 
         # Signal that all passes are starting in parallel (session-safe: single call on caller thread)
@@ -441,7 +229,13 @@ class OpenAIExtractionProvider:
             if _BARE_POSSESSIVE_RE.search(name):
                 _log.info("Catalog filter: dropped bare possessive %r", name)
                 continue
+            significance = (p.get("significance") or "").strip().lower()
+            if significance == "passing":
+                _log.info("Catalog filter: dropped passing-significance place %r", name)
+                continue
             payload: dict[str, Any] = {"name": name, "type": ptype}
+            if significance:
+                payload["significance"] = significance
             lvl = p.get("spatial_level")
             if lvl is not None:
                 try:
@@ -530,7 +324,13 @@ class OpenAIExtractionProvider:
                 continue  # LLM repeated a known entity despite instructions
             if _BARE_POSSESSIVE_RE.search(name):
                 continue
+            significance = (p.get("significance") or "").strip().lower()
+            if significance == "passing":
+                _log.info("Gap pass filter: dropped passing-significance place %r", name)
+                continue
             payload: dict[str, Any] = {"name": name, "type": ptype}
+            if significance:
+                payload["significance"] = significance
             lvl = p.get("spatial_level")
             if lvl is not None:
                 try:
@@ -595,95 +395,6 @@ class OpenAIExtractionProvider:
             prompt_version=GLOBAL_EVIDENCE_VERSION,
             input_tokens=total_in,
             output_tokens=total_out,
-        )
-
-    def extract_containment_evidence(
-        self,
-        section: SourceSection,
-        global_catalog: list[dict],
-    ) -> ExtractionResult:
-        """Per-section containment pass: reads text to find CONTAINS/LOCATED_IN/PART_OF claims."""
-        catalog_json = json.dumps(
-            [
-                {
-                    "name": e["name"],
-                    "type": e.get("type", ""),
-                    "kind_descriptor": e.get("kind_descriptor", ""),
-                    "spatial_level": e.get("spatial_level"),
-                    "aliases": e.get("aliases") or [],
-                }
-                for e in global_catalog
-            ],
-            ensure_ascii=False,
-        )
-        user_content = EVIDENCE_SUBPASS_USER_TEMPLATE.format(
-            section_order=section.ordinal,
-            title=section.title or "(untitled)",
-            text=section.text or "",
-            place_catalog_json=catalog_json,
-        )
-        _CONTAINMENT_PREDICATES = {"LOCATED_IN", "CONTAINS", "PART_OF"}  # CONTAINS/PART_OF normalised downstream
-        try:
-            resp = self._client.chat.completions.create(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": CONTAINMENT_EVIDENCE_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content},
-                ],
-                response_format={"type": "json_object"},
-                max_tokens=2048,
-            )
-            raw_text = resp.choices[0].message.content
-            try:
-                in_tok = int(resp.usage.prompt_tokens)
-                out_tok = int(resp.usage.completion_tokens)
-            except (AttributeError, TypeError, ValueError):
-                in_tok = out_tok = 0
-            parsed = json.loads(raw_text)
-            raw_list = parsed.get("candidates", [])
-            if not isinstance(raw_list, list):
-                raw_list = []
-        except Exception as exc:
-            _log.warning("Containment evidence section %s failed: %s", section.id, exc)
-            return ExtractionResult(
-                candidates=[], raw_response={}, provider="openai",
-                model=self._model, prompt_version=CONTAINMENT_EVIDENCE_VERSION,
-                input_tokens=0, output_tokens=0,
-            )
-
-        candidates: list[RawCandidate] = []
-        for raw in raw_list:
-            if not isinstance(raw, dict):
-                continue
-            status = raw.get("status", "")
-            if status not in _VALID_STATUSES:
-                continue
-            if raw.get("kind") != "claim":
-                continue
-            payload = raw.get("payload", {})
-            if payload.get("predicate") not in _CONTAINMENT_PREDICATES:
-                continue
-            candidates.append(RawCandidate(
-                kind="claim",
-                payload=payload,
-                status=status,
-                confidence=float(raw.get("confidence", 0.75)),
-                excerpt=str(raw.get("excerpt", "")),
-                rationale=str(raw.get("rationale", "")),
-                temporal_interpretation="static",
-            ))
-        _log.info(
-            "Containment evidence section %s: %d raw → %d kept",
-            section.id, len(raw_list), len(candidates),
-        )
-        return ExtractionResult(
-            candidates=candidates,
-            raw_response={},
-            provider="openai",
-            model=self._model,
-            prompt_version=CONTAINMENT_EVIDENCE_VERSION,
-            input_tokens=in_tok,
-            output_tokens=out_tok,
         )
 
     def run_global_enrichment(

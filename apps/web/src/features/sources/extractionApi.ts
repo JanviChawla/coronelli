@@ -36,17 +36,6 @@ export type CatalogBatchStatus = {
   catalog_confirmed: boolean
 }
 
-export async function triggerDocumentCatalog(documentId: string, force = false): Promise<CatalogBatchStatus> {
-  const url = `${BASE}/api/documents/${documentId}/extract/catalog${force ? '?force=true' : ''}`
-  const res = await fetch(url, { method: 'POST' })
-  if (!res.ok) {
-    let detail = `Catalog batch failed (HTTP ${res.status})`
-    try { const body = await res.json(); if (body?.detail) detail = body.detail } catch { /* ignore */ }
-    throw new Error(detail)
-  }
-  return res.json()
-}
-
 export async function getDocumentCatalogStatus(documentId: string): Promise<CatalogBatchStatus> {
   const res = await fetch(`${BASE}/api/documents/${documentId}/extract/catalog/status`)
   if (!res.ok) throw new Error(`Catalog status fetch failed: ${res.statusText}`)
@@ -165,24 +154,6 @@ export async function addManualCandidate(
   return res.json()
 }
 
-export async function triggerContainmentAssignment(documentId: string): Promise<{ status: string; claims_created: number }> {
-  const res = await fetch(`${BASE}/api/documents/${documentId}/assign-containment`, { method: 'POST' })
-  if (!res.ok) throw new Error('Containment assignment failed')
-  return res.json()
-}
-
-export async function triggerContainmentPass(documentId: string): Promise<EnrichmentStatus> {
-  const res = await fetch(`${BASE}/api/documents/${documentId}/extract/containment`, { method: 'POST' })
-  if (!res.ok) throw new Error('Containment pass failed')
-  return res.json()
-}
-
-export async function getContainmentStatus(documentId: string): Promise<EnrichmentStatus> {
-  const res = await fetch(`${BASE}/api/documents/${documentId}/extract/containment/status`)
-  if (!res.ok) throw new Error('Failed to get containment status')
-  return res.json()
-}
-
 export async function triggerDedupPass(documentId: string): Promise<EnrichmentStatus> {
   const res = await fetch(`${BASE}/api/documents/${documentId}/extract/dedup`, { method: 'POST' })
   if (!res.ok) throw new Error('Dedup pass failed')
@@ -240,17 +211,23 @@ export type SSEPhaseEvent =
 export type CatalogValidationSuggestion = {
   name: string
   reason: string
+  first_seen?: string
 }
 
-export async function validateCatalog(documentId: string): Promise<CatalogValidationSuggestion[]> {
+export type CatalogValidationResult = {
+  suggestions: CatalogValidationSuggestion[]
+  cost_usd: number
+}
+
+export async function validateCatalog(documentId: string): Promise<CatalogValidationResult> {
   const res = await fetch(`${BASE}/api/documents/${documentId}/catalog/validate`, { method: 'POST' })
   if (!res.ok) {
     let detail = `Validation failed (HTTP ${res.status})`
     try { const body = await res.json(); if (body?.detail) detail = body.detail } catch { /* ignore */ }
     throw new Error(detail)
   }
-  const data: { suggestions: CatalogValidationSuggestion[] } = await res.json()
-  return data.suggestions
+  const data: { suggestions: CatalogValidationSuggestion[], cost_usd: number } = await res.json()
+  return { suggestions: data.suggestions, cost_usd: data.cost_usd ?? 0 }
 }
 
 export function openDocumentEventStream(

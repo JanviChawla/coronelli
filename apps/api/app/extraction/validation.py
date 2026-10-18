@@ -192,18 +192,6 @@ def validate_candidate_payload(kind: str, payload: dict, excerpt: str = "") -> N
             )
         # palette is optional — no hard validation on color values
 
-    elif kind == "access":
-        _require("place_name")
-        _require("access_type")
-        access_type = (payload.get("access_type") or "").strip().lower()
-        if access_type not in {"permitted", "prohibited", "conditional"}:
-            raise ValueError(
-                f"access.access_type '{access_type}' must be permitted, prohibited, or conditional"
-            )
-
-    elif kind == "movement":
-        _require("to_place")
-
     elif kind == "scene_anchor":
         _require("place")
         role = (payload.get("scene_role") or "").strip()

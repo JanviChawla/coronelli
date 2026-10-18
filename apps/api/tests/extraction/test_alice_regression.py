@@ -23,7 +23,7 @@ from app.db.models import SourceDocument, SourceSection
 from app.extraction.models import Candidate
 from app.extraction.prompts import PROMPT_VERSION
 from app.extraction.provider import ExtractionResult, RawCandidate
-from app.extraction.service import run_extraction
+from app.extraction.service import run_catalog_extraction
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -67,10 +67,10 @@ def _make_section(db: Session, title: str, ordinal: int = 1, text: str = "placeh
 
 def _provider(candidates: list[RawCandidate]):
     class _MockProvider:
-        def extract(self, section, known_entities):
+        def extract_catalog_only(self, section, known_names=None):
             return ExtractionResult(
                 candidates=candidates,
-                raw_response={"candidates": []},
+                raw_response={"catalog": {}},
                 provider="openai",
                 model="gpt-4o-mini",
                 prompt_version=PROMPT_VERSION,
@@ -140,14 +140,14 @@ CH1_CANDIDATES = [
 
 def test_ch1_scene_anchor_present(db):
     section = _make_section(db, "I — Down the Rabbit-Hole", ordinal=1)
-    _, candidates, _ = run_extraction(db, section.id, _provider(CH1_CANDIDATES))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(CH1_CANDIDATES))
     kinds = [c.kind for c in candidates]
     assert "scene_anchor" in kinds
 
 
 def test_ch1_required_entities_present(db):
     section = _make_section(db, "I — Down the Rabbit-Hole", ordinal=1)
-    _, candidates, _ = run_extraction(db, section.id, _provider(CH1_CANDIDATES))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(CH1_CANDIDATES))
     names = {c.payload.get("name") for c in candidates if c.kind == "entity"}
     assert "Rabbit Hole" in names
     assert "Long Low Hall" in names
@@ -156,7 +156,7 @@ def test_ch1_required_entities_present(db):
 
 def test_ch1_at_least_one_transition_claim(db):
     section = _make_section(db, "I — Down the Rabbit-Hole", ordinal=1)
-    _, candidates, _ = run_extraction(db, section.id, _provider(CH1_CANDIDATES))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(CH1_CANDIDATES))
     transition_predicates = {"LEADS_TO", "LOCATED_IN", "ADJACENT_TO"}
     claim_predicates = {c.payload.get("predicate") for c in candidates if c.kind == "claim"}
     assert claim_predicates & transition_predicates, f"No transition claim found; got: {claim_predicates}"
@@ -164,7 +164,7 @@ def test_ch1_at_least_one_transition_claim(db):
 
 def test_ch1_scene_role_stored_in_payload(db):
     section = _make_section(db, "I — Down the Rabbit-Hole", ordinal=1)
-    _, candidates, _ = run_extraction(db, section.id, _provider(CH1_CANDIDATES))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(CH1_CANDIDATES))
     anchors = [c for c in candidates if c.kind == "scene_anchor"]
     assert anchors
     assert anchors[0].payload.get("scene_role") == "opening"
@@ -172,7 +172,7 @@ def test_ch1_scene_role_stored_in_payload(db):
 
 def test_ch1_full_candidate_count_survives_pipeline(db):
     section = _make_section(db, "I — Down the Rabbit-Hole", ordinal=1)
-    _, candidates, _ = run_extraction(db, section.id, _provider(CH1_CANDIDATES))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(CH1_CANDIDATES))
     assert len(candidates) == len(CH1_CANDIDATES), (
         f"Expected {len(CH1_CANDIDATES)} candidates but got {len(candidates)} — "
         "some were silently dropped"
@@ -190,7 +190,7 @@ def test_ch2_pool_located_in_long_low_hall(db):
         _rc("claim", {"subject": "Pool of Tears", "predicate": "LOCATED_IN", "object": "Long Low Hall"},
             excerpt="reached half down the hall"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     claims = [c for c in candidates if c.kind == "claim"]
     pool_in_hall = [
         c for c in claims
@@ -210,7 +210,7 @@ def test_ch3_scene_anchor_with_no_new_entity(db):
         _rc("scene_anchor", {"place": "Pool Shore / Bank", "scene_role": "primary"},
             excerpt="bank, with bright eyes"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     assert len(candidates) == 1
     assert candidates[0].kind == "scene_anchor"
     assert "Pool Shore" in candidates[0].payload.get("place", "")
@@ -222,7 +222,7 @@ def test_ch3_no_new_entity_is_not_zero_candidates(db):
     candidates_in = [
         _rc("scene_anchor", {"place": "Pool Shore / Bank", "scene_role": "primary"}),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     assert len(candidates) > 0
 
 
@@ -238,7 +238,7 @@ def test_ch4_white_rabbits_house_contains_upstairs_room(db):
         _rc("claim", {"subject": "Upstairs Room", "predicate": "LOCATED_IN", "object": "White Rabbit's House"},
             excerpt="little room"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     entity_names = {c.payload.get("name") for c in candidates if c.kind == "entity"}
     assert "White Rabbit's House" in entity_names
     assert "Upstairs Room" in entity_names
@@ -282,7 +282,7 @@ def test_ch6_no_compass_predicates(db):
         _rc("claim", {"subject": "Cheshire Cat Tree", "predicate": "ADJACENT_TO", "object": "Duchess's House"},
             status="inferred", confidence=0.6),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     for c in candidates:
         if c.kind == "claim":
             predicate = (c.payload.get("predicate") or "").upper()
@@ -309,7 +309,7 @@ def test_ch7_tree_door_leads_to_long_low_hall(db):
         _rc("claim", {"subject": "Tree Door", "predicate": "LEADS_TO", "object": "Long Low Hall"},
             excerpt="found herself back in the long hall"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     tree_door_claims = [
         c for c in candidates if c.kind == "claim"
         and c.payload.get("subject") == "Tree Door"
@@ -328,7 +328,7 @@ def test_ch7_garden_discovery_update_preserved(db):
             status="inferred", confidence=0.8,
             excerpt="at last she found the garden"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     garden_entity = [c for c in candidates if c.kind == "entity" and c.payload.get("name") == "Garden"]
     assert garden_entity
     assert garden_entity[0].temporal_interpretation == "world_state_change"
@@ -345,7 +345,7 @@ def test_ch9_trial_court_entity_present(db):
         _rc("claim", {"subject": "Jury Box", "predicate": "LOCATED_IN", "object": "Trial Court"},
             status="inferred", confidence=0.8),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     names = {c.payload.get("name") for c in candidates if c.kind == "entity"}
     assert "Trial Court" in names
 
@@ -361,7 +361,7 @@ def test_ch9_court_geography_unresolved(db):
             status="explicit", confidence=0.85,
             excerpt="came upon the trial"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     forbidden_containers = {"Garden", "Palace", "Queen's Palace", "Wonderland Palace"}
     bad_claims = [
         c for c in candidates if c.kind == "claim"
@@ -394,7 +394,7 @@ def test_one_sided_relation_skipped_not_fatal(db):
         ),
         _rc("entity", {"name": "Place Y", "type": "room"}, excerpt="place y described here"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     # The bad candidate is gone but the rest survive
     names = {c.payload.get("name") for c in candidates if c.kind == "entity"}
     assert "Place X" not in names, "Malformed relation candidate should have been skipped"
@@ -412,7 +412,7 @@ def test_no_duplicate_map_entity_on_same_name(db):
         _rc("entity", {"name": "Trial Court", "type": "court"}, excerpt="court of justice"),
         _rc("entity", {"name": "Trial Court", "type": "court"}, excerpt="court of justice again"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     assert len(candidates) == 2
 
     review_candidate(db, candidates[0].id, "approve")
@@ -447,7 +447,7 @@ _ATLAS_READY_CANDIDATES = [
 def test_atlas_readiness_entity_layer(db):
     """At least one entity candidate must be present."""
     section = _make_section(db, "I — Down the Rabbit-Hole", ordinal=1)
-    _, candidates, _ = run_extraction(db, section.id, _provider(_ATLAS_READY_CANDIDATES))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(_ATLAS_READY_CANDIDATES))
     entities = [c for c in candidates if c.kind == "entity"]
     assert entities, "Entity layer missing — no entity candidates"
 
@@ -455,7 +455,7 @@ def test_atlas_readiness_entity_layer(db):
 def test_atlas_readiness_claim_layer(db):
     """At least one spatial claim must be present (topology/relationship layer)."""
     section = _make_section(db, "I — Down the Rabbit-Hole", ordinal=1)
-    _, candidates, _ = run_extraction(db, section.id, _provider(_ATLAS_READY_CANDIDATES))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(_ATLAS_READY_CANDIDATES))
     claims = [c for c in candidates if c.kind == "claim"]
     assert claims, "Claim layer missing — no spatial claim candidates"
 
@@ -463,7 +463,7 @@ def test_atlas_readiness_claim_layer(db):
 def test_atlas_readiness_visual_claim_layer(db):
     """At least one visual_claim must be present (illustration layer)."""
     section = _make_section(db, "I — Down the Rabbit-Hole", ordinal=1)
-    _, candidates, _ = run_extraction(db, section.id, _provider(_ATLAS_READY_CANDIDATES))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(_ATLAS_READY_CANDIDATES))
     visuals = [c for c in candidates if c.kind == "visual_claim"]
     assert visuals, "Visual claim layer missing — no visual_claim candidates"
 
@@ -471,7 +471,7 @@ def test_atlas_readiness_visual_claim_layer(db):
 def test_atlas_readiness_travel_rule_layer(db):
     """At least one travel_rule must be present (route layer)."""
     section = _make_section(db, "I — Down the Rabbit-Hole", ordinal=1)
-    _, candidates, _ = run_extraction(db, section.id, _provider(_ATLAS_READY_CANDIDATES))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(_ATLAS_READY_CANDIDATES))
     routes = [c for c in candidates if c.kind == "travel_rule"]
     assert routes, "Route layer missing — no travel_rule candidates"
 
@@ -491,7 +491,7 @@ def test_atlas_readiness_scene_anchor_every_section(db):
         _rc("entity", {"name": "Pool of Tears", "type": "body_of_water"}),
     ]
     for section, candidates_in in zip(sections, [ch1_candidates, ch2_candidates]):
-        _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+        _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
         anchors = [c for c in candidates if c.kind == "scene_anchor"]
         assert anchors, f"Section '{section.title}' has no scene_anchor"
 
@@ -505,7 +505,7 @@ def test_null_traveler_accepted(db):
             {"traveler": None, "can_traverse": True, "route": "Hall -> Door -> Garden", "condition": None},
             excerpt="passage led to the garden"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     travel = [c for c in candidates if c.kind == "travel_rule"]
     assert travel, "travel_rule with null traveler must be accepted"
     assert travel[0].payload.get("traveler") is None
@@ -523,7 +523,7 @@ def test_ch6_duchess_house_contains_kitchen(db):
         _rc("claim", {"subject": "Kitchen", "predicate": "LOCATED_IN", "object": "Duchess's House"},
             excerpt="large kitchen which seemed full of smoke"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     entity_names = {c.payload.get("name") for c in candidates if c.kind == "entity"}
     assert "Duchess's House" in entity_names
     assert "Kitchen" in entity_names
@@ -547,7 +547,7 @@ def test_excluded_portable_object_rejected(db):
             excerpt="a little golden key"),
         _rc("entity", {"name": "Long Low Hall", "type": "hall"}, excerpt="long, low hall"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     entity_names = {c.payload.get("name") for c in candidates if c.kind == "entity"}
     assert "Little Golden Key" not in entity_names, (
         "Little Golden Key is a portable object and must not be an atlas entity"
@@ -563,7 +563,7 @@ def test_excluded_magic_bottle_rejected(db):
         _rc("entity", {"name": "magic bottle", "type": "landmark"},
             excerpt="found a little bottle"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     entity_names = {c.payload.get("name") for c in candidates if c.kind == "entity"}
     assert "magic bottle" not in entity_names, "Bottle is a prop, not an atlas entity"
 
@@ -577,7 +577,7 @@ def test_excluded_knave_of_hearts_rejected(db):
             excerpt="the Knave of Hearts"),
         _rc("entity", {"name": "Trial Court", "type": "court"}, excerpt="court of justice"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     entity_names = {c.payload.get("name") for c in candidates if c.kind == "entity"}
     assert "Knave of Hearts" not in entity_names, "Knave of Hearts is a character, not an atlas entity"
     assert "Trial Court" in entity_names, "Valid entity after excluded one must survive"
@@ -591,7 +591,7 @@ def test_excluded_table_of_tarts_rejected(db):
         _rc("entity", {"name": "Table of Tarts", "type": "landmark"},
             excerpt="tarts upon the table"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     entity_names = {c.payload.get("name") for c in candidates if c.kind == "entity"}
     assert "Table of Tarts" not in entity_names, "Table of Tarts is furniture/prop, not an atlas entity"
 
@@ -612,7 +612,7 @@ def test_claim_non_spatial_object_rejected(db):
         _rc("claim", {"subject": "Jury Box", "predicate": "LOCATED_IN", "object": "Trial Court"},
             excerpt="jury-box"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     bad_claims = [
         c for c in candidates if c.kind == "claim"
         and "absence" in (c.payload.get("object") or "").lower()
@@ -641,7 +641,7 @@ def test_claim_disallowed_predicate_rejected(db):
                       "object": "Duchess's House"},
             excerpt="about two miles off"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     bad_claims = [
         c for c in candidates if c.kind == "claim"
         and (c.payload.get("predicate") or "").upper() == "LOCATED_AMID"
@@ -670,7 +670,7 @@ def test_compass_predicate_rejected_use_adjacent_to(db):
             status="inferred", confidence=0.65,
             excerpt="two miles to the north"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     compass_claims = [
         c for c in candidates if c.kind == "claim"
         and (c.payload.get("predicate") or "").upper() == "NORTH_OF"
@@ -696,7 +696,7 @@ def test_ch4_no_unsupported_open_field_anchor(db):
         _rc("entity", {"name": "White Rabbit's House", "type": "building"},
             excerpt="a little white house"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     # The scene_anchor itself is allowed (it's a scene anchor, not an entity)
     # But no entity named "Open Field" should be present (it wasn't proposed as one)
     entity_names = {c.payload.get("name") for c in candidates if c.kind == "entity"}

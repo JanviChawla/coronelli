@@ -10,7 +10,7 @@ import {
 
 type View = 'workflow' | 'edit-sections' | 'sections-review'
 
-// ── Droplet helpers ───────────────────────────────────────────────────────────
+// ── World bubble layout ───────────────────────────────────────────────────────
 
 function hashStr(s: string): number {
   let h = 0
@@ -18,44 +18,19 @@ function hashStr(s: string): number {
   return Math.abs(h)
 }
 
-const DROPLET_VARIANTS = ['pink', 'blue', 'green', 'peach', 'amber', 'aqua'] as const
-type Variant = typeof DROPLET_VARIANTS[number]
-
-const DROPLET_GLOW: Record<Variant, string> = {
-  pink:  'rgba(230, 140, 200, 0.6)',
-  blue:  'rgba( 90, 140, 255, 0.6)',
-  green: 'rgba( 60, 200, 175, 0.6)',
-  peach: 'rgba(235, 155, 110, 0.6)',
-  amber: 'rgba(235, 180,  75, 0.6)',
-  aqua:  'rgba( 65, 200, 220, 0.6)',
-}
-
-function dropletVariant(id: string): Variant {
-  return DROPLET_VARIANTS[hashStr(id) % DROPLET_VARIANTS.length]
-}
-
 // Bubble layout: cx/cy = center %, size in vh
 const BUBBLE_LAYOUT = [
-  { cx: '23%', cy: '47%', size: '60vh' },
-  { cx: '56%', cy: '45%', size: '44vh' },
-  { cx: '80%', cy: '44%', size: '31vh' },
-  { cx: '95%', cy: '44%', size: '22vh' },
-]
-
-// Small decorative plain glass drops
-const DECO = [
-  { cx: '46%', cy: '70%', size: '5.5vh', dur: 3.6, delay: 0   },
-  { cx: '63%', cy: '74%', size: '3.6vh', dur: 4.2, delay: 0.8 },
-  { cx:  '9%', cy: '26%', size: '4.2vh', dur: 3.9, delay: 1.1 },
-  { cx: '37%', cy: '16%', size: '3.0vh', dur: 4.8, delay: 0.4 },
-  { cx: '67%', cy: '20%', size: '2.6vh', dur: 3.4, delay: 1.5 },
+  { cx: '20%', cy: '50%', size: '52vh' },
+  { cx: '47%', cy: '48%', size: '38vh' },
+  { cx: '70%', cy: '47%', size: '28vh' },
+  { cx: '87%', cy: '47%', size: '20vh' },
 ]
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function SourceLibrary() {
   const [documents, setDocuments]   = useState<Document[]>([])
-  const [focused, setFocused]       = useState<Document | null>(null)
+  const [hoveredId, setHoveredId]   = useState<string | null>(null)
   const [selected, setSelected]     = useState<Document | null>(null)
   const [sections, setSections]     = useState<Section[]>([])
   const [view, setView]             = useState<View>('workflow')
@@ -69,10 +44,8 @@ export function SourceLibrary() {
   const [editAuthor, setEditAuthor] = useState('')
   const [editYear, setEditYear]     = useState('')
   const [editSaving, setEditSaving] = useState(false)
-  const [confirmingBurnId, setConfirmingBurnId] = useState<string | null>(null)
 
-  const fileRef      = useRef<HTMLInputElement>(null)
-  const burnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { fetchDocuments().then(setDocuments).catch(() => {}) }, [])
 
@@ -83,17 +56,13 @@ export function SourceLibrary() {
     try { setSections(await fetchSections(doc.id)) } catch { setError('Could not load sections.') }
   }
 
-  function handleClickBubble(doc: Document) {
-    setFocused(prev => prev?.id === doc.id ? null : doc)
-  }
-
   async function handleImportFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return
     setImporting(true); setError(null)
     try {
       const result = await importDocument(file, 'demo')
       setDocuments(prev => [...prev, result.document])
-      setFocused(result.document); setSelected(result.document)
+      setSelected(result.document)
       setSections(result.sections); setView('sections-review')
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Import failed.')
@@ -105,7 +74,6 @@ export function SourceLibrary() {
       await deleteDocument(doc.id)
       setDocuments(prev => prev.filter(d => d.id !== doc.id))
       if (selected?.id === doc.id) setSelected(null)
-      if (focused?.id === doc.id) setFocused(null)
     } catch { setError('Could not delete document.') }
   }
 
@@ -130,7 +98,6 @@ export function SourceLibrary() {
       })
       setDocuments(prev => prev.map(d => d.id === updated.id ? updated : d))
       if (selected?.id === updated.id) setSelected(updated)
-      if (focused?.id === updated.id) setFocused(updated)
       setEditingDoc(null)
     } catch { setError('Could not update metadata.') }
     finally { setEditSaving(false) }
@@ -138,20 +105,9 @@ export function SourceLibrary() {
 
   async function handleReset() {
     setResetting(true)
-    try { await resetLibrary(); setDocuments([]); setSelected(null); setFocused(null); setError(null) }
+    try { await resetLibrary(); setDocuments([]); setSelected(null); setError(null) }
     catch { setError('Reset failed.') }
     finally { setResetting(false); setShowReset(false); setResetInput('') }
-  }
-
-  function triggerBurn(doc: Document) {
-    if (confirmingBurnId === doc.id) {
-      if (burnTimerRef.current) clearTimeout(burnTimerRef.current)
-      setConfirmingBurnId(null); handleDelete(doc)
-    } else {
-      if (burnTimerRef.current) clearTimeout(burnTimerRef.current)
-      setConfirmingBurnId(doc.id)
-      burnTimerRef.current = setTimeout(() => setConfirmingBurnId(null), 5000)
-    }
   }
 
   // ── Font shorthands ───────────────────────────────────────────────────────
@@ -261,7 +217,7 @@ export function SourceLibrary() {
           `}</style>
 
           {/* Background */}
-          <div style={{ position: 'absolute', inset: 0, backgroundImage: "url('/bg/background.png')", backgroundSize: 'cover', backgroundPosition: 'center bottom' }} />
+          <div style={{ position: 'absolute', inset: 0, backgroundImage: "url('/bg/background2.png')", backgroundSize: 'cover', backgroundPosition: 'center bottom' }} />
 
           {/* ── Header ──────────────────────────────────────────────────── */}
           <div style={{ position: 'absolute', top: 0, left: 0, right: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.5rem 2rem', zIndex: 20 }}>
@@ -272,94 +228,70 @@ export function SourceLibrary() {
                 <div style={{ fontSize: '0.44rem', color: 'rgba(12,22,60,0.4)', letterSpacing: '0.22em', textTransform: 'uppercase', fontFamily: Mono, marginTop: '0.22rem' }}>Literary Atlases for Curious Minds</div>
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '2rem' }}>
-              {['Your worlds', 'Journal', 'Settings'].map((label, i) => (
-                <button key={label} type="button"
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem', color: i === 0 ? 'rgba(12,22,60,0.88)' : 'rgba(12,22,60,0.42)', fontFamily: Cinzel, letterSpacing: '0.03em', padding: '0 0 4px', borderBottom: i === 0 ? '1px solid rgba(12,22,60,0.45)' : 'none' }}>
-                  {label}
-                </button>
-              ))}
-              <div style={{ width: '31px', height: '31px', borderRadius: '50%', border: '1.5px solid rgba(12,22,60,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'rgba(12,22,60,0.5)', fontSize: '0.85rem' }}>✦</div>
-            </div>
+            <div />
           </div>
-
-          {/* ── Decorative glass drops ────────────────────────────────────── */}
-          {DECO.map((d, i) => (
-            <div key={i} style={{
-              position: 'absolute', left: d.cx, top: d.cy,
-              width: d.size, height: d.size, borderRadius: '50%',
-              background: 'rgba(255,255,255,0.16)',
-              border: '1px solid rgba(255,255,255,0.62)',
-              backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
-              animation: `decoFloat ${d.dur}s ease-in-out ${d.delay}s infinite alternate`,
-              boxShadow: '0 4px 16px rgba(160,185,235,0.22)',
-              pointerEvents: 'none', zIndex: 2,
-            }} />
-          ))}
 
           {/* ── World bubbles ─────────────────────────────────────────────── */}
           {documents.slice(0, 4).map((doc, i) => {
-            const layout   = BUBBLE_LAYOUT[i]!
-            const variant  = dropletVariant(doc.id)
-            const glow     = DROPLET_GLOW[variant]
-            const isFocused = focused?.id === doc.id
-            const h        = hashStr(doc.id)
-            const floatDur   = 3.8 + (h % 10) * 0.28
+            const layout    = BUBBLE_LAYOUT[i]!
+            const isHovered = hoveredId === doc.id
+            const h         = hashStr(doc.id)
+            const floatDur  = 3.8 + (h % 10) * 0.28
             const floatDelay = (h % 20) * 0.14
-            // text area is the upper-left clear zone of the droplet image
-            const titleSize  = `calc(${layout.size} * 0.125)`
-            const authorSize = `calc(${layout.size} * 0.052)`
-            const badgeSize  = `calc(${layout.size} * 0.048)`
-            const dotSize    = `calc(${layout.size} * 0.026)`
+            const titleSize = `calc(${layout.size} * 0.068)`
+            const authorSize = `calc(${layout.size} * 0.046)`
+            const badgeSize = `calc(${layout.size} * 0.040)`
 
             return (
               <div
                 key={doc.id}
-                onClick={() => handleClickBubble(doc)}
+                onClick={() => handleOpenDoc(doc)}
+                onMouseEnter={() => setHoveredId(doc.id)}
+                onMouseLeave={() => setHoveredId(null)}
                 style={{
                   position: 'absolute',
                   left: layout.cx, top: layout.cy,
                   width: layout.size, height: layout.size,
-                  // centering + float animation in one transform chain via wrapper
-                  transform: 'translate(-50%, -50%)',
-                  zIndex: isFocused ? 15 : 8 - i,
+                  transform: `translate(-50%, -50%) scale(${isHovered ? 1.07 : 1})`,
+                  transition: 'transform 0.55s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                  zIndex: isHovered ? 15 : 8 - i,
                   cursor: 'pointer',
                 }}
               >
-                {/* Float + glow wrapper */}
+                {/* Float wrapper */}
                 <div style={{
                   width: '100%', height: '100%',
                   animation: `bubbleFloat ${floatDur}s ease-in-out ${floatDelay}s infinite alternate`,
-                  filter: isFocused
-                    ? `drop-shadow(0 0 38px ${glow}) drop-shadow(0 22px 55px rgba(80,100,180,0.28))`
-                    : `drop-shadow(0 14px 42px rgba(80,100,180,0.18))`,
-                  transition: 'filter 0.45s ease',
                   position: 'relative',
                 }}>
-                  {/* Droplet image */}
-                  <img
-                    src={`/bg/droplet-${variant}.png`}
-                    alt=""
-                    draggable={false}
-                    style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', userSelect: 'none', pointerEvents: 'none' }}
-                  />
-
-                  {/* Text — placed in the clear upper zone of the droplet */}
+                  {/* Glass circle */}
                   <div style={{
-                    position: 'absolute',
-                    top: '10%', left: '9%', right: '28%',
-                    pointerEvents: 'none',
+                    position: 'absolute', inset: 0, borderRadius: '50%',
+                    background: isHovered ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.18)',
+                    backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)',
+                    border: `1.5px solid ${isHovered ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.48)'}`,
+                    boxShadow: isHovered
+                      ? '0 20px 60px rgba(80,100,180,0.28), inset 0 1px 0 rgba(255,255,255,0.5)'
+                      : '0 10px 40px rgba(80,100,180,0.14), inset 0 1px 0 rgba(255,255,255,0.35)',
+                    transition: 'background 0.35s, border-color 0.35s, box-shadow 0.35s',
+                  }} />
+
+                  {/* Text — centered */}
+                  <div style={{
+                    position: 'absolute', inset: 0,
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    padding: '12%', textAlign: 'center', pointerEvents: 'none',
                   }}>
                     <div style={{ fontSize: titleSize, fontFamily: Cinzel, color: '#0E1535', fontWeight: 400, lineHeight: 1.2 }}>
                       {doc.title}
                     </div>
                     {doc.author && (
-                      <div style={{ fontSize: authorSize, letterSpacing: '0.13em', textTransform: 'uppercase', color: '#0E1535', opacity: 0.58, marginTop: '0.3em', fontFamily: Mono }}>
+                      <div style={{ fontSize: authorSize, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#0E1535', opacity: 0.5, marginTop: '0.4em', fontFamily: Mono }}>
                         {doc.author}
                       </div>
                     )}
-                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.38em', marginTop: '0.55em', background: 'rgba(255,255,255,0.7)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderRadius: '20px', padding: '0.18em 0.75em' }}>
-                      <div style={{ width: dotSize, height: dotSize, minWidth: '5px', minHeight: '5px', maxWidth: '10px', maxHeight: '10px', borderRadius: '50%', background: '#D97706', flexShrink: 0 }} />
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3em', marginTop: '0.6em', background: 'rgba(255,255,255,0.55)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', borderRadius: '20px', padding: '0.12em 0.55em' }}>
+                      <div style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#D97706', flexShrink: 0 }} />
                       <span style={{ fontSize: badgeSize, color: '#0E1535', fontFamily: Mono, letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>In progress</span>
                     </div>
                   </div>
@@ -372,50 +304,6 @@ export function SourceLibrary() {
           {documents.length === 0 && !importing && (
             <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', textAlign: 'center', pointerEvents: 'none', zIndex: 5 }}>
               <div style={{ fontSize: '0.78rem', color: 'rgba(12,22,60,0.35)', letterSpacing: '0.14em', fontFamily: Mono }}>No worlds yet — add one →</div>
-            </div>
-          )}
-
-          {/* ── Bottom info panel ──────────────────────────────────────────── */}
-          {focused && (
-            <div style={{
-              position: 'absolute', bottom: '4%', left: '50%', transform: 'translateX(-50%)',
-              background: 'rgba(255,255,255,0.44)',
-              backdropFilter: 'blur(26px)', WebkitBackdropFilter: 'blur(26px)',
-              border: '1px solid rgba(255,255,255,0.74)',
-              borderRadius: '18px',
-              padding: '1.4rem 2rem',
-              display: 'flex', alignItems: 'center', gap: '2.5rem',
-              boxShadow: '0 8px 44px rgba(130,155,220,0.2)',
-              zIndex: 20,
-              minWidth: '420px', maxWidth: '620px',
-            }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '0.52rem', color: 'rgba(12,22,60,0.38)', letterSpacing: '0.24em', textTransform: 'uppercase', fontFamily: Mono, marginBottom: '0.3rem' }}>Selected world</div>
-                <div style={{ fontSize: '1.7rem', fontFamily: Cinzel, color: '#0E1535', fontWeight: 400, lineHeight: 1.15, marginBottom: '0.1rem' }}>{focused.title}</div>
-                {focused.author && (
-                  <div style={{ fontSize: '0.6rem', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'rgba(12,22,60,0.48)', fontFamily: Mono, marginBottom: '0.6rem' }}>{focused.author}</div>
-                )}
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4em', background: 'rgba(255,255,255,0.6)', borderRadius: '20px', padding: '0.2em 0.8em' }}>
-                  <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#D97706', flexShrink: 0 }} />
-                  <span style={{ fontSize: '0.62rem', color: '#0E1535', fontFamily: Mono }}>Catalog · In progress</span>
-                </div>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', flexShrink: 0 }}>
-                <button type="button" onClick={() => handleOpenDoc(focused)}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(100,120,200,0.2)', border: '1px solid rgba(100,120,200,0.36)', borderRadius: '10px', padding: '0.65rem 1.4rem', color: '#0E1535', fontSize: '0.82rem', cursor: 'pointer', fontFamily: Cinzel, letterSpacing: '0.03em', whiteSpace: 'nowrap', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}>
-                  Open Atlas Editor →
-                </button>
-                <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'center' }}>
-                  <button type="button" onClick={() => openEdit(focused)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.64rem', color: 'rgba(12,22,60,0.36)', fontFamily: Mono, padding: '0.1rem 0.4rem' }}>
-                    Edit
-                  </button>
-                  <button type="button" onClick={() => triggerBurn(focused)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.64rem', color: confirmingBurnId === focused.id ? '#c06060' : 'rgba(12,22,60,0.28)', fontFamily: Mono, padding: '0.1rem 0.4rem' }}>
-                    {confirmingBurnId === focused.id ? 'Sure?' : 'Burn'}
-                  </button>
-                </div>
-              </div>
             </div>
           )}
 

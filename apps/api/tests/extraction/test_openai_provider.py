@@ -14,15 +14,16 @@ from sqlalchemy.pool import StaticPool
 from app.db.base import Base
 from app.db.models import SourceDocument, SourceSection
 from app.extraction.models import Candidate, ExtractionRun
-from app.extraction.openai_provider import PROMPT_VERSION, OpenAIExtractionProvider
-from app.extraction.service import ExtractionError, run_extraction
+from app.extraction.openai_provider import OpenAIExtractionProvider
+from app.extraction.prompts import GLOBAL_CATALOG_VERSION
+from app.extraction.service import run_catalog_extraction
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _make_openai_response(candidates: list[dict]) -> MagicMock:
-    """Build a mock that looks like an openai ChatCompletion response."""
-    content = json.dumps({"candidates": candidates})
+def _make_catalog_response(places: list[dict]) -> MagicMock:
+    """Build a mock that looks like an openai ChatCompletion response for the catalog pass."""
+    content = json.dumps({"places": places})
     msg = MagicMock()
     msg.content = content
     choice = MagicMock()
@@ -36,22 +37,12 @@ def _make_openai_response(candidates: list[dict]) -> MagicMock:
     return response
 
 
-VALID_ENTITY = {
-    "kind": "entity",
-    "payload": {"name": "Neverland", "type": "island"},
-    "status": "explicit",
+VALID_PLACE = {
+    "name": "Neverland",
+    "type": "island",
+    "is_new": True,
     "confidence": 0.9,
     "excerpt": "the island called Neverland",
-    "rationale": "Named location mentioned directly.",
-}
-
-VALID_CLAIM = {
-    "kind": "claim",
-    "payload": {"subject": "Neverland", "predicate": "SURROUNDED_BY", "object": "sea"},
-    "status": "inferred",
-    "confidence": 0.75,
-    "excerpt": "surrounded by the sea",
-    "rationale": "Spatial relationship inferred.",
 }
 
 
@@ -97,10 +88,10 @@ def section(db):
 
 def test_provider_sends_section_text_in_request(section):
     mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _make_openai_response([VALID_ENTITY])
+    mock_client.chat.completions.create.return_value = _make_catalog_response([VALID_PLACE])
 
     provider = OpenAIExtractionProvider(client=mock_client, model="gpt-4o-mini")
-    provider.extract(section, known_entities=[])
+    provider.extract_catalog_only(section, known_names=[])
 
     call_args = mock_client.chat.completions.create.call_args
     messages = call_args.kwargs["messages"]
@@ -109,105 +100,92 @@ def test_provider_sends_section_text_in_request(section):
     assert section.title in user_content
 
 
-def test_provider_sends_known_entity_ids(section):
+def test_provider_sends_known_names_in_request(section):
     mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _make_openai_response([VALID_ENTITY])
+    mock_client.chat.completions.create.return_value = _make_catalog_response([VALID_PLACE])
 
     provider = OpenAIExtractionProvider(client=mock_client, model="gpt-4o-mini")
-    known = [{"id": "ent-001", "name": "Wendy", "type": "person"}]
-    provider.extract(section, known_entities=known)
+    known = [{"name": "Wendy's House", "type": "building"}]
+    provider.extract_catalog_only(section, known_names=known)
 
     call_args = mock_client.chat.completions.create.call_args
     messages = call_args.kwargs["messages"]
     full_content = " ".join(m["content"] for m in messages)
-    assert "ent-001" in full_content or "Wendy" in full_content
+    assert "Wendy" in full_content
 
 
-def test_provider_returns_parsed_candidates(section):
+def test_provider_returns_parsed_entity_candidates(section):
     mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _make_openai_response(
-        [VALID_ENTITY, VALID_CLAIM]
-    )
+    mock_client.chat.completions.create.return_value = _make_catalog_response([VALID_PLACE])
 
     provider = OpenAIExtractionProvider(client=mock_client, model="gpt-4o-mini")
-    result = provider.extract(section, known_entities=[])
+    result = provider.extract_catalog_only(section, known_names=[])
 
-    assert len(result.candidates) == 2
+    assert len(result.candidates) == 1
     assert result.candidates[0].kind == "entity"
+    assert result.candidates[0].payload["name"] == "Neverland"
     assert result.candidates[0].status == "explicit"
-    assert result.candidates[1].kind == "claim"
     assert result.provider == "openai"
     assert result.model == "gpt-4o-mini"
-    assert result.prompt_version == PROMPT_VERSION
+    assert result.prompt_version == GLOBAL_CATALOG_VERSION
 
 
 def test_provider_result_includes_raw_response(section):
     mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _make_openai_response([VALID_ENTITY])
+    mock_client.chat.completions.create.return_value = _make_catalog_response([VALID_PLACE])
 
     provider = OpenAIExtractionProvider(client=mock_client, model="gpt-4o-mini")
-    result = provider.extract(section, known_entities=[])
+    result = provider.extract_catalog_only(section, known_names=[])
 
-    assert "candidates" in result.raw_response
+    assert "catalog" in result.raw_response
 
 
-def test_malformed_json_response_raises(section):
+def test_malformed_json_returns_empty_candidates(section):
+    """Catalog pass is resilient: bad JSON logs a warning and returns no candidates."""
     bad_msg = MagicMock()
     bad_msg.content = "not valid json {"
     bad_choice = MagicMock()
     bad_choice.message = bad_msg
     bad_response = MagicMock()
     bad_response.choices = [bad_choice]
+    bad_response.usage.prompt_tokens = 0
+    bad_response.usage.completion_tokens = 0
 
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = bad_response
 
     provider = OpenAIExtractionProvider(client=mock_client, model="gpt-4o-mini")
-    with pytest.raises(ValueError, match="parse"):
-        provider.extract(section, known_entities=[])
+    result = provider.extract_catalog_only(section, known_names=[])
+    assert result.candidates == []
 
 
-def test_missing_candidates_key_raises(section):
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _make_openai_response.__wrapped__(
-        [VALID_ENTITY]
-    ) if hasattr(_make_openai_response, "__wrapped__") else None
-
-    # Build response with wrong schema — no "candidates" key
+def test_missing_places_key_returns_empty_candidates(section):
+    """Catalog pass is resilient: response missing 'places' key returns no candidates."""
     msg = MagicMock()
     msg.content = json.dumps({"results": []})
     choice = MagicMock()
     choice.message = msg
-    bad_response = MagicMock()
-    bad_response.choices = [choice]
+    response = MagicMock()
+    response.choices = [choice]
+    response.usage.prompt_tokens = 0
+    response.usage.completion_tokens = 0
 
     mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = bad_response
+    mock_client.chat.completions.create.return_value = response
 
     provider = OpenAIExtractionProvider(client=mock_client, model="gpt-4o-mini")
-    with pytest.raises(ValueError, match="parse"):
-        provider.extract(section, known_entities=[])
-
-
-def test_imagined_status_stripped_from_output(section):
-    """Provider must never emit 'imagined' status — strip or raise."""
-    imagined_candidate = {**VALID_ENTITY, "status": "imagined"}
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _make_openai_response([imagined_candidate])
-
-    provider = OpenAIExtractionProvider(client=mock_client, model="gpt-4o-mini")
-    result = provider.extract(section, known_entities=[])
-    assert all(c.status != "imagined" for c in result.candidates)
+    result = provider.extract_catalog_only(section, known_names=[])
+    assert result.candidates == []
 
 
 # ── Service integration via mocked provider ───────────────────────────────────
 
 def test_service_stores_openai_run(db, section):
     mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _make_openai_response([VALID_ENTITY])
+    mock_client.chat.completions.create.return_value = _make_catalog_response([VALID_PLACE])
 
     provider = OpenAIExtractionProvider(client=mock_client, model="gpt-4o-mini")
-    run, candidates, _ = run_extraction(db, section.id, provider)
+    run, candidates, _ = run_catalog_extraction(db, section.id, provider)
 
     assert run.provider == "openai"
     assert run.model == "gpt-4o-mini"
@@ -215,23 +193,25 @@ def test_service_stores_openai_run(db, section):
     assert len(candidates) == 1
 
 
-def test_service_stores_failed_run_on_bad_json(db, section):
+def test_service_stores_completed_run_on_bad_json(db, section):
+    """Catalog pass is resilient: bad JSON produces a completed run with zero candidates."""
     msg = MagicMock()
     msg.content = "garbage"
     choice = MagicMock()
     choice.message = msg
     bad_resp = MagicMock()
     bad_resp.choices = [choice]
+    bad_resp.usage.prompt_tokens = 0
+    bad_resp.usage.completion_tokens = 0
 
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = bad_resp
 
     provider = OpenAIExtractionProvider(client=mock_client, model="gpt-4o-mini")
-    with pytest.raises(ExtractionError):
-        run_extraction(db, section.id, provider)
+    run, candidates, _ = run_catalog_extraction(db, section.id, provider)
 
-    run = db.query(ExtractionRun).first()  # noqa: PIE796
-    assert run.status == "failed"
+    assert run.status == "completed"
+    assert candidates == []
     assert db.query(Candidate).count() == 0
 
 
@@ -246,23 +226,21 @@ def test_extract_endpoint_returns_run_and_candidates(db, section):
     app.dependency_overrides[get_db] = lambda: db
 
     mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _make_openai_response(
-        [VALID_ENTITY, VALID_CLAIM]
-    )
+    mock_client.chat.completions.create.return_value = _make_catalog_response([VALID_PLACE])
 
     with patch("app.api.extraction.get_provider") as mock_get_provider:
         mock_get_provider.return_value = OpenAIExtractionProvider(
             client=mock_client, model="gpt-4o-mini"
         )
         with TestClient(app) as client:
-            resp = client.post(f"/api/sections/{section.id}/extract")
+            resp = client.post(f"/api/sections/{section.id}/extract/catalog")
 
     app.dependency_overrides.clear()
 
     assert resp.status_code == 201
     body = resp.json()
     assert body["run"]["status"] == "completed"
-    assert len(body["candidates"]) == 2
+    assert len(body["candidates"]) == 1
 
 
 def test_extract_endpoint_404_on_missing_section(db):
@@ -275,7 +253,7 @@ def test_extract_endpoint_404_on_missing_section(db):
     with patch("app.api.extraction.get_provider") as mock_get_provider:
         mock_get_provider.return_value = MagicMock()
         with TestClient(app) as client:
-            resp = client.post("/api/sections/no-such-id/extract")
+            resp = client.post("/api/sections/no-such-id/extract/catalog")
 
     app.dependency_overrides.clear()
     assert resp.status_code == 404
@@ -292,7 +270,7 @@ def test_extract_endpoint_503_when_not_configured(db, section):
     with patch("app.api.extraction.get_provider") as mock_get_provider:
         mock_get_provider.side_effect = ExtractionNotConfiguredError("no key")
         with TestClient(app) as client:
-            resp = client.post(f"/api/sections/{section.id}/extract")
+            resp = client.post(f"/api/sections/{section.id}/extract/catalog")
 
     app.dependency_overrides.clear()
     assert resp.status_code == 503
@@ -306,14 +284,14 @@ def test_get_run_endpoint(db, section):
     app.dependency_overrides[get_db] = lambda: db
 
     mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _make_openai_response([VALID_ENTITY])
+    mock_client.chat.completions.create.return_value = _make_catalog_response([VALID_PLACE])
 
     with patch("app.api.extraction.get_provider") as mock_get_provider:
         mock_get_provider.return_value = OpenAIExtractionProvider(
             client=mock_client, model="gpt-4o-mini"
         )
         with TestClient(app) as client:
-            post_resp = client.post(f"/api/sections/{section.id}/extract")
+            post_resp = client.post(f"/api/sections/{section.id}/extract/catalog")
             run_id = post_resp.json()["run"]["id"]
             get_resp = client.get(f"/api/extraction-runs/{run_id}")
 

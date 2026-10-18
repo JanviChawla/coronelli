@@ -15,10 +15,6 @@ class MapEntity(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     entity_kind: Mapped[str] = mapped_column(String, nullable=False, default="place")
     place_kind: Mapped[str | None] = mapped_column(String, nullable=True)
-    parent_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("map_entities.id", ondelete="SET NULL"), nullable=True
-    )
-    map_behavior: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False, default="explicit")
     state: Mapped[str] = mapped_column(String, nullable=False, default="active")
     provenance_document_id: Mapped[str | None] = mapped_column(
@@ -81,7 +77,6 @@ class EntityMention(Base):
     )
     section_ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
     mention_kind: Mapped[str] = mapped_column(String, nullable=False)  # "origin" | "referenced"
-    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
 
 class MapTravelRule(Base):

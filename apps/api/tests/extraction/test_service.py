@@ -2,7 +2,7 @@
 Task 7: Extraction service tests using a FakeProvider.
 
 Invariants under test:
-- run_extraction stores an immutable ExtractionRun and two proposed Candidates.
+- run_catalog_extraction stores an immutable ExtractionRun and two proposed Candidates.
 - No canonical entity/claim records are created.
 - A failed provider response persists a failed run with zero candidates.
 - Candidates are linked to the run and section by ID.
@@ -20,7 +20,7 @@ from app.db.base import Base
 from app.db.models import SourceDocument, SourceSection
 from app.extraction.models import Candidate, ExtractionRun
 from app.extraction.provider import ExtractionProvider, ExtractionResult, RawCandidate
-from app.extraction.service import ExtractionError, run_extraction
+from app.extraction.service import ExtractionError, run_catalog_extraction
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -66,7 +66,7 @@ def section(db):
 class FakeProvider:
     """Returns two fixed proposed candidates."""
 
-    def extract(self, section: SourceSection, known_entities: list[dict]) -> ExtractionResult:
+    def extract_catalog_only(self, section: SourceSection, known_names=None) -> ExtractionResult:
         return ExtractionResult(
             candidates=[
                 RawCandidate(
@@ -96,25 +96,25 @@ class FakeProvider:
 class FailingProvider:
     """Simulates a provider that raises an error."""
 
-    def extract(self, section: SourceSection, known_entities: list[dict]) -> ExtractionResult:
+    def extract_catalog_only(self, section: SourceSection, known_names=None) -> ExtractionResult:
         raise RuntimeError("Provider unavailable.")
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 def test_run_stores_extraction_run(db, section):
-    run, candidates, _ = run_extraction(db, section.id, FakeProvider())
+    run, candidates, _ = run_catalog_extraction(db, section.id, FakeProvider())
     assert run.id is not None
     assert run.section_id == section.id
     assert run.status == "completed"
     assert run.provider == "fake"
     assert run.model == "fake-v1"
-    assert run.prompt_version == "0.1"
+    assert run.prompt_version == "5.0-catalog"  # run_catalog_extraction always stamps GLOBAL_CATALOG_VERSION
     assert run.error is None
 
 
 def test_run_stores_two_candidates(db, section):
-    run, candidates, _ = run_extraction(db, section.id, FakeProvider())
+    run, candidates, _ = run_catalog_extraction(db, section.id, FakeProvider())
     assert len(candidates) == 2
     assert all(c.extraction_run_id == run.id for c in candidates)
     assert all(c.section_id == section.id for c in candidates)
@@ -122,7 +122,7 @@ def test_run_stores_two_candidates(db, section):
 
 
 def test_candidates_have_expected_fields(db, section):
-    _, candidates, _ = run_extraction(db, section.id, FakeProvider())
+    _, candidates, _ = run_catalog_extraction(db, section.id, FakeProvider())
     entity = next(c for c in candidates if c.kind == "entity")
     claim = next(c for c in candidates if c.kind == "claim")
 
@@ -137,7 +137,7 @@ def test_candidates_have_expected_fields(db, section):
 
 def test_failed_provider_persists_failed_run(db, section):
     with pytest.raises(ExtractionError):
-        run_extraction(db, section.id, FailingProvider())
+        run_catalog_extraction(db, section.id, FailingProvider())
 
     runs = db.query(ExtractionRun).all()
     assert len(runs) == 1
@@ -147,18 +147,18 @@ def test_failed_provider_persists_failed_run(db, section):
 
 
 def test_force_creates_new_run(db, section):
-    """force=True always calls the provider and creates a new run."""
-    run1, _, _ = run_extraction(db, section.id, FakeProvider())
-    run2, _, _ = run_extraction(db, section.id, FakeProvider(), force=True)
+    """force=True supersedes the old run and creates a fresh one."""
+    run1, _, _ = run_catalog_extraction(db, section.id, FakeProvider())
+    run2, _, _ = run_catalog_extraction(db, section.id, FakeProvider(), force=True)
     assert run1.id != run2.id
     assert db.query(ExtractionRun).count() == 2
 
 
 def test_unknown_section_raises(db):
     with pytest.raises(ExtractionError, match="not found"):
-        run_extraction(db, "no-such-id", FakeProvider())
+        run_catalog_extraction(db, "no-such-id", FakeProvider())
 
 
 def test_raw_response_stored_on_run(db, section):
-    run, _, _ = run_extraction(db, section.id, FakeProvider())
+    run, _, _ = run_catalog_extraction(db, section.id, FakeProvider())
     assert run.raw_response == {"model": "fake", "tokens": 42}

@@ -43,8 +43,6 @@ class MapEntityOut(BaseModel):
     name: str
     entity_kind: str
     place_kind: str | None
-    parent_id: str | None
-    map_behavior: str | None
     status: str
     state: str
     provenance_document_id: str | None
@@ -117,14 +115,6 @@ def list_section_candidates(section_id: str, db: Session = Depends(get_db)):
     return [CandidateOut.model_validate(c) for c in candidates]
 
 
-@router.get("/api/candidates/{candidate_id}", response_model=CandidateOut)
-def get_candidate(candidate_id: str, db: Session = Depends(get_db)):
-    candidate = db.get(Candidate, candidate_id)
-    if candidate is None:
-        raise HTTPException(status_code=404, detail=f"Candidate '{candidate_id}' not found.")
-    return CandidateOut.model_validate(candidate)
-
-
 @router.post("/api/candidates/{candidate_id}/review", response_model=ReviewResponse, status_code=200)
 def review(candidate_id: str, body: ReviewRequest, db: Session = Depends(get_db)):
     try:
@@ -167,18 +157,6 @@ def approve_all_section_candidates(section_id: str, db: Session = Depends(get_db
         except ReviewError:
             pass
     return {"approved": approved, "section_id": section_id}
-
-
-@router.get("/api/map-entities", response_model=list[MapEntityOut])
-def list_map_entities(db: Session = Depends(get_db)):
-    entities = db.query(MapEntity).filter(MapEntity.state == "active").order_by(MapEntity.name).all()
-    return [MapEntityOut.model_validate(e) for e in entities]
-
-
-@router.get("/api/map-claims", response_model=list[MapClaimOut])
-def list_map_claims(db: Session = Depends(get_db)):
-    claims = db.query(MapClaim).filter(MapClaim.state == "active").all()
-    return [MapClaimOut.model_validate(c) for c in claims]
 
 
 class ReviewStateRequest(BaseModel):

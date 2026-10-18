@@ -28,7 +28,7 @@ from app.extraction.display import candidate_display_summary
 from app.extraction.models import Candidate
 from app.extraction.prompts import PROMPT_VERSION
 from app.extraction.provider import ExtractionResult, RawCandidate
-from app.extraction.service import run_extraction
+from app.extraction.service import run_catalog_extraction
 from app.extraction.validation import validate_candidate_payload
 from app.domain.review import review_candidate
 from app.domain.world import MapEntity
@@ -75,10 +75,10 @@ def _make_section(db: Session, title: str, ordinal: int = 1, text: str = "placeh
 
 def _provider(candidates: list[RawCandidate]):
     class _MockProvider:
-        def extract(self, section, known_entities):
+        def extract_catalog_only(self, section, known_names=None):
             return ExtractionResult(
                 candidates=candidates,
-                raw_response={"candidates": []},
+                raw_response={"catalog": {}},
                 provider="openai",
                 model="gpt-4o-mini",
                 prompt_version=PROMPT_VERSION,
@@ -170,7 +170,7 @@ def test_malformed_visual_claim_skipped_not_persisted(db):
     )
     good_anchor = _rc("scene_anchor", {"place": "Emerald City", "scene_role": "primary"})
 
-    _, candidates, _ = run_extraction(db, section.id, _provider([bad_visual, good_anchor]))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider([bad_visual, good_anchor]))
 
     kinds = [c.kind for c in candidates]
     assert "scene_anchor" in kinds
@@ -189,9 +189,9 @@ def test_malformed_claim_skipped_not_persisted(db):
         rationale="containment",
         temporal_interpretation="static",
     )
-    good_entity = _rc("entity", {"name": "Throne Room", "type": "hall"})
+    good_entity = _rc("entity", {"name": "Throne Room", "type": "hall"}, excerpt="throne room inside")
 
-    _, candidates, _ = run_extraction(db, section.id, _provider([bad_claim, good_entity]))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider([bad_claim, good_entity]))
 
     kinds = [c.kind for c in candidates]
     assert "entity" in kinds
@@ -213,7 +213,7 @@ def test_barrier_type_persisted(db):
         _rc("entity", {"name": "China Wall", "type": "barrier"}, excerpt="a high wall"),
         _rc("entity", {"name": "China Country", "type": "region"}, excerpt="a china country"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     barrier = [c for c in candidates if c.payload.get("name") == "China Wall"]
     assert barrier, "China Wall entity must be persisted"
     assert barrier[0].payload["type"] == "barrier"
@@ -238,8 +238,8 @@ def test_no_duplicate_emerald_city_map_entity(db):
     sec2.document_id = sec1.document_id
     db.commit()
 
-    _, cands1, _ = run_extraction(db, sec1.id, _provider(ec_candidate))
-    _, cands2, _ = run_extraction(db, sec2.id, _provider(ec_candidate))
+    _, cands1, _ = run_catalog_extraction(db, sec1.id, _provider(ec_candidate))
+    _, cands2, _ = run_catalog_extraction(db, sec2.id, _provider(ec_candidate))
 
     # Approve Emerald City entity from both sections
     entity_cands1 = [c for c in cands1 if c.kind == "entity" and c.payload.get("name") == "Emerald City"]
@@ -264,7 +264,7 @@ def test_every_candidate_has_excerpt(db):
         _rc("claim", {"subject": "Palace of Oz", "predicate": "LOCATED_IN", "object": "Emerald City"},
             excerpt="inside the city"),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     for c in candidates:
         assert c.excerpt and c.excerpt.strip(), f"Candidate {c.kind} has blank excerpt"
 
@@ -276,7 +276,7 @@ def test_every_candidate_has_section_id(db):
         _rc("scene_anchor", {"place": "Emerald City", "scene_role": "primary"}),
         _rc("entity", {"name": "Throne Room", "type": "hall"}),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
     for c in candidates:
         assert c.section_id == section.id, f"Candidate {c.kind} has wrong section_id"
 
@@ -288,15 +288,15 @@ def test_all_persisted_candidates_have_display_summary(db):
     section = _make_section(db, "XI — The Wonderful City of Oz", ordinal=11)
     candidates_in = [
         _rc("scene_anchor", {"place": "Emerald City", "scene_role": "opening"}),
-        _rc("entity", {"name": "Emerald City", "type": "settlement"}),
-        _rc("entity", {"name": "Palace of Oz", "type": "building"}),
+        _rc("entity", {"name": "Emerald City", "type": "settlement"}, excerpt="the great emerald city"),
+        _rc("entity", {"name": "Palace of Oz", "type": "building"}, excerpt="the palace of oz"),
         _rc("claim", {"subject": "Palace of Oz", "predicate": "LOCATED_IN", "object": "Emerald City"}),
         _rc("travel_rule", {"traveler": "Dorothy", "can_traverse": True,
             "route": "Emerald City -> Palace of Oz -> Throne Room", "condition": None}),
         _rc("visual_claim", {"subject": "Emerald City", "category": "atmosphere",
             "observation": "everything green"}),
     ]
-    _, candidates, _ = run_extraction(db, section.id, _provider(candidates_in))
+    _, candidates, _ = run_catalog_extraction(db, section.id, _provider(candidates_in))
 
     assert len(candidates) == 6, f"Expected all 6 candidates, got {len(candidates)}"
     for c in candidates:

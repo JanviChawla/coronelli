@@ -12,9 +12,6 @@ Invariants:
 """
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
-import json
-
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -22,10 +19,9 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.db.models import SourceDocument, SourceSection
-from app.extraction.models import Candidate, ExtractionRun
+from app.extraction.models import Candidate
 from app.extraction.provider import ExtractionResult, RawCandidate
-from app.extraction.service import ExtractionError, run_extraction
-from app.extraction.openai_provider import OpenAIExtractionProvider, PROMPT_VERSION
+from app.extraction.service import run_catalog_extraction
 
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
@@ -76,23 +72,13 @@ def doc_and_sections(db):
     return sec1, sec2
 
 
-def _make_response(candidates: list[dict]) -> MagicMock:
-    msg = MagicMock()
-    msg.content = json.dumps({"candidates": candidates})
-    choice = MagicMock()
-    choice.message = msg
-    resp = MagicMock()
-    resp.choices = [choice]
-    return resp
-
-
 # ── Default / backward-compat ─────────────────────────────────────────────────
 
 def test_existing_candidates_default_to_static(db, doc_and_sections):
     sec1, _ = doc_and_sections
 
     class MinimalProvider:
-        def extract(self, section, known_entities):
+        def extract_catalog_only(self, section, known_names=None):
             return ExtractionResult(
                 candidates=[
                     RawCandidate(
@@ -110,7 +96,7 @@ def test_existing_candidates_default_to_static(db, doc_and_sections):
                 prompt_version="0.1",
             )
 
-    _, candidates, _ = run_extraction(db, sec1.id, MinimalProvider())
+    _, candidates, _ = run_catalog_extraction(db, sec1.id, MinimalProvider())
     c = candidates[0]
     assert c.temporal_interpretation == "static"
     assert c.first_revealed_at_section_id is None
@@ -124,7 +110,7 @@ def test_discovery_interpretation_stored(db, doc_and_sections):
     sec1, sec2 = doc_and_sections
 
     class DiscoveryProvider:
-        def extract(self, section, known_entities):
+        def extract_catalog_only(self, section, known_names=None):
             return ExtractionResult(
                 candidates=[
                     RawCandidate(
@@ -144,156 +130,20 @@ def test_discovery_interpretation_stored(db, doc_and_sections):
                 prompt_version="0.2",
             )
 
-    _, candidates, _ = run_extraction(db, sec1.id, DiscoveryProvider())
+    _, candidates, _ = run_catalog_extraction(db, sec1.id, DiscoveryProvider())
     c = candidates[0]
     assert c.temporal_interpretation == "discovery"
     assert c.first_revealed_at_section_id == sec2.id
 
 
-def test_world_state_change_stored(db, doc_and_sections):
-    sec1, sec2 = doc_and_sections
-
-    class WorldChangeProvider:
-        def extract(self, section, known_entities):
-            return ExtractionResult(
-                candidates=[
-                    RawCandidate(
-                        kind="claim",
-                        payload={"subject": "The Forest", "predicate": "BLOCKS_ACCESS_TO", "object": "North Road"},
-                        status="explicit",
-                        confidence=0.85,
-                        excerpt="the forest had burned",
-                        rationale="Route blocked by destruction.",
-                        temporal_interpretation="world_state_change",
-                    )
-                ],
-                raw_response={},
-                provider="fake",
-                model="m1",
-                prompt_version="0.2",
-            )
-
-    _, candidates, _ = run_extraction(db, sec2.id, WorldChangeProvider())
-    assert candidates[0].temporal_interpretation == "world_state_change"
-
-
-def test_knowledge_revision_stored(db, doc_and_sections):
-    sec1, _ = doc_and_sections
-
-    class RevisionProvider:
-        def extract(self, section, known_entities):
-            return ExtractionResult(
-                candidates=[
-                    RawCandidate(
-                        kind="claim",
-                        payload={"subject": "The Forest", "predicate": "NEAR", "object": "Village"},
-                        status="inferred",
-                        confidence=0.7,
-                        excerpt="lay to the north",
-                        rationale="Direction inferred.",
-                        temporal_interpretation="knowledge_revision",
-                    )
-                ],
-                raw_response={},
-                provider="fake",
-                model="m1",
-                prompt_version="0.2",
-            )
-
-    _, candidates, _ = run_extraction(db, sec1.id, RevisionProvider())
-    assert candidates[0].temporal_interpretation == "knowledge_revision"
-
-
 # ── Relational fields ─────────────────────────────────────────────────────────
-
-def test_supersedes_relation_stored(db, doc_and_sections):
-    sec1, sec2 = doc_and_sections
-
-    class FirstProvider:
-        def extract(self, section, known_entities):
-            return ExtractionResult(
-                candidates=[
-                    RawCandidate(
-                        kind="claim",
-                        payload={"subject": "North Road", "predicate": "REACHED_FROM", "object": "Village"},
-                        status="explicit",
-                        confidence=0.9,
-                        excerpt="The great forest lay to the north",
-                        rationale="Route implied.",
-                    )
-                ],
-                raw_response={},
-                provider="fake",
-                model="m1",
-                prompt_version="0.2",
-            )
-
-    _, c1_list, _ = run_extraction(db, sec1.id, FirstProvider())
-    first_id = c1_list[0].id
-
-    class SupersedesProvider:
-        def extract(self, section, known_entities):
-            return ExtractionResult(
-                candidates=[
-                    RawCandidate(
-                        kind="claim",
-                        payload={"subject": "North Road", "predicate": "BLOCKS_ACCESS_TO", "object": "Village"},
-                        status="explicit",
-                        confidence=0.95,
-                        excerpt="the forest had burned",
-                        rationale="Earlier route now blocked.",
-                        temporal_interpretation="world_state_change",
-                        relation_kind="supersedes",
-                        relation_target_id=first_id,
-                    )
-                ],
-                raw_response={},
-                provider="fake",
-                model="m1",
-                prompt_version="0.2",
-            )
-
-    _, c2_list, _ = run_extraction(db, sec2.id, SupersedesProvider())
-    c2 = c2_list[0]
-    assert c2.relation_kind == "supersedes"
-    assert c2.relation_target_id == first_id
-
-
-def test_contradicts_relation_stored(db, doc_and_sections):
-    sec1, sec2 = doc_and_sections
-
-    class ContradictProvider:
-        def extract(self, section, known_entities):
-            return ExtractionResult(
-                candidates=[
-                    RawCandidate(
-                        kind="claim",
-                        payload={"subject": "The Forest", "predicate": "NEAR", "object": "Village"},
-                        status="inferred",
-                        confidence=0.6,
-                        excerpt="forest had burned",
-                        rationale="Contradicts earlier direction claim.",
-                        relation_kind="contradicts",
-                        relation_target_id="some-prior-id",
-                    )
-                ],
-                raw_response={},
-                provider="fake",
-                model="m1",
-                prompt_version="0.2",
-            )
-
-    _, candidates, _ = run_extraction(db, sec2.id, ContradictProvider())
-    assert candidates[0].relation_kind == "contradicts"
-    assert candidates[0].relation_target_id == "some-prior-id"
-
 
 def test_relation_kind_without_target_skipped_not_fatal(db, doc_and_sections):
     """One-sided relation is skipped with a warning; other candidates in the batch survive."""
     sec1, _ = doc_and_sections
 
     class BadRelationProvider:
-        def extract(self, section, known_entities):
+        def extract_catalog_only(self, section, known_names=None):
             return ExtractionResult(
                 candidates=[
                     RawCandidate(
@@ -321,7 +171,7 @@ def test_relation_kind_without_target_skipped_not_fatal(db, doc_and_sections):
                 prompt_version="0.2",
             )
 
-    _, candidates, _ = run_extraction(db, sec1.id, BadRelationProvider())
+    _, candidates, _ = run_catalog_extraction(db, sec1.id, BadRelationProvider())
     # Malformed candidate skipped; valid one persists
     assert len(candidates) == 1
     assert candidates[0].payload["name"] == "Village"
@@ -332,7 +182,7 @@ def test_relation_target_without_kind_skipped_not_fatal(db, doc_and_sections):
     sec1, _ = doc_and_sections
 
     class BadRelationProvider:
-        def extract(self, section, known_entities):
+        def extract_catalog_only(self, section, known_names=None):
             return ExtractionResult(
                 candidates=[
                     RawCandidate(
@@ -360,101 +210,6 @@ def test_relation_target_without_kind_skipped_not_fatal(db, doc_and_sections):
                 prompt_version="0.2",
             )
 
-    _, candidates, _ = run_extraction(db, sec1.id, BadRelationProvider())
+    _, candidates, _ = run_catalog_extraction(db, sec1.id, BadRelationProvider())
     assert len(candidates) == 1
     assert candidates[0].payload["name"] == "Forest"
-
-
-# ── OpenAI provider parsing ───────────────────────────────────────────────────
-
-def _section():
-    s = MagicMock()
-    s.id = "sec-001"
-    s.title = "Chapter I"
-    s.text = "The great forest lay to the north."
-    return s
-
-
-def test_openai_provider_parses_temporal_fields():
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _make_response([{
-        "kind": "entity",
-        "payload": {"name": "The Forest", "type": "region"},
-        "status": "explicit",
-        "confidence": 0.9,
-        "excerpt": "The great forest",
-        "rationale": "Named region.",
-        "temporal_interpretation": "discovery",
-        "first_revealed_at_section_id": "sec-002",
-        "relation_kind": None,
-        "relation_target_id": None,
-    }])
-
-    provider = OpenAIExtractionProvider(client=mock_client, model="gpt-4o-mini")
-    result = provider.extract(_section(), [])
-
-    assert result.candidates[0].temporal_interpretation == "discovery"
-    assert result.candidates[0].first_revealed_at_section_id == "sec-002"
-
-
-def test_openai_provider_parses_relation_fields():
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _make_response([{
-        "kind": "claim",
-        "payload": {"subject": "X", "predicate": "BLOCKS", "object": "Y"},
-        "status": "explicit",
-        "confidence": 0.85,
-        "excerpt": "blocked",
-        "rationale": "Route blocked.",
-        "temporal_interpretation": "world_state_change",
-        "relation_kind": "supersedes",
-        "relation_target_id": "cand-abc",
-    }])
-
-    provider = OpenAIExtractionProvider(client=mock_client, model="gpt-4o-mini")
-    result = provider.extract(_section(), [])
-
-    c = result.candidates[0]
-    assert c.relation_kind == "supersedes"
-    assert c.relation_target_id == "cand-abc"
-    assert c.temporal_interpretation == "world_state_change"
-
-
-def test_openai_provider_invalid_temporal_coerced_to_static():
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _make_response([{
-        "kind": "entity",
-        "payload": {"name": "The Forest", "type": "region"},
-        "status": "explicit",
-        "confidence": 0.9,
-        "excerpt": "The great forest",
-        "rationale": "Named region.",
-        "temporal_interpretation": "made_up_value",
-    }])
-
-    provider = OpenAIExtractionProvider(client=mock_client, model="gpt-4o-mini")
-    result = provider.extract(_section(), [])
-
-    assert result.candidates[0].temporal_interpretation == "static"
-
-
-def test_openai_provider_missing_temporal_defaults_to_static():
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _make_response([{
-        "kind": "entity",
-        "payload": {"name": "The Forest", "type": "region"},
-        "status": "explicit",
-        "confidence": 0.9,
-        "excerpt": "The great forest",
-        "rationale": "Named region.",
-        # temporal_interpretation absent
-    }])
-
-    provider = OpenAIExtractionProvider(client=mock_client, model="gpt-4o-mini")
-    result = provider.extract(_section(), [])
-
-    assert result.candidates[0].temporal_interpretation == "static"
-
-
-def test_prompt_version_bumped_to_0_7():
-    assert PROMPT_VERSION == "0.7"

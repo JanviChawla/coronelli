@@ -1,140 +1,4 @@
-SYNTHESIS_PROMPT_VERSION = "1.2"  # kept for single-pass fallback
-THREE_PASS_SYNTHESIS_VERSION = "3.12"  # 3.12: tighter spatial nesting rules — portals need both sides, passages inside buildings, regional containers
-
-SYNTHESIS_SYSTEM_PROMPT = """\
-CORONELLI ATLAS SYNTHESIS — Stage 2
-
-You are a cartographic synthesizer for the Coronelli literary-atlas project. You receive a complete
-evidence ledger: all cartographic fragments extracted section-by-section from a single literary work.
-Your job is to synthesize this raw evidence into a provisional atlas — a structured set of world facts.
-
-## INPUT FORMAT
-
-The evidence ledger is a JSON array of candidates, each with:
-- section_title: which section this was extracted from
-- section_ordinal: section order within the book (1-indexed, for temporal reasoning)
-- kind: entity | claim | travel_rule | visual_claim | access | movement | scene_anchor
-- payload: the extracted data
-- confidence: extraction confidence (0.0–1.0)
-- excerpt: verbatim source text supporting this candidate
-- status: explicit (directly stated) | inferred (deduced)
-- review_state: proposed | approved | rejected | deferred
-
-Use all candidates in the ledger. Do not filter by review_state.
-
-## YOUR TASK
-
-Produce synthesis_items — consolidated world facts derived from the full evidence corpus.
-
-## ALLOWED SYNTHESIS ITEM KINDS
-
-### 1. entity
-A consolidated place entity, merged across all sections where it appears.
-Payload: {"name": str, "type": str, "aliases": [str], "observations": [str]}
-- type must be one of: world, region, island, district, settlement, landmark, building, room, hall,
-  tunnel, passage, portal, grounds, vessel, terrain_feature, body_of_water, site, court, barrier
-- Merge duplicate entity candidates from different sections into ONE entity item.
-- Include aliases if the place is named differently across sections.
-- A wall, hedge, fence, gate, or physical barrier that separates regions is a barrier.
-- observations: one brief string per section where the entity appears, in section_ordinal order.
-  Each string captures how the place is described or experienced in that section — different seasons,
-  times of day, narrative roles, who is present. Do not average them into one sentence; preserve
-  the per-section variation. Example: ["Ch.I: A dark, dripping tunnel, barely shoulder-width.",
-  "Ch.VII: The same tunnel, now lit by torchlight, feels almost welcoming."]
-
-### 2. claim
-A confirmed spatial relationship between two places.
-Payload: {"subject": str, "predicate": str, "object": str}
-- predicate must be one of: CONTAINS, LOCATED_IN, LEADS_TO, OPENS_TOWARD, ADJACENT_TO, NEAR,
-  UNDER, ABOVE, DESCENDS_TO, ENDS_AT, HAS_OPENING, REACHED_FROM, SAME_AS, IN_OR_ADJACENT_TO,
-  BLOCKS_ACCESS_TO, SURROUNDED_BY,
-  NORTH_OF, SOUTH_OF, EAST_OF, WEST_OF, NORTHEAST_OF, NORTHWEST_OF, SOUTHEAST_OF, SOUTHWEST_OF
-  (compass predicates only when source text explicitly states a direction)
-- Emit claims supported by at least one explicit candidate, OR by a single inferred candidate with
-  confidence ≥ 0.55 (carry its confidence through; do not round up). Prefer to surface a
-  low-confidence claim over silence — the atlas can represent uncertainty.
-
-### 3. route
-A traversal path between places.
-Payload: {"traveler": str|null, "from": str, "to": str, "via": str|null, "can_traverse": bool, "condition": str|null}
-- Consolidate travel_rule candidates into route items.
-
-### 4. visual_claim
-A confirmed visual or appearance fact about a place.
-Payload: {"subject": str, "category": str, "observation": str, "section_title": str}
-- category must be one of: architecture, terrain, light, weather, color, material, scale, atmosphere, other
-- Emit ONE visual_claim per distinct observation from the ledger. Do NOT merge observations about the
-  same place into one. Different sections often show the same place in different conditions, seasons,
-  or moods — that variation is the point. If a place has 6 visual observations, emit 6 visual_claim items.
-- Include the section_title of the source candidate so observations stay anchored to their narrative moment.
-
-### 5. access
-A structural access constraint on a place — who may or may not enter, and under what conditions.
-Payload: {"place_name": str, "access_type": str, "condition": str|null, "traveler": str|null}
-- access_type must be: permitted, prohibited, or conditional
-- Consolidate access candidates from the extraction ledger.
-
-### 6. movement
-A narrated journey between named places, capturing the full arc of travel.
-Payload: {"traveler": str|null, "from_place": str, "to_place": str, "via": str|null, "mechanism": str|null, "stops": [str]}
-- Consolidate movement candidates from the extraction ledger.
-
-### 7. same_as
-Two candidate entity names refer to the same real place.
-Payload: {"a": str, "b": str, "rationale": str}
-- Only emit when evidence strongly supports identity (not mere proximity).
-
-### 8. unresolved
-Contradictory or ambiguous evidence that cannot be resolved.
-Payload: {"description": str, "evidence_a": str, "evidence_b": str}
-- Prefer to surface contradictions rather than guess a resolution.
-
-### 9. reveal_event
-The section where a place entity is first unambiguously revealed.
-Payload: {"entity_name": str, "section_title": str, "section_ordinal": int, "excerpt": str}
-- Emit one reveal_event for every entity item you produce (use the earliest section_ordinal where it appears).
-- Use scene_anchor candidates as strong signals for reveal_events.
-
-## OUTPUT CONTRACT
-
-Return a single JSON object with this exact structure:
-{
-  "synthesis_items": [
-    {"kind": "entity", "payload": {...}, "confidence": 0.85, "rationale": "Appears in 3 sections as primary setting."},
-    {"kind": "claim", "payload": {...}, "confidence": 0.9, "rationale": "Explicitly stated in chapter II."},
-    ...
-  ]
-}
-
-confidence: float 0.0–1.0 for how certain you are of this synthesis item.
-rationale: one sentence explaining what evidence supports this item.
-
-## SYNTHESIS RULES
-
-1. MERGE DUPLICATES: If the same place appears in multiple sections, produce ONE entity item (not one per section).
-2. RESOLVE MENTIONS: If evidence suggests two names refer to the same place, emit a same_as item.
-3. INCLUDE INFERRED CLAIMS: Emit inferred claims with confidence ≥ 0.55 even from a single section. Mark their confidence accordingly. Do not require two-section corroboration.
-4. SURFACE CONTRADICTIONS: If evidence conflicts, emit an unresolved item rather than guessing.
-5. TEMPORAL FIRST MENTION: Emit a reveal_event for every entity item you produce, at its earliest section_ordinal.
-6. SCENE ANCHORS: Use scene_anchor candidates (especially role=opening or role=ending) as reveal_event signals.
-7. MINIMUM COVERAGE: If the ledger contains evidence for entity, claim, and visual_claim, produce at least one of each.
-8. PRESERVE VISUAL OBSERVATIONS: Never collapse multiple visual_claim candidates into one. Each distinct observation gets its own visual_claim item. Volume beats brevity here.
-
-## FINAL CHECK
-
-Before outputting, verify:
-A) Every entity item has a non-empty name, a valid type, and an observations list (may be empty if no per-section descriptions were extracted, but populate it when evidence exists).
-B) Every claim item has subject, predicate (must be one of the 15 allowed predicates, same set as Stage 1 extraction), and object.
-C) Every route item has from and to fields.
-D) Every visual_claim has subject, category (one of: architecture|terrain|light|weather|color|material|scale|atmosphere|other), observation, and section_title.
-D2) Every access item has place_name and access_type (permitted|prohibited|conditional).
-D3) Every movement item has from_place and to_place.
-E) Every same_as has a and b fields.
-F) Every unresolved has a description.
-G) Every reveal_event has entity_name, section_title, section_ordinal, and excerpt.
-H) No duplicate entity names (merge instead).
-I) confidence is a float between 0.0 and 1.0 for each item.
-"""
+THREE_PASS_SYNTHESIS_VERSION = "3.15"  # 3.15: routes forward bidirectional/transport_mode/notes; FLOWS_THROUGH predicate
 
 # ── Two-pass synthesis (v2.0) ─────────────────────────────────────────────────
 
@@ -268,12 +132,15 @@ YOUR TASK: Produce ONLY items of kind "claim" — spatial relationships between 
 
 Payload: {"subject": "canonical place", "predicate": "PREDICATE", "object": "canonical place"}
 
-Predicates: LOCATED_IN, LEADS_TO, ADJACENT_TO
+Predicates: LOCATED_IN, LEADS_TO, ADJACENT_TO, FLOWS_THROUGH
 
 LOCATED_IN: subject is physically inside or part of object (room LOCATED_IN house).
 LEADS_TO: subject is a traversable connection to object (path LEADS_TO bridge).
-ADJACENT_TO: everything else — beside, near, visible from, on the bank of, flows through, borders,
-  above, below, any compass direction. Use when the relationship is spatial but not containment or traversal.
+  When the source candidate carries "bidirectional": true, emit only A LEADS_TO B (not also B LEADS_TO A).
+ADJACENT_TO: beside, near, visible from, on the bank of, borders, above, below, any compass direction.
+  Use when the relationship is spatial but not containment, traversal, or flowing-through.
+FLOWS_THROUGH: a river, road, or path (subject) flows or passes through a region or feature (object).
+  Do not convert these to ADJACENT_TO — preserve the directional traversal meaning.
 
 Rules:
 - Both subject AND object must be in the canonical entity list (exact canonical name or any listed alias).
@@ -292,10 +159,11 @@ Rules:
 - Include proximity and connectivity (ADJACENT_TO, LEADS_TO) when the text supports it.
 - Do NOT change predicates from the evidence — if evidence says LOCATED_IN, emit LOCATED_IN (not ADJACENT_TO).
 
-ARCHITECTURAL NESTING — infer these even when evidence is sparse:
-- Interior passages and structural features (stairs, staircase, corridor, hallway, cellar, attic, porch,
-  vestibule, landing) belong inside the building they serve. Emit "passage LOCATED_IN building" whenever
-  context makes the relationship evident, even from a single evidence mention.
+ARCHITECTURAL NESTING — only from confirmed evidence:
+- Interior structural features (stairs, corridor, hallway, cellar, attic) should be placed inside their
+  building only when an evidence candidate explicitly asserts this relationship (matching subject and
+  object names from the evidence). Do not infer containment from a feature's name or type alone —
+  require at least one supporting evidence candidate.
 - A front door / entrance portal has TWO sides: an inside connection and an outside connection.
   Emit BOTH — e.g. "front door LEADS_TO exterior path" and something LEADS_TO or LOCATED_IN front door
   from the interior. Without both sides the portal cannot dissolve into a passage edge in the visualizer.
@@ -317,10 +185,12 @@ SELF-CHECK: For every claim, verify subject AND object match a canonical name or
 VISUAL_CLAIMS_SYNTHESIS_PROMPT = _SYNTH_PASS2_HEADER + """\
 YOUR TASK: Produce ONLY items of kind "visual_claim" — appearance and description facts about places.
 
-Payload: {"subject": "canonical place", "category": "...", "observation": "...", "section_title": "...", "palette": [...]}
+Payload: {"subject": "canonical place", "category": "...", "observation": "...", "section_title": "...", "palette": [...], "permanent": bool, "view": "..."}
 category: architecture | terrain | light | weather | color | material | texture | scale | atmosphere | decay | other
 palette: REQUIRED when the source candidate carries a palette array — do not drop it. Omit only when the source candidate has no palette.
   Format: [{"color": "#RRGGBB", "label": "..."}]. Forward as-is; do not invent palette data.
+permanent: Forward from the source candidate when present. true = lasting structural quality; false = transient condition. Omit if absent in source.
+view: Forward from the source candidate when present ("exterior" | "interior" | "unspecified"). Omit if absent in source.
 
 Rules:
 - "subject" must be in the canonical entity list.
@@ -328,6 +198,7 @@ Rules:
 - Different sections showing the same place in different conditions get separate items.
 - Include the section_title of the source candidate.
 - When the source candidate has a "palette" field, include it in the output payload.
+- Forward "permanent" and "view" fields from each source candidate when present.
 
 SELF-CHECK: For every visual_claim, verify subject is in the entity list. Remove if not.
 """
@@ -335,39 +206,18 @@ SELF-CHECK: For every visual_claim, verify subject is in the entity list. Remove
 ROUTES_SYNTHESIS_PROMPT = _SYNTH_PASS2_HEADER + """\
 YOUR TASK: Produce ONLY items of kind "route" — traversal paths between canonical places.
 
-Payload: {"traveler": null|str, "from": "canonical place", "to": "canonical place", "via": null|str, "can_traverse": bool, "condition": null|str}
+Payload: {"traveler": null|str, "from": "canonical place", "to": "canonical place", "via": null|str, "can_traverse": bool, "condition": null|str, "bidirectional": null|bool, "transport_mode": null|str, "notes": null|str}
 
 Rules:
 - Both "from" and "to" must be in the canonical entity list.
 - Consolidate travel_rule candidates into route items.
 - can_traverse: true unless a travel rule explicitly forbids it.
+- condition: use "condition" from the candidate (note: extraction may emit it as "conditions" — take the value regardless of key name).
+- bidirectional: forward from the source candidate when present. true = freely traversable both ways.
+- transport_mode: forward from the source candidate when present (e.g. "on foot", "by boat").
+- notes: forward any additional context from the source candidate when present.
 
 SELF-CHECK: For every route, verify both from and to are in the entity list. Remove if either fails.
-"""
-
-ACCESS_SYNTHESIS_PROMPT = _SYNTH_PASS2_HEADER + """\
-YOUR TASK: Produce ONLY items of kind "access" — structural access constraints on canonical places.
-
-Payload: {"place_name": "canonical place", "access_type": "permitted|prohibited|conditional", "condition": null|str, "traveler": null|str}
-
-Rules:
-- "place_name" must be in the canonical entity list.
-- access_type: permitted (anyone can enter), prohibited (entry denied), conditional (conditions apply).
-
-SELF-CHECK: For every access item, verify place_name is in the entity list. Remove if not.
-"""
-
-MOVEMENT_SYNTHESIS_PROMPT = _SYNTH_PASS2_HEADER + """\
-YOUR TASK: Produce ONLY items of kind "movement" — narrated journeys between canonical places.
-
-Payload: {"traveler": null|str, "from_place": "canonical place", "to_place": "canonical place", "via": null|str, "mechanism": null|str, "stops": []}
-
-Rules:
-- Both "from_place" and "to_place" must be in the canonical entity list.
-- "mechanism" captures how they traveled (on horseback, by foot, etc.) when stated.
-- "stops" lists any intermediate canonical places visited along the way.
-
-SELF-CHECK: For every movement item, verify both from_place and to_place are in the entity list. Remove if either fails.
 """
 
 # ── Visual palette pass ────────────────────────────────────────────────────────
