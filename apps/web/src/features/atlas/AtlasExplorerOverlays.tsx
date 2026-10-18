@@ -35,7 +35,7 @@ export function AtlasExplorerOverlays({ loading, error, atlas, selectedId, secti
               <div style={{ width: 2, height: 26, borderRadius: 1, background: TIER_BAR[tier], flexShrink: 0 }} />
               <div>
                 <span style={{ display: 'block', fontFamily: SM, fontSize: 7.5, letterSpacing: '.09em', color: '#6B6352', textTransform: 'uppercase' }}>{TIER_LABEL[tier]}</span>
-                <span style={{ display: 'block', fontFamily: SM, fontSize: 7, color: '#25201A' }}>{TIER_Y[tier] >= 0 ? `Z +${TIER_Y[tier]}` : `Z ${TIER_Y[tier]}`}</span>
+                <span style={{ display: 'block', fontFamily: SM, fontSize: 7, color: '#4A5A72' }}>{TIER_Y[tier] >= 0 ? `Z +${TIER_Y[tier]}` : `Z ${TIER_Y[tier]}`}</span>
               </div>
             </div>
           ))}
@@ -59,8 +59,8 @@ export function AtlasExplorerOverlays({ loading, error, atlas, selectedId, secti
       {!loading && !error && (
         <div style={{ position: 'absolute', bottom: 18, right: 18, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5, pointerEvents: 'none', zIndex: 20 }}>
           {[['drag', 'Orbit'], ['scroll', 'Zoom'], ['click', 'Inspect']].map(([k, l]) => (
-            <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: SM, fontSize: 7.5, color: '#25201A', textTransform: 'uppercase', letterSpacing: '.07em' }}>
-              <span style={{ border: '1px solid #25201A', padding: '1px 5px', borderRadius: 2, fontSize: 7 }}>{k}</span>
+            <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: SM, fontSize: 7.5, color: '#5A7090', textTransform: 'uppercase', letterSpacing: '.07em' }}>
+              <span style={{ border: '1px solid rgba(90,112,144,0.45)', padding: '1px 5px', borderRadius: 2, fontSize: 7 }}>{k}</span>
               {l}
             </div>
           ))}

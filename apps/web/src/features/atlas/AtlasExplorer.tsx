@@ -73,9 +73,10 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
     const camera = new THREE.PerspectiveCamera(44, canvas.clientWidth / canvas.clientHeight, 0.1, 80)
 
     // ── Lighting (permanent) ──────────────────────────────────────────────────
-    scene.add(new THREE.AmbientLight(0x0A1828, 1.2))
-    const sun = new THREE.PointLight(0xD4B060, 1.4, 45); sun.position.set(4, 10, 5); scene.add(sun)
-    const fill = new THREE.PointLight(0x3A608A, 0.6, 28); fill.position.set(-5, -3, -4); scene.add(fill)
+    scene.add(new THREE.AmbientLight(0x1A2840, 2.2))
+    const sun = new THREE.PointLight(0xE8C870, 2.8, 55); sun.position.set(4, 10, 5); scene.add(sun)
+    const fill = new THREE.PointLight(0x5A80AA, 1.0, 35); fill.position.set(-5, -3, -4); scene.add(fill)
+    const rim = new THREE.PointLight(0xB87840, 0.8, 30); rim.position.set(0, -8, 6); scene.add(rim)
 
     // ── Elevation planes (permanent) ─────────────────────────────────────────
     for (const { y, c, o } of [
@@ -222,7 +223,7 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
       if (hex) { try { atmColor = atmBase.clone().lerp(new THREE.Color(hex), 0.12) } catch { /* skip */ } break }
     }
     renderer.setClearColor(atmColor, 1)
-    scene.fog = new THREE.FogExp2(atmColor.getHex(), 0.024)
+    scene.fog = new THREE.FogExp2(atmColor.getHex(), 0.009)
 
     // ── Ground pad ────────────────────────────────────────────────────────────
     const padW = (maxR + 2) * 2, padD = padW
@@ -338,20 +339,20 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
 
       // Core: use entity palette color; fall back to tier color when no visual claims
       const coreMat = new THREE.MeshPhongMaterial({
-        color: col, emissive: col, emissiveIntensity: 0.18, shininess: 55,
+        color: col, emissive: col, emissiveIntensity: 0.42, shininess: 90,
         transparent: hasChildren && !isL3,
-        opacity: hasChildren && !isL3 ? 0.38 : 1.0,
+        opacity: hasChildren && !isL3 ? 0.55 : 1.0,
         side: hasChildren && !isL3 ? THREE.DoubleSide : THREE.FrontSide,
       })
       group.add(new THREE.Mesh(geoForKind(kindDesc), coreMat))
 
       // Inner halo
       group.add(new THREE.Mesh(new THREE.SphereGeometry(1.9, 12, 12),
-        new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.08, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide })))
+        new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide })))
 
       // Outer halo
       group.add(new THREE.Mesh(new THREE.SphereGeometry(3.0, 10, 10),
-        new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.04, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide })))
+        new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.11, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide })))
 
       // Cage wireframe for L2 container nodes (signals "this holds things")
       if (hasChildren && !isL3) {
@@ -370,10 +371,12 @@ export function AtlasExplorer({ documentId, onAtlasLoaded }: Props) {
 
       scene.add(group)
 
-      // Local point light on top-4 nodes (uses palette[0] colour, not node colour)
-      if (topIds.has(entity.id)) {
+      // Local point light on every node — top-4 are brighter
+      {
         const lc = new THREE.Color(rawHex)
-        const pl = new THREE.PointLight(lc, 0.42, r * 18)
+        const intensity = topIds.has(entity.id) ? 1.6 : 0.55
+        const distance  = topIds.has(entity.id) ? r * 22 : r * 14
+        const pl = new THREE.PointLight(lc, intensity, distance)
         pl.position.copy(pos); scene.add(pl)
       }
 
