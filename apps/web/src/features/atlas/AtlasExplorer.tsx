@@ -205,13 +205,24 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     }
 
     // ── Force-directed pass on X/Z (Y stays pinned to tier) ──────────────────
-    // ADJACENT_TO / LEADS_TO / FLOWS_THROUGH pull connected nodes together.
-    // Containment edges use a weak spring (hierarchy already placed them).
-    // Runs once at setup time — not per frame.
+    // Only ADJACENT_TO / LEADS_TO / FLOWS_THROUGH drive force-directed movement.
+    // LOCATED_IN/CONTAINS are handled entirely by the hierarchy; contained nodes
+    // are restored to their exact parent-relative offsets after the pass (BFS
+    // top-down so each child uses its already-restored parent position).
+    // Parent-child repulsion is skipped so clusters don't blow apart.
+
+    // Capture parent-relative offsets before force pass
+    const relOffsets = new Map<string, { dx: number; dz: number }>()
+    for (const [childId, parentId] of parentOf) {
+      const cp = positions.get(childId), pp = positions.get(parentId)
+      if (cp && pp) relOffsets.set(childId, { dx: cp.x - pp.x, dz: cp.z - pp.z })
+    }
+    const parentChildPairs = new Set(
+      [...parentOf.entries()].flatMap(([c, p]) => [`${c}|${p}`, `${p}|${c}`])
+    )
+
     ;(() => {
       const SPRING: Record<string, { k: number; rest: number }> = {
-        LOCATED_IN:    { k: 0.08, rest: 2.5 },
-        CONTAINS:      { k: 0.08, rest: 2.5 },
         ADJACENT_TO:   { k: 0.45, rest: 2.8 },
         LEADS_TO:      { k: 0.20, rest: 4.5 },
         FLOWS_THROUGH: { k: 0.20, rest: 4.5 },
@@ -224,25 +235,27 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       for (const e of entities) vel.set(e.id, [0, 0])
 
       for (let iter = 0; iter < ITERS; iter++) {
-        const cooling = 1 - iter / ITERS   // reduces force strength over time
+        const cooling = 1 - iter / ITERS
         const force = new Map<string, [number, number]>()
         for (const e of entities) force.set(e.id, [0, 0])
 
-        // Repulsion
+        // Repulsion — skip direct parent-child pairs to keep clusters stable
         for (let i = 0; i < entities.length; i++) {
           for (let j = i + 1; j < entities.length; j++) {
-            const pa = positions.get(entities[i].id)!, pb = positions.get(entities[j].id)!
+            const ai = entities[i].id, aj = entities[j].id
+            if (parentChildPairs.has(`${ai}|${aj}`)) continue
+            const pa = positions.get(ai)!, pb = positions.get(aj)!
             const dx = pa.x - pb.x, dz = pa.z - pb.z
             const d2 = Math.max(dx*dx + dz*dz, 0.25)
             const d  = Math.sqrt(d2)
             const f  = (REPULSION / d2) * cooling
-            const fa = force.get(entities[i].id)!, fb = force.get(entities[j].id)!
+            const fa = force.get(ai)!, fb = force.get(aj)!
             fa[0] += f * dx / d; fa[1] += f * dz / d
             fb[0] -= f * dx / d; fb[1] -= f * dz / d
           }
         }
 
-        // Springs along edges
+        // Springs along non-containment edges
         for (const edge of edges) {
           const sp = SPRING[edge.pred]
           if (!sp) continue
@@ -256,7 +269,6 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
           fb[0] -= f * dx / d; fb[1] -= f * dz / d
         }
 
-        // Apply with damping; keep Y fixed
         for (const e of entities) {
           const p = positions.get(e.id)!, f = force.get(e.id)!, v = vel.get(e.id)!
           v[0] = (v[0] + f[0]) * DAMPING
@@ -266,13 +278,24 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       }
     })()
 
-    // Snap cross-tier contained nodes directly above/below their parent (same X/Z)
-    for (const [childId, parentId] of parentOf) {
-      if (resolvedTier(childId) !== resolvedTier(parentId)) {
-        const pp = positions.get(parentId), cp = positions.get(childId)
-        if (pp && cp) { cp.x = pp.x; cp.z = pp.z }
+    // BFS top-down restore: restore each child relative to its (already-restored) parent.
+    // Cross-tier nodes sit directly above/below (dx=dz=0).
+    ;(() => {
+      const queue: string[] = [...rootIds]
+      const visited = new Set<string>(rootIds)
+      while (queue.length) {
+        const parentId = queue.shift()!
+        for (const childId of (childrenOf.get(parentId) ?? [])) {
+          if (visited.has(childId)) continue
+          visited.add(childId)
+          const pp = positions.get(parentId)!, cp = positions.get(childId)!
+          const crossTier = resolvedTier(childId) !== resolvedTier(parentId)
+          const off = crossTier ? { dx: 0, dz: 0 } : (relOffsets.get(childId) ?? { dx: 0, dz: 0 })
+          cp.x = pp.x + off.dx; cp.z = pp.z + off.dz
+          queue.push(childId)
+        }
       }
-    }
+    })()
 
     // Bounding centre + max radius after layout
     let cx = 0, cz = 0
