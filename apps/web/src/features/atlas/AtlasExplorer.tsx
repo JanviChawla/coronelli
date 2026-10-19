@@ -708,13 +708,13 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       if (isT) {
         // Dual-tube LEADS_TO: outer sheath + bright inner core
         const curve = new THREE.LineCurve3(pa.clone(), pb.clone())
-        const outerGeo = new THREE.TubeGeometry(curve, 1, 0.020, 6, false)
-        const outerMat = new THREE.MeshBasicMaterial({ color: 0xC8A840, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false })
-        outerMat.userData = { baseOp: 0.45 }
+        const outerGeo = new THREE.TubeGeometry(curve, 1, 0.011, 5, false)
+        const outerMat = new THREE.MeshBasicMaterial({ color: 0xC8A840, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false })
+        outerMat.userData = { baseOp: 0.22 }
         const outerMesh = new THREE.Mesh(outerGeo, outerMat); scene.add(outerMesh); travelEdges.push(outerMesh)
-        const innerGeo = new THREE.TubeGeometry(curve, 1, 0.006, 4, false)
-        const innerMat = new THREE.MeshBasicMaterial({ color: 0xFFE090, transparent: true, opacity: 0.80, blending: THREE.AdditiveBlending, depthWrite: false })
-        innerMat.userData = { baseOp: 0.80 }
+        const innerGeo = new THREE.TubeGeometry(curve, 1, 0.004, 4, false)
+        const innerMat = new THREE.MeshBasicMaterial({ color: 0xFFE090, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false })
+        innerMat.userData = { baseOp: 0.45 }
         const innerMesh = new THREE.Mesh(innerGeo, innerMat); scene.add(innerMesh); travelEdges.push(innerMesh)
       } else {
         const geo = new THREE.BufferGeometry().setFromPoints([pa.clone(), pb.clone()])
@@ -773,8 +773,6 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     refreshCam()
 
     // ── Selection / hover ─────────────────────────────────────────────────────
-    interface PulseRing { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; born: number }
-    const pulseRings: PulseRing[] = []
     let selId: string | null = null
     let hovId: string | null = null
 
@@ -800,16 +798,6 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       setEmissive(id, 0.80)
       setLabelState(id, 'sel')
       setSelectedId(id)
-      // Spawn selection ring pulse
-      const selNd = nodeById.get(id)
-      if (selNd) {
-        const rg = new THREE.TorusGeometry(selNd.r * 1.4, 0.04, 8, 32)
-        const rm = new THREE.MeshBasicMaterial({ color: 0xFFE090, transparent: true, opacity: 0.80, blending: THREE.AdditiveBlending, depthWrite: false })
-        const rm3 = new THREE.Mesh(rg, rm)
-        rm3.position.copy(selNd.group.position)
-        scene.add(rm3)
-        pulseRings.push({ mesh: rm3, mat: rm, born: t })
-      }
     }
     function handleDeselect() {
       if (selId) { setEmissive(selId, 0.22); setLabelState(selId, hovId === selId ? 'hov' : 'idle') }
@@ -997,17 +985,6 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
           }
         }
         za.zMoteGeo.attributes.position.needsUpdate = true
-      }
-
-      // Pulse rings: expand + fade over 1 second
-      for (let i = pulseRings.length - 1; i >= 0; i--) {
-        const pr = pulseRings[i]
-        const age = t - pr.born
-        if (age > 1.0) { scene.remove(pr.mesh); pr.mat.dispose(); pulseRings.splice(i, 1); continue }
-        pr.mesh.scale.setScalar(1 + age * 1.8)
-        pr.mat.opacity = 0.80 * (1 - age)
-        const prNd = nodeById.get(selId ?? '')
-        if (prNd) pr.mesh.position.copy(prNd.group.position)
       }
 
       // Selected node emissive pulse
