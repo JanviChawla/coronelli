@@ -7,7 +7,7 @@ packages = ["app"]
 
 [project]
 name = "coronelli"
-version = "0.1.0"
+version = "0.1.1"
 description = "Turn a book into an interactive atlas."
 readme = "README.md"
 requires-python = ">=3.12"
