@@ -14,7 +14,37 @@ Upload → Catalog → Extract → Synthesize → Atlas Editor → 3D Explorer
 - Edit the atlas — rename entities, merge duplicates, assign hierarchy, add relationships
 - Explore in an interactive 3D scene: zone rings, floating nodes, force-directed layout
 
-## Requirements
+## Installation
+
+Requires Python 3.12+. Install with [uv](https://docs.astral.sh/uv/):
+
+```sh
+uv tool install coronelli
+```
+
+Then launch:
+
+```sh
+coronelli
+```
+
+Coronelli opens in your browser at `http://localhost:8000`. Your atlas data is stored locally:
+
+| Platform | Location |
+|----------|----------|
+| Windows  | `%LOCALAPPDATA%\Coronelli\coronelli.db` |
+| macOS    | `~/Library/Application Support/Coronelli/coronelli.db` |
+| Linux    | `~/.local/share/Coronelli/coronelli.db` |
+
+Set your OpenAI API key before running extraction:
+
+```sh
+# in your shell profile, or in %LOCALAPPDATA%\Coronelli\.env  (Windows)
+#                                ~/Library/Application Support/Coronelli/.env  (macOS)
+OPENAI_API_KEY=sk-...
+```
+
+## Requirements (for development)
 
 - Python 3.12+, [uv](https://docs.astral.sh/uv/)
 - Node 20+, pnpm 9+

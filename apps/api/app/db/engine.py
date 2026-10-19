@@ -4,7 +4,9 @@ from collections.abc import Generator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./coronelli.db")
+from app.config import default_db_url
+
+DATABASE_URL = os.getenv("DATABASE_URL") or default_db_url()
 
 _connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 

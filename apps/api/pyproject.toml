@@ -8,7 +8,10 @@ packages = ["app"]
 [project]
 name = "coronelli"
 version = "0.1.0"
+description = "Turn a book into an interactive atlas."
+readme = "README.md"
 requires-python = ">=3.12"
+keywords = ["literature", "atlas", "maps", "nlp", "fiction"]
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
@@ -20,6 +23,10 @@ dependencies = [
     "openai",
     "python-dotenv",
 ]
+
+[project.urls]
+Homepage = "https://github.com/JanviChawla/coronelli"
+Repository = "https://github.com/JanviChawla/coronelli"
 
 [project.scripts]
 coronelli = "app.cli:main"
