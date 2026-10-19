@@ -168,54 +168,45 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  const headerProps = {
+    document, onBack, phase: w.phase, runningGapPass: w.runningGapPass,
+    runningDedup: w.runningDedup, spatialDone: w.spatialDone, atlasDone: w.atlasDone,
+    atlasStale: w.atlasStale, dedupDone: w.dedupDone, catalogConfirmed: w.catalogConfirmed,
+    showExplorer: w.showExplorer, totalCost: w.totalCost,
+    catalogCostLo: w.catalogCostLo, catalogCostHi: w.catalogCostHi,
+    evidenceCostLo: w.evidenceCostLo, evidenceCostHi: w.evidenceCostHi,
+    synthCostLo: w.synthCostLo, synthCostHi: w.synthCostHi,
+    enrichCostLo: w.enrichCostLo, enrichCostHi: w.enrichCostHi,
+    onRunCatalog: () => w.handleRunCatalog(false), onGapPass: w.handleGapPass,
+    onStartEvidence: w.handleStartEvidence, onDedupStep: w.handleDedupStep,
+    onSynthesize: () => w.handleSynthesize(false), onExportAtlas: w.handleExportAtlas,
+    onToggleExplorer: () => w.setShowExplorer(v => !v),
+  }
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      <WorkflowHeader
-        document={document}
-        onBack={onBack}
-        phase={w.phase}
-        runningGapPass={w.runningGapPass}
-        runningDedup={w.runningDedup}
-        spatialDone={w.spatialDone}
-        atlasDone={w.atlasDone}
-        atlasStale={w.atlasStale}
-        dedupDone={w.dedupDone}
-        catalogConfirmed={w.catalogConfirmed}
-        showExplorer={w.showExplorer}
-        totalCost={w.totalCost}
-        catalogCostLo={w.catalogCostLo}
-        catalogCostHi={w.catalogCostHi}
-        evidenceCostLo={w.evidenceCostLo}
-        evidenceCostHi={w.evidenceCostHi}
-        synthCostLo={w.synthCostLo}
-        synthCostHi={w.synthCostHi}
-        enrichCostLo={w.enrichCostLo}
-        enrichCostHi={w.enrichCostHi}
-        onRunCatalog={() => w.handleRunCatalog(false)}
-        onGapPass={w.handleGapPass}
-        onStartEvidence={w.handleStartEvidence}
-        onDedupStep={w.handleDedupStep}
-        onSynthesize={() => w.handleSynthesize(false)}
-        onExportAtlas={w.handleExportAtlas}
-        onToggleExplorer={() => w.setShowExplorer(v => !v)}
-      />
-
-      <WorkflowProgressBar
-        phase={w.phase}
-        sections={sections}
-        currentIdx={w.currentIdx}
-        gapSectionsDone={w.gapSectionsDone}
-        candidatesSoFar={w.candidatesSoFar}
-        elapsedMs={w.elapsedMs}
-        runningGapPass={w.runningGapPass}
-      />
-
-      <main style={{
-        flex: 1, overflow: 'hidden', backgroundColor: 'var(--parchment)', display: 'flex', flexDirection: 'column',
-      }}>
-        {renderContent()}
-      </main>
-
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', position: 'relative' }}>
+      {w.showExplorer ? (
+        <>
+          <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            {renderContent()}
+          </main>
+          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 20 }}>
+            <WorkflowHeader {...headerProps} />
+          </div>
+        </>
+      ) : (
+        <>
+          <WorkflowHeader {...headerProps} />
+          <WorkflowProgressBar
+            phase={w.phase} sections={sections} currentIdx={w.currentIdx}
+            gapSectionsDone={w.gapSectionsDone} candidatesSoFar={w.candidatesSoFar}
+            elapsedMs={w.elapsedMs} runningGapPass={w.runningGapPass}
+          />
+          <main style={{ flex: 1, overflow: 'hidden', backgroundColor: 'var(--parchment)', display: 'flex', flexDirection: 'column' }}>
+            {renderContent()}
+          </main>
+        </>
+      )}
       <WorkflowToasts toasts={w.toasts} />
     </div>
   )

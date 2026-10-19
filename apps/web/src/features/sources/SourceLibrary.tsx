@@ -10,6 +10,54 @@ import {
 
 type View = 'workflow' | 'edit-sections' | 'sections-review'
 
+// ── Star background ───────────────────────────────────────────────────────────
+
+function StarBackground() {
+  const ref = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    const cv = ref.current; if (!cv) return
+    const ctx = cv.getContext('2d'); if (!ctx) return
+    let raf: number
+    interface Star { x: number; y: number; r: number; base: number; speed: number; phase: number; rgb: string }
+    let stars: Star[] = []
+
+    function resize() { cv.width = cv.offsetWidth; cv.height = cv.offsetHeight }
+
+    function init() {
+      stars = []
+      const w = cv.width, h = cv.height
+      const add = (n: number, rMin: number, rMax: number, base: number, speed: number, rgb: string) => {
+        for (let i = 0; i < n; i++) stars.push({
+          x: Math.random() * w, y: Math.random() * h,
+          r: rMin + Math.random() * (rMax - rMin),
+          base, speed: speed * (0.4 + Math.random() * 0.6),
+          phase: Math.random() * Math.PI * 2, rgb,
+        })
+      }
+      add(2000, 0.15, 0.7,  0.55, 0.018, '210,225,255')
+      add(500,  0.4,  1.3,  0.40, 0.012, '255,230,170')
+      add(280,  0.1,  0.4,  0.80, 0.030, '255,255,255')
+    }
+
+    let t = 0
+    function draw() {
+      ctx.clearRect(0, 0, cv.width, cv.height)
+      t += 0.016
+      for (const s of stars) {
+        const op = s.base * (0.55 + 0.45 * Math.sin(t * s.speed * 60 + s.phase))
+        ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2)
+        ctx.fillStyle = `rgba(${s.rgb},${op.toFixed(3)})`; ctx.fill()
+      }
+      raf = requestAnimationFrame(draw)
+    }
+
+    resize(); init(); draw()
+    const ro = new ResizeObserver(() => { resize(); init() }); ro.observe(cv)
+    return () => { cancelAnimationFrame(raf); ro.disconnect() }
+  }, [])
+  return <canvas ref={ref} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }} />
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function SourceLibrary() {
@@ -93,13 +141,14 @@ export function SourceLibrary() {
     finally { setResetting(false); setShowReset(false); setResetInput('') }
   }
 
-  // ── Style constants (match atlas explorer) ────────────────────────────────
+  // ── Style constants ───────────────────────────────────────────────────────
   const Cinzel  = "'Cinzel', serif"
   const Mono    = "'Space Mono', monospace"
   const Crimson = "'Crimson Pro', Georgia, serif"
+  const NSimSun = "'NSimSun', 'New SimSun', SimSun, serif"
   const BD      = 'rgba(184,148,58,.18)'
   const BD_HI   = 'rgba(184,148,58,.38)'
-  const PANEL   = 'rgba(5,12,26,.92)'
+  const PANEL   = 'rgba(4,8,18,.88)'
 
   const inWorkflow = selected && (view === 'workflow' || view === 'edit-sections')
 
@@ -118,7 +167,7 @@ export function SourceLibrary() {
     return (
       <div style={{ position: 'fixed', inset: 0, background: 'rgba(3,8,18,.72)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
         <div style={{ background: PANEL, border: `1px solid ${BD_HI}`, borderRadius: '12px', padding: '2rem 2.25rem', width: '380px', maxWidth: '90vw', backdropFilter: 'blur(20px)' }}>
-          <p style={{ fontFamily: Cinzel, fontSize: '0.95rem', color: '#D4B060', marginBottom: '1.5rem', letterSpacing: '0.08em' }}>Edit metadata</p>
+          <p style={{ fontFamily: NSimSun, fontSize: '1.1rem', color: '#D4B060', marginBottom: '1.5rem', letterSpacing: '0.03em' }}>Edit metadata</p>
           {[
             { label: 'Title',  value: editTitle,  set: setEditTitle,  type: 'text'   },
             { label: 'Author', value: editAuthor, set: setEditAuthor, type: 'text'   },
@@ -149,7 +198,7 @@ export function SourceLibrary() {
     return (
       <div style={{ position: 'fixed', inset: 0, background: 'rgba(3,8,18,.72)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
         <div style={{ background: PANEL, border: `1px solid ${BD_HI}`, borderRadius: '12px', padding: '2rem 2.25rem', width: '360px', maxWidth: '90vw' }}>
-          <p style={{ fontFamily: Cinzel, fontSize: '0.95rem', color: '#D4B060', marginBottom: '0.5rem', letterSpacing: '0.08em' }}>Burn library?</p>
+          <p style={{ fontFamily: NSimSun, fontSize: '1.1rem', color: '#D4B060', marginBottom: '0.5rem', letterSpacing: '0.03em' }}>Burn library?</p>
           <p style={{ fontFamily: Mono, fontSize: '0.7rem', color: '#6B6352', marginBottom: '1.5rem', lineHeight: 1.7 }}>Permanently deletes every document, section, candidate, and atlas entity. No undo.</p>
           <p style={{ fontFamily: Mono, fontSize: '0.65rem', color: '#6B6352', marginBottom: '0.5rem' }}>Type <span style={{ color: '#C8BC9E' }}>reset</span> to confirm:</p>
           <input type="text" value={resetInput} onChange={e => setResetInput(e.target.value)}
@@ -198,10 +247,13 @@ export function SourceLibrary() {
 
       {/* ── Home page ──────────────────────────────────────────────────────── */}
       {!inWorkflow && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', fontFamily: Crimson }}>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: '#010205' }}>
 
-          {/* Header — same as atlas explorer */}
-          <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 24px', borderBottom: `1px solid ${BD}`, flexShrink: 0, zIndex: 20 }}>
+          {/* Star field */}
+          <StarBackground />
+
+          {/* Header */}
+          <header style={{ position: 'relative', zIndex: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 24px', borderBottom: `1px solid ${BD}`, flexShrink: 0, background: 'rgba(1,2,5,0.72)', backdropFilter: 'blur(6px)' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
               <span style={{ fontFamily: Cinzel, fontSize: 17, fontWeight: 400, letterSpacing: '.22em', color: '#D4B060' }}>CORONELLI</span>
               <span style={{ fontFamily: Mono, fontSize: 8, color: '#6B6352', letterSpacing: '.10em', textTransform: 'uppercase', border: `1px solid ${BD}`, padding: '2px 6px', borderRadius: 2 }}>Literary Atlas</span>
@@ -213,54 +265,57 @@ export function SourceLibrary() {
           </header>
 
           {/* Book grid */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: '2.5rem 2.5rem 2rem', scrollbarWidth: 'thin', scrollbarColor: `${BD} transparent` }}>
+          <div style={{ position: 'relative', zIndex: 1, flex: 1, overflowY: 'auto', padding: '2.5rem 2.5rem 2rem', scrollbarWidth: 'thin', scrollbarColor: `${BD} transparent` }}>
             {documents.length === 0 && !importing ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '0.75rem', opacity: 0.45 }}>
-                <div style={{ fontFamily: Cinzel, fontSize: '1.1rem', color: '#C8BC9E', letterSpacing: '0.12em' }}>No worlds yet</div>
-                <div style={{ fontFamily: Mono, fontSize: '0.65rem', color: '#6B6352', letterSpacing: '0.1em' }}>Upload a book to begin</div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '0.6rem' }}>
+                <div style={{ fontFamily: NSimSun, fontSize: '1.4rem', color: '#7A6A4A', opacity: 0.65, letterSpacing: '0.04em' }}>No worlds yet</div>
+                <div style={{ fontFamily: Mono, fontSize: '0.62rem', color: '#4A4030', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Upload a book to begin</div>
               </div>
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.25rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.5rem' }}>
                 {documents.map(doc => (
                   <div
                     key={doc.id}
                     onMouseEnter={() => setHoveredId(doc.id)}
                     onMouseLeave={() => setHoveredId(null)}
                     style={{
-                      background: hoveredId === doc.id ? 'rgba(184,148,58,.07)' : PANEL,
+                      background: hoveredId === doc.id ? 'rgba(10,18,34,.92)' : PANEL,
                       border: `1px solid ${hoveredId === doc.id ? BD_HI : BD}`,
-                      borderRadius: 8, padding: '1.5rem',
-                      display: 'flex', flexDirection: 'column', gap: '1.25rem',
-                      transition: 'background 0.2s, border-color 0.2s',
+                      borderRadius: 10, overflow: 'hidden',
+                      display: 'flex', flexDirection: 'column',
+                      backdropFilter: 'blur(8px)',
+                      transition: 'background 0.2s, border-color 0.2s, box-shadow 0.2s',
+                      boxShadow: hoveredId === doc.id
+                        ? '0 6px 40px rgba(184,148,58,.14), 0 2px 16px rgba(0,0,0,.6)'
+                        : '0 2px 20px rgba(0,0,0,.55)',
                     }}
                   >
+                    {/* Gold accent stripe */}
+                    <div style={{ height: 2, background: `linear-gradient(90deg, ${BD_HI}, rgba(184,148,58,.04))`, flexShrink: 0 }} />
+
                     {/* Book info */}
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontFamily: Cinzel, fontSize: '1.05rem', color: '#D4B060', fontWeight: 400, lineHeight: 1.3, marginBottom: '0.5rem' }}>
+                    <div style={{ padding: '1.5rem 1.75rem 1.1rem', flex: 1 }}>
+                      <div style={{ fontFamily: NSimSun, fontSize: '1.3rem', color: '#EAD89C', fontWeight: 400, lineHeight: 1.3, marginBottom: '0.55rem', letterSpacing: '0.02em' }}>
                         {doc.title}
                       </div>
                       <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'baseline', flexWrap: 'wrap' }}>
-                        {doc.author && <span style={{ fontFamily: Crimson, fontStyle: 'italic', fontSize: '0.88rem', color: '#A89878' }}>{doc.author}</span>}
-                        {doc.year && <span style={{ fontFamily: Mono, fontSize: '0.65rem', color: '#6B6352' }}>{doc.year}</span>}
+                        {doc.author && <span style={{ fontFamily: Crimson, fontStyle: 'italic', fontSize: '0.9rem', color: '#9A8060' }}>{doc.author}</span>}
+                        {doc.year && <span style={{ fontFamily: Mono, fontSize: '0.6rem', color: '#5A5040', letterSpacing: '0.04em' }}>{doc.year}</span>}
                       </div>
                     </div>
 
                     {/* Actions */}
-                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <div style={{ padding: '0 1.75rem 1.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                       <button type="button" onClick={() => handleOpenDoc(doc)}
-                        style={{ flex: '1 1 auto', fontFamily: Mono, fontSize: '0.65rem', letterSpacing: '.08em', textTransform: 'uppercase', padding: '0.5rem 0.75rem', background: 'rgba(184,148,58,.15)', border: `1px solid ${BD_HI}`, borderRadius: 4, color: '#D4B060', cursor: 'pointer', transition: 'background 0.15s' }}>
+                        style={{ flex: '1 1 auto', fontFamily: Mono, fontSize: '0.62rem', letterSpacing: '.10em', textTransform: 'uppercase', padding: '0.55rem 0.75rem', background: 'rgba(184,148,58,.18)', border: `1px solid ${BD_HI}`, borderRadius: 5, color: '#D4B060', cursor: 'pointer', transition: 'background 0.15s' }}>
                         Open Atlas
                       </button>
                       <button type="button" onClick={() => openEdit(doc)}
-                        style={{ fontFamily: Mono, fontSize: '0.65rem', letterSpacing: '.08em', textTransform: 'uppercase', padding: '0.5rem 0.75rem', background: 'none', border: `1px solid ${BD}`, borderRadius: 4, color: '#6B6352', cursor: 'pointer', transition: 'all 0.15s' }}>
+                        style={{ fontFamily: Mono, fontSize: '0.62rem', letterSpacing: '.06em', textTransform: 'uppercase', padding: '0.55rem 0.75rem', background: 'none', border: `1px solid ${BD}`, borderRadius: 5, color: '#7A6A50', cursor: 'pointer' }}>
                         Edit Metadata
                       </button>
-                      <a href={`http://localhost:8000/api/documents/${doc.id}/export-text`} download
-                        style={{ fontFamily: Mono, fontSize: '0.65rem', letterSpacing: '.08em', textTransform: 'uppercase', padding: '0.5rem 0.75rem', background: 'none', border: `1px solid ${BD}`, borderRadius: 4, color: '#6B6352', cursor: 'pointer', textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
-                        Save Text
-                      </a>
                       <button type="button" onClick={() => handleDelete(doc)}
-                        style={{ fontFamily: Mono, fontSize: '0.65rem', letterSpacing: '.08em', textTransform: 'uppercase', padding: '0.5rem 0.75rem', background: 'none', border: '1px solid rgba(160,40,40,.3)', borderRadius: 4, color: 'rgba(200,80,80,.7)', cursor: 'pointer', transition: 'all 0.15s' }}>
+                        style={{ fontFamily: Mono, fontSize: '0.62rem', letterSpacing: '.06em', textTransform: 'uppercase', padding: '0.55rem 0.75rem', background: 'none', border: '1px solid rgba(150,40,40,.28)', borderRadius: 5, color: 'rgba(190,75,75,.65)', cursor: 'pointer' }}>
                         Burn
                       </button>
                     </div>
@@ -271,7 +326,7 @@ export function SourceLibrary() {
           </div>
 
           {/* Footer */}
-          <div style={{ padding: '0.75rem 2.5rem', borderTop: `1px solid ${BD}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+          <div style={{ position: 'relative', zIndex: 2, padding: '0.75rem 2.5rem', borderTop: `1px solid ${BD}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, background: 'rgba(1,2,5,0.6)', backdropFilter: 'blur(4px)' }}>
             {error && <span style={{ fontFamily: Mono, fontSize: '0.65rem', color: '#C04040', letterSpacing: '0.04em' }}>{error}</span>}
             {!error && <span />}
             <button type="button" onClick={() => { setShowReset(true); setResetInput('') }}
@@ -289,7 +344,7 @@ export function SourceLibrary() {
                 Confirm metadata and sections before beginning the pipeline.
               </p>
               <div style={{ marginBottom: '1.75rem' }}>
-                <h2 style={{ fontFamily: Cinzel, fontSize: '1.8rem', fontWeight: 400, color: '#D4B060', marginBottom: '0.4rem', lineHeight: 1.2 }}>{selected.title}</h2>
+                <h2 style={{ fontFamily: NSimSun, fontSize: '1.8rem', fontWeight: 400, color: '#EAD89C', marginBottom: '0.4rem', lineHeight: 1.2, letterSpacing: '0.02em' }}>{selected.title}</h2>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
                   {selected.author && <span style={{ fontFamily: Crimson, fontStyle: 'italic', fontSize: '0.9rem', color: '#A89878' }}>{selected.author}</span>}
                   {selected.year && <span style={{ fontFamily: Mono, fontSize: '0.7rem', color: '#6B6352' }}>{selected.year}</span>}
@@ -308,7 +363,7 @@ export function SourceLibrary() {
                         <div key={s.id} style={{ padding: '0.65rem 1.25rem', borderBottom: i < sections.length - 1 ? `1px solid ${BD}` : 'none' }}>
                           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'baseline', marginBottom: preview ? '0.2rem' : 0 }}>
                             <span style={{ fontFamily: Mono, fontSize: '0.55rem', color: '#6B6352', minWidth: '1.6rem', flexShrink: 0 }}>§{s.ordinal + 1}</span>
-                            <span style={{ fontFamily: Cinzel, fontSize: '0.82rem', color: '#C8BC9E' }}>{s.title || `Section ${s.ordinal + 1}`}</span>
+                            <span style={{ fontFamily: Crimson, fontSize: '0.92rem', color: '#C8BC9E' }}>{s.title || `Section ${s.ordinal + 1}`}</span>
                           </div>
                           {preview && <div style={{ paddingLeft: '2.35rem', fontFamily: Crimson, fontStyle: 'italic', fontSize: '0.75rem', color: '#6B6352', lineHeight: 1.5 }}>{preview}</div>}
                         </div>

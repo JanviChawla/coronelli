@@ -66,30 +66,33 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
     renderer.setSize(canvas.clientWidth, canvas.clientHeight, false)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    renderer.setClearColor(0x03060F, 1)
+    renderer.setClearColor(0x010205, 1)
 
     const scene  = new THREE.Scene()
-    scene.fog    = new THREE.FogExp2(0x03060F, 0.024)
+    scene.fog    = new THREE.FogExp2(0x010205, 0.024)
     const camera = new THREE.PerspectiveCamera(44, canvas.clientWidth / canvas.clientHeight, 0.1, 80)
 
     // ── Lighting (permanent) ──────────────────────────────────────────────────
-    scene.add(new THREE.AmbientLight(0x1A2840, 2.2))
+    scene.add(new THREE.AmbientLight(0x1A2840, 1.0))
+    const keyLight = new THREE.DirectionalLight(0xF0E8D0, 2.0); keyLight.position.set(5, 12, 8); scene.add(keyLight)
     const sun = new THREE.PointLight(0xE8C870, 2.8, 55); sun.position.set(4, 10, 5); scene.add(sun)
     const fill = new THREE.PointLight(0x5A80AA, 1.0, 35); fill.position.set(-5, -3, -4); scene.add(fill)
     const rim = new THREE.PointLight(0xB87840, 0.8, 30); rim.position.set(0, -8, 6); scene.add(rim)
 
     // ── Star field (permanent, fog:false so stars stay sharp) ────────────────
     ;(() => {
-      const n = 900, v = new Float32Array(n * 3)
-      for (let i = 0; i < n; i++) {
-        const th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1), r = 52 + Math.random() * 8
-        v[i*3] = r*Math.sin(ph)*Math.cos(th); v[i*3+1] = r*Math.sin(ph)*Math.sin(th); v[i*3+2] = r*Math.cos(ph)
+      const addStars = (count: number, rMin: number, rMax: number, size: number, opacity: number, col: number) => {
+        const v = new Float32Array(count * 3)
+        for (let i = 0; i < count; i++) {
+          const th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1), r = rMin + Math.random() * (rMax - rMin)
+          v[i*3] = r*Math.sin(ph)*Math.cos(th); v[i*3+1] = r*Math.sin(ph)*Math.sin(th); v[i*3+2] = r*Math.cos(ph)
+        }
+        const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3))
+        scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: col, size, transparent: true, opacity, sizeAttenuation: true, fog: false })))
       }
-      const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3))
-      scene.add(new THREE.Points(g, new THREE.PointsMaterial({
-        color: 0xE8E8FF, size: 0.07, transparent: true, opacity: 0.75,
-        sizeAttenuation: true, fog: false,
-      })))
+      addStars(2400, 52, 70, 0.055, 0.80, 0xE8E8FF)  // main field — fine white-blue
+      addStars(600,  48, 75, 0.12,  0.60, 0xFFEECC)  // accent — slightly warm larger stars
+      addStars(300,  50, 68, 0.04,  0.95, 0xFFFFFF)  // tiny bright specks
     })()
 
     // ── Entity data ───────────────────────────────────────────────────────────
@@ -348,7 +351,7 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     for (const e of entities) { const p = positions.get(e.id)!; const r = Math.sqrt((p.x-cx)**2 + (p.z-cz)**2); if (r > maxR) maxR = r }
 
     // ── L0 atmosphere — tint background/fog with realm palette ───────────────
-    const atmBase = new THREE.Color(0x03060F)
+    const atmBase = new THREE.Color(0x010205)
     let atmColor = atmBase.clone()
     for (const l0e of entities.filter(e => l0Set.has(e.id))) {
       const pc = l0e.payload.colors as { primary?: string } | null
@@ -484,8 +487,8 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       scene.add(fillMesh)
 
       // Rim: inner zones get a crisper, narrower rim
-      const rimInner = depth === 0 ? hullR - 0.08 : hullR - 0.06
-      const rimOuter = depth === 0 ? hullR + 0.35 : hullR + 0.20
+      const rimInner = depth === 0 ? hullR - 0.04 : hullR - 0.03
+      const rimOuter = depth === 0 ? hullR + 0.12 : hullR + 0.08
       const rimOp    = depth === 0 ? 0.40 : 0.65
       const rimGeo = new THREE.RingGeometry(rimInner, rimOuter, 56); rimGeo.rotateX(-Math.PI / 2)
       const rimMesh = new THREE.Mesh(rimGeo, new THREE.MeshBasicMaterial({ color: planeColor, transparent: true, opacity: rimOp, depthWrite: false, side: THREE.DoubleSide }))
@@ -600,7 +603,7 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
 
       // Core: use entity palette color; fall back to tier color when no visual claims
       const coreMat = new THREE.MeshPhongMaterial({
-        color: col, emissive: col, emissiveIntensity: 0.42, shininess: 90,
+        color: col, emissive: col, emissiveIntensity: 0.25, shininess: 160,
         transparent: hasChildren && !isL3,
         opacity: hasChildren && !isL3 ? 0.55 : 1.0,
         side: hasChildren && !isL3 ? THREE.DoubleSide : THREE.FrontSide,
@@ -635,8 +638,8 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       // Local point light on every node — top-4 are brighter
       {
         const lc = new THREE.Color(rawHex)
-        const intensity = topIds.has(entity.id) ? 1.6 : 0.55
-        const distance  = topIds.has(entity.id) ? r * 22 : r * 14
+        const intensity = topIds.has(entity.id) ? 2.4 : 1.0
+        const distance  = topIds.has(entity.id) ? r * 22 : r * 16
         const pl = new THREE.PointLight(lc, intensity, distance)
         pl.position.copy(pos); scene.add(pl)
       }
@@ -1012,7 +1015,7 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
   const selectedEntity = selectedId ? entityMap.get(selectedId) ?? null : null
 
   return (
-    <div style={{ position: 'relative', width: '100%', flex: 1, minHeight: 0, background: '#03060F', overflow: 'hidden' }}>
+    <div style={{ position: 'relative', width: '100%', flex: 1, minHeight: 0, background: '#010205', overflow: 'hidden' }}>
       <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', cursor: 'grab' }} />
 
       {/* Imperative label layer */}

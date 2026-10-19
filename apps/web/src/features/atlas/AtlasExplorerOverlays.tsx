@@ -42,19 +42,6 @@ export function AtlasExplorerOverlays({ loading, error, atlas, selectedId, secti
         </div>
       )}
 
-      {/* Header */}
-      {!loading && !error && atlas && (
-        <header style={{ position: 'absolute', top: 0, left: 0, right: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 24px 0', pointerEvents: 'none', zIndex: 20 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-            <span style={{ fontFamily: "'Cinzel', serif", fontSize: 17, fontWeight: 400, letterSpacing: '.22em', color: '#D4B060' }}>CORONELLI</span>
-            <span style={{ fontFamily: SM, fontSize: 8, color: '#6B6352', letterSpacing: '.10em', textTransform: 'uppercase', border: '1px solid #25201A', padding: '2px 6px', borderRadius: 2 }}>3D Atlas</span>
-          </div>
-          <span style={{ fontFamily: "'Crimson Pro', Georgia, serif", fontStyle: 'italic', fontSize: 13, color: '#6B6352' }}>
-            {atlas.entity_count} places
-          </span>
-        </header>
-      )}
-
       {/* Controls */}
       {!loading && !error && (
         <div style={{ position: 'absolute', bottom: 18, right: 18, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5, pointerEvents: 'none', zIndex: 20 }}>

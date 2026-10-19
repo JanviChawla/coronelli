@@ -74,22 +74,33 @@ export function WorkflowHeader({
       {/* Brand header */}
       <header style={{
         flexShrink: 0, display: 'flex', alignItems: 'center',
-        background: 'var(--sidebar-bg)', borderBottom: '1px solid var(--sidebar-border)',
-        height: '2.6rem', padding: '0 1.5rem',
+        background: showExplorer ? 'rgba(1, 2, 5, 0.72)' : 'var(--sidebar-bg)',
+        borderBottom: showExplorer ? '1px solid rgba(201, 168, 76, 0.08)' : '1px solid var(--sidebar-border)',
+        padding: '18px 24px',
+        backdropFilter: showExplorer ? 'blur(6px)' : undefined,
       }}>
-        <button
-          type="button"
-          onClick={onBack}
-          style={{
-            background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-            fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.24em',
-            color: 'var(--gold)', textTransform: 'uppercase', flexShrink: 0,
-            transition: 'opacity 0.12s',
-          }}
-          title="Back to library"
-        >
-          Coronelli
-        </button>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexShrink: 0 }}>
+          <button
+            type="button"
+            onClick={onBack}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+              fontFamily: "'Cinzel', serif", fontSize: 17, fontWeight: 400, letterSpacing: '.22em',
+              color: 'var(--gold)', textTransform: 'uppercase',
+              transition: 'opacity 0.12s',
+            }}
+            title="Back to library"
+          >
+            CORONELLI
+          </button>
+          <span style={{
+            fontFamily: "'Space Mono', monospace", fontSize: 8, color: '#6B6352',
+            letterSpacing: '.10em', textTransform: 'uppercase',
+            border: '1px solid var(--sidebar-border)', padding: '2px 6px', borderRadius: 2,
+          }}>
+            Literary Atlas
+          </span>
+        </div>
         <div style={{
           flex: 1, textAlign: 'center', fontSize: '0.85rem', color: 'var(--sidebar-text)',
           fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -102,12 +113,14 @@ export function WorkflowHeader({
       {/* Pipeline toolbar */}
       <div style={{
         flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.65rem',
-        background: 'var(--parchment)', borderBottom: '1px solid var(--border-warm)',
+        background: showExplorer ? 'transparent' : 'var(--parchment)',
+        borderBottom: showExplorer ? 'none' : '1px solid var(--border-warm)',
         padding: '0.55rem 1.5rem',
       }}>
-        <span style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--ink)', whiteSpace: 'nowrap', flexShrink: 0 }}>
-          Atlas Editor
+        <span style={{ fontSize: '0.95rem', fontWeight: 600, color: showExplorer ? '#C8A84A' : 'var(--ink)', whiteSpace: 'nowrap', flexShrink: 0 }}>
+          {showExplorer ? 'Atlas Explorer' : 'Atlas Editor'}
         </span>
+        {!showExplorer && <>
         <div style={{ width: '1px', height: '1.1rem', background: 'var(--border-warm)', flexShrink: 0, marginLeft: '0.15rem', marginRight: '0.15rem' }} />
 
         {/* Catalog */}
@@ -166,13 +179,15 @@ export function WorkflowHeader({
         </button>
 
         <div style={{ flex: 1 }} />
+        </>}
+        {showExplorer && <div style={{ flex: 1 }} />}
 
         {/* Launch / Back toggle */}
         <button
           type="button"
           className="btn-cta"
           disabled={!atlasDone && !showExplorer}
-          onClick={onToggleExplorer}
+          onClick={atlasDone || showExplorer ? onToggleExplorer : undefined}
           style={{
             display: 'inline-flex', alignItems: 'center', width: 'auto', flexShrink: 0,
             padding: '0.32rem 0.9rem', fontSize: '0.78rem',
