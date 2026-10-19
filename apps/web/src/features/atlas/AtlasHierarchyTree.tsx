@@ -390,7 +390,10 @@ export function AtlasHierarchyTree({
         {catalogCandidates.length > 0 && CATALOG_GROUPS.map(group => {
           const members = catalogCandidates
             .filter(c => group.test(c.spatialLevel) && (isReviewingCatalog || !c.isRejected))
-            .sort((a, b) => a.name.localeCompare(b.name))
+            .sort((a, b) => {
+              const strip = (s: string) => s.replace(/^(the|a|an)\s+/i, '')
+              return strip(a.name).localeCompare(strip(b.name))
+            })
           if (members.length === 0) return null
           const collapsed = collapsedCatalogGroups.has(group.id)
           const keptCount = isReviewingCatalog ? members.filter(c => !c.isRejected).length : members.length

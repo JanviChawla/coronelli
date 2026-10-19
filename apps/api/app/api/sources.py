@@ -1,7 +1,9 @@
+import re
 from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -139,6 +141,41 @@ def delete_document_endpoint(document_id: str, db: Session = Depends(get_db)) ->
         delete_document(db, document_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{document_id}/export-text")
+def export_document_text(document_id: str, db: Session = Depends(get_db)) -> PlainTextResponse:
+    """Return the document's full text as a downloadable Markdown file."""
+    doc = db.get(SourceDocument, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document '{document_id}' not found.")
+
+    if doc.raw_text:
+        body = doc.raw_text
+    else:
+        sections = list_sections(db, document_id)
+        parts: list[str] = []
+        for s in sections:
+            if s.title:
+                parts.append(f"## {s.title}\n\n{s.text}")
+            else:
+                parts.append(s.text)
+        body = "\n\n".join(parts)
+
+    header_lines = [f"Title: {doc.title}"]
+    if doc.author:
+        header_lines.append(f"Author: {doc.author}")
+    if doc.year:
+        header_lines.append(f"Year: {doc.year}")
+    md = "\n".join(header_lines) + "\n\n" + body
+
+    safe_title = re.sub(r"[^\w\s-]", "", doc.title or "document").strip().replace(" ", "_")
+    filename = f"{safe_title}.md"
+    return PlainTextResponse(
+        content=md,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/{document_id}/resection", response_model=list[SectionResponse])

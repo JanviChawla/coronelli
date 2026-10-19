@@ -154,7 +154,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
           return next
         })}
         hideHeader={true}
-        isReviewingCatalog={false}
+        isReviewingCatalog={catalogCandidates.length > 0}
         onConfirmCatalog={showCatalogSlot ? w.handleConfirmCatalog : undefined}
         confirmingCatalog={w.confirmingCatalog}
         confirmCatalogSlot={catalogSlotNode}

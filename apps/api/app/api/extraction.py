@@ -422,6 +422,26 @@ def confirm_catalog_review(
 
     _write_catalog_confirmed(db, section_ids)
 
+    # Deactivate MapEntity stubs whose catalog candidate was rejected
+    rejected_candidate_ids = [
+        row[0] for row in db.query(Candidate.id)
+        .filter(
+            Candidate.section_id.in_(section_ids),
+            Candidate.kind == "entity",
+            Candidate.review_state == "rejected",
+        )
+        .all()
+    ]
+    if rejected_candidate_ids:
+        (
+            db.query(MapEntity)
+            .filter(
+                MapEntity.candidate_id.in_(rejected_candidate_ids),
+                MapEntity.state == "active",
+            )
+            .update({"state": "rejected"}, synchronize_session=False)
+        )
+
     # Promote approved candidates → MapEntity stubs
     candidates = (
         db.query(Candidate)

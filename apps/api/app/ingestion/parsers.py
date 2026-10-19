@@ -94,13 +94,13 @@ def _parse_pdf(filename: str, content: bytes) -> ParsedDocument:
     if not text:
         raise TextExtractionUnavailableError(
             f"'{filename}' contains no extractable text. "
-            "Image-only PDFs (scanned without an OCR text layer) are not supported."
+            "Image-only PDFs (scanned without an OCR text layer) are not supported. "
+            "Export the text as a .md or .txt file and upload that instead."
         )
     meta = doc.metadata or {}
     pdf_title = (meta.get("title") or "").strip() or None
     pdf_author = (meta.get("author") or "").strip() or None
     first_page = pages[0] if pages else ""
-    # Fall back to scanning first-page text for "by Author Name"
     if not pdf_author:
         by_m = _BY_AUTHOR_RE.search(first_page[:3000])
         if by_m:

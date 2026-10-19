@@ -76,6 +76,7 @@ export function AtlasRelationshipsPanel({
   const [editingClaimId, setEditingClaimId] = useState<string | null>(null)
   const [editPred, setEditPred] = useState('')
   const [editObjId, setEditObjId] = useState('')
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(new Set())
 
   const CONTAINMENT_ONLY = new Set(['LOCATED_IN', 'CONTAINS'])
   const visibleClaims = visibleSpatialClaims.filter(c => {
@@ -258,28 +259,50 @@ export function AtlasRelationshipsPanel({
                     </>
                   ) : (
                     <>
-                      <span style={{ color: 'var(--ink)', flexShrink: 0 }}>{subjName}</span>
-                      <span style={{ color: 'var(--ink-faint)', fontSize: '0.68rem', letterSpacing: '0.05em', flexShrink: 0, fontVariant: 'small-caps' }}>{claim.predicate ?? '?'}</span>
+                      <span style={{ color: 'var(--ink)', flexShrink: 0, textDecoration: pendingDeleteIds.has(claim.id) ? 'line-through' : 'none', opacity: pendingDeleteIds.has(claim.id) ? 0.45 : 1 }}>{subjName}</span>
+                      <span style={{ color: 'var(--ink-faint)', fontSize: '0.68rem', letterSpacing: '0.05em', flexShrink: 0, fontVariant: 'small-caps', textDecoration: pendingDeleteIds.has(claim.id) ? 'line-through' : 'none', opacity: pendingDeleteIds.has(claim.id) ? 0.45 : 1 }}>{claim.predicate ?? '?'}</span>
                       <span style={{
                         color: objId ? 'var(--ink)' : 'var(--ink-faint)',
                         flexShrink: 0, fontStyle: objId ? 'normal' : 'italic',
+                        textDecoration: pendingDeleteIds.has(claim.id) ? 'line-through' : 'none',
+                        opacity: pendingDeleteIds.has(claim.id) ? 0.45 : 1,
                       }}>{objName}</span>
                       {!readOnly && <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.22rem', flexShrink: 0 }}>
-                        <button
+                        {!pendingDeleteIds.has(claim.id) && <button
                           type="button"
                           onClick={() => { setEditingClaimId(claim.id); setEditPred(claim.predicate ?? 'LOCATED_IN'); setEditObjId(objId ?? '') }}
                           style={{ fontSize: '0.66rem', padding: '0.14rem 0.4rem', background: 'none', border: '1px solid var(--border-warm)', borderRadius: '3px', cursor: 'pointer', color: 'var(--ink-muted)' }}
                         >
                           edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onDeleteClaim(claim.id)}
-                          disabled={isSaving}
-                          style={{ fontSize: '0.66rem', padding: '0.14rem 0.4rem', background: 'none', border: '1px solid rgba(180,80,80,0.4)', borderRadius: '3px', cursor: 'pointer', color: '#c06060' }}
-                        >
-                          del
-                        </button>
+                        </button>}
+                        {pendingDeleteIds.has(claim.id) ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setPendingDeleteIds(prev => { const s = new Set(prev); s.delete(claim.id); return s })}
+                              style={{ fontSize: '0.66rem', padding: '0.14rem 0.4rem', background: 'none', border: '1px solid var(--border-warm)', borderRadius: '3px', cursor: 'pointer', color: 'var(--ink-muted)' }}
+                            >
+                              undo
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { onDeleteClaim(claim.id); setPendingDeleteIds(prev => { const s = new Set(prev); s.delete(claim.id); return s }) }}
+                              disabled={isSaving}
+                              style={{ fontSize: '0.66rem', padding: '0.14rem 0.4rem', background: 'rgba(180,60,60,0.18)', border: '1px solid rgba(180,80,80,0.6)', borderRadius: '3px', cursor: 'pointer', color: '#e07070' }}
+                            >
+                              confirm
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setPendingDeleteIds(prev => new Set(prev).add(claim.id))}
+                            disabled={isSaving}
+                            style={{ fontSize: '0.66rem', padding: '0.14rem 0.4rem', background: 'none', border: '1px solid rgba(180,80,80,0.4)', borderRadius: '3px', cursor: 'pointer', color: '#c06060' }}
+                          >
+                            del
+                          </button>
+                        )}
                       </div>}
                     </>
                   )}
