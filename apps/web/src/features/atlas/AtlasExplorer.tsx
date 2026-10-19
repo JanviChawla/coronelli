@@ -66,10 +66,10 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
     renderer.setSize(canvas.clientWidth, canvas.clientHeight, false)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    renderer.setClearColor(0x080E24, 1)
+    renderer.setClearColor(0x03060F, 1)
 
     const scene  = new THREE.Scene()
-    scene.fog    = new THREE.FogExp2(0x080E24, 0.024)
+    scene.fog    = new THREE.FogExp2(0x03060F, 0.024)
     const camera = new THREE.PerspectiveCamera(44, canvas.clientWidth / canvas.clientHeight, 0.1, 80)
 
     // ── Lighting (permanent) ──────────────────────────────────────────────────
@@ -348,7 +348,7 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     for (const e of entities) { const p = positions.get(e.id)!; const r = Math.sqrt((p.x-cx)**2 + (p.z-cz)**2); if (r > maxR) maxR = r }
 
     // ── L0 atmosphere — tint background/fog with realm palette ───────────────
-    const atmBase = new THREE.Color(0x080E24)
+    const atmBase = new THREE.Color(0x03060F)
     let atmColor = atmBase.clone()
     for (const l0e of entities.filter(e => l0Set.has(e.id))) {
       const pc = l0e.payload.colors as { primary?: string } | null
@@ -1012,7 +1012,7 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
   const selectedEntity = selectedId ? entityMap.get(selectedId) ?? null : null
 
   return (
-    <div style={{ position: 'relative', width: '100%', flex: 1, minHeight: 0, background: '#080E24', overflow: 'hidden' }}>
+    <div style={{ position: 'relative', width: '100%', flex: 1, minHeight: 0, background: '#03060F', overflow: 'hidden' }}>
       <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', cursor: 'grab' }} />
 
       {/* Imperative label layer */}
