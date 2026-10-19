@@ -44,43 +44,6 @@ Set your OpenAI API key before running extraction:
 OPENAI_API_KEY=sk-...
 ```
 
-## Requirements (for development)
-
-- Python 3.12+, [uv](https://docs.astral.sh/uv/)
-- Node 20+, pnpm 9+
-- OpenAI API key
-
-## Setup
-
-```sh
-# Backend
-cd apps/api
-uv sync --extra dev
-
-# Frontend
-pnpm install
-```
-
-Copy `.env.example` to `apps/api/.env` and set `OPENAI_API_KEY`.
-
-## Running
-
-```sh
-# Backend  (http://localhost:8000)
-cd apps/api
-uv run uvicorn app.main:app --reload
-
-# Frontend  (http://localhost:5173)
-pnpm dev
-```
-
-## Tests
-
-```sh
-cd apps/api && uv run pytest -q
-pnpm --filter web test --run
-```
-
 ## Cost and caching
 
 Estimated cost is shown before each pipeline stage. Repeated extraction on unchanged sections is served from cache — no new API call is made.
