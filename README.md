@@ -1,77 +1,68 @@
-# Coronelli
+# Coronelli ◉
 
-Local-first application for turning written fiction into a reviewed, provenance-aware spatial world model.
+A literary atlas builder — upload a book and explore its world in 3D.
+
+Coronelli is inspired by the craft of historical cartographers: it reads a novel section by section, finds every named place, maps spatial relationships and visual qualities, and builds a navigable world you can orbit and inspect.
 
 ```
-source text → sections → candidate extraction → review → canonical world data
+Upload → Catalog → Extract → Synthesize → Atlas Editor → 3D Explorer
 ```
 
-## What it does
-
-- Import `.txt`, `.md`, and text-bearing `.pdf` source documents.
-- Detect and correct section boundaries; assign section titles.
-- Extract candidate map-relevant entities and claims via a cloud LLM (BYOK — see below).
-- Store candidates with temporal interpretation and inter-claim relation fields.
-- Review each candidate — approve, reject, or defer — before anything becomes canonical.
-- Every claim carries `explicit`, `inferred`, or `imagined` status and full source provenance.
+- Import `.txt`, `.md`, and text-bearing `.pdf` files
+- LLM pipeline identifies places, containment hierarchies, spatial claims, and visual details
+- Every extracted candidate is held for human review before it becomes canonical
+- Edit the atlas — rename entities, merge duplicates, assign hierarchy, add relationships
+- Explore in an interactive 3D scene: zone rings, floating nodes, force-directed layout
 
 ## Requirements
 
 - Python 3.12+, [uv](https://docs.astral.sh/uv/)
-- Node 20+, pnpm 12+
+- Node 20+, pnpm 9+
+- OpenAI API key
 
 ## Setup
 
 ```sh
-# Python dependencies (from apps/api)
+# Backend
 cd apps/api
 uv sync --extra dev
 
-# JS dependencies (from repo root)
+# Frontend
 pnpm install
 ```
 
-Copy `.env.example` to `.env` and fill in your credentials before starting the API.
+Copy `.env.example` to `apps/api/.env` and set `OPENAI_API_KEY`.
 
 ## Running
 
 ```sh
-# API — port 8000 (from apps/api)
+# Backend  (http://localhost:8000)
+cd apps/api
 uv run uvicorn app.main:app --reload
 
-# Web client — port 5173 (from repo root, separate terminal)
+# Frontend  (http://localhost:5173)
 pnpm dev
 ```
 
 ## Tests
 
 ```sh
-# API
 cd apps/api && uv run pytest -q
-
-# Web
 pnpm --filter web test --run
 ```
 
-## Cloud extraction — BYOK
+## Cost and caching
 
-Candidate extraction uses the OpenAI API. Set `OPENAI_API_KEY` and `OPENAI_EXTRACTION_MODEL`
-in `.env`. No shared key is bundled or implied. The application never makes LLM output
-canonical automatically; all candidates are held for human review.
+Estimated cost is shown before each pipeline stage. Repeated extraction on unchanged sections is served from cache — no new API call is made.
 
-A preflight endpoint (`GET /api/sections/{id}/extract/preflight`) shows estimated token
-count and cost before any request is sent. Repeated extraction on unchanged sections is
-served from cache without a new API call.
+## Data
 
-## Workspaces
+| Kind | Path | Notes |
+|------|------|-------|
+| Demo | `data/demos/` | Tracked — public-domain or synthetic material only |
+| Private | `data/private/` | Ignored — copyrighted or personal source text |
 
-| Kind | Path | Status |
-|---|---|---|
-| demo | `data/demos/` | Tracked — public-domain or synthetic material only |
-| private | `data/private/` | Ignored — copyrighted or personal corpus material |
-
-`exports/private/` and `*.atlas.private` files are always ignored. Do not commit private
-source text, extracted databases, or derived artefacts.
+`exports/private/` and `*.atlas.private` files are always gitignored. Do not commit private source text or derived artefacts.
 
 ## License
 
