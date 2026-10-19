@@ -36,7 +36,7 @@ export function geoForKind(kind: string): THREE.BufferGeometry {
   if (/^vessel/.test(k))                                         return new THREE.CylinderGeometry(.36, .68, 1.3, 8)
   if (/^dungeon/.test(k))                                        return new THREE.OctahedronGeometry(.95)
   if (/^room/.test(k))                                           return new THREE.BoxGeometry(1, 1, 1)
-  if (/^landmark/.test(k))                                       return new THREE.TetrahedronGeometry(.95)
+  if (/^landmark/.test(k))                                       return new THREE.OctahedronGeometry(1.05)
   if (/^grounds|^exterior|^terrain|^farm/.test(k))               return new THREE.DodecahedronGeometry(.9)
   if (/^building|^estate|^infrastructure|^barrier/.test(k))      return new THREE.BoxGeometry(1.05, 1.18, 1.05)
   if (/^route/.test(k))                                          return new THREE.IcosahedronGeometry(.7)
@@ -69,4 +69,15 @@ export function rForKind(kind: string): number {
 export function easeOutBack(x: number): number {
   const c1 = 1.70158, c3 = c1 + 1
   return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2)
+}
+
+export function nameColorHint(name: string): string | null {
+  const n = name.toLowerCase()
+  if (/creek|river|lake|water|pool|stream|brook/.test(n)) return '#4A9ECC'
+  if (/forest|grove|wood/.test(n))                        return '#4A8A3A'
+  if (/crystal|ice|frost/.test(n))                        return '#A0D4E8'
+  if (/fire|flame|ember|lava/.test(n))                    return '#D44A20'
+  if (/shadow|dark|void/.test(n))                         return '#6040A0'
+  if (/gold|golden/.test(n))                              return '#D4A820'
+  return null
 }

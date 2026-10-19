@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { fetchAtlas, fetchEntityMentions } from './atlasApi'
 import type { AtlasResponse, AtlasEntity } from './atlasApi'
-import { TIER_Y, TIER_NODE_HEX, CONTAIN_RE, TRAVEL_RE, geoForKind, rForKind, easeOutBack } from './atlasExplorerUtils'
+import { TIER_Y, TIER_NODE_HEX, CONTAIN_RE, TRAVEL_RE, geoForKind, rForKind, easeOutBack, nameColorHint } from './atlasExplorerUtils'
 import { AtlasExplorerDetailPanel } from './AtlasExplorerDetailPanel'
 import { AtlasExplorerOverlays } from './AtlasExplorerOverlays'
 
@@ -66,10 +66,10 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
     renderer.setSize(canvas.clientWidth, canvas.clientHeight, false)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    renderer.setClearColor(0x060C18, 1)
+    renderer.setClearColor(0x080E24, 1)
 
     const scene  = new THREE.Scene()
-    scene.fog    = new THREE.FogExp2(0x060C18, 0.024)
+    scene.fog    = new THREE.FogExp2(0x080E24, 0.024)
     const camera = new THREE.PerspectiveCamera(44, canvas.clientWidth / canvas.clientHeight, 0.1, 80)
 
     // ── Lighting (permanent) ──────────────────────────────────────────────────
@@ -348,7 +348,7 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     for (const e of entities) { const p = positions.get(e.id)!; const r = Math.sqrt((p.x-cx)**2 + (p.z-cz)**2); if (r > maxR) maxR = r }
 
     // ── L0 atmosphere — tint background/fog with realm palette ───────────────
-    const atmBase = new THREE.Color(0x060C18)
+    const atmBase = new THREE.Color(0x080E24)
     let atmColor = atmBase.clone()
     for (const l0e of entities.filter(e => l0Set.has(e.id))) {
       const pc = l0e.payload.colors as { primary?: string } | null
@@ -356,7 +356,7 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
         .filter(c => c.claim_type === 'visual')
         .flatMap(c => (c.payload.palette as Array<{ color?: string; hex?: string; c?: string }> | null) ?? [])
       const hex = pc?.primary ?? vcCols[0]?.color ?? vcCols[0]?.hex ?? vcCols[0]?.c
-      if (hex) { try { atmColor = atmBase.clone().lerp(new THREE.Color(hex), 0.12) } catch { /* skip */ } break }
+      if (hex) { try { atmColor = atmBase.clone().lerp(new THREE.Color(hex), 0.06) } catch { /* skip */ } break }
     }
     renderer.setClearColor(atmColor, 1)
     scene.fog = new THREE.FogExp2(atmColor.getHex(), 0.009)
@@ -428,6 +428,32 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       zoneHullData.set(entity.id, { cx: hcx, cz: hcz, r: hullR, tierY })
     }
 
+    const ZONE_VERT = `
+      varying vec2 vUv;
+      void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
+    `
+    const ZONE_FRAG = `
+      uniform vec3 uColor; uniform float uTime; uniform float uOp;
+      varying vec2 vUv;
+      void main() {
+        vec2 p = vUv - 0.5; float d = length(p) * 2.0;
+        if (d > 1.0) discard;
+        float fade = 1.0 - smoothstep(0.55, 1.0, d);
+        float ring = sin(d * 14.0 - uTime * 1.4) * 0.5 + 0.5;
+        ring = mix(0.0, ring, smoothstep(0.08, 0.45, d));
+        float alpha = mix(0.03, 0.15, ring) * fade * uOp;
+        gl_FragColor = vec4(uColor, alpha);
+      }
+    `
+    interface ZoneAnimData {
+      fillMat: THREE.ShaderMaterial
+      shimOrb: THREE.Mesh; shimAngle: number; shimSpeed: number
+      cx: number; cz: number; r: number; tierY: number
+      zMoteGeo: THREE.BufferGeometry; zMotePos: Float32Array; zMoteVel: Float32Array
+      zMoteCount: number; zMoteY: number
+    }
+    const zoneAnimData: ZoneAnimData[] = []
+
     for (const entity of zonesToDraw) {
       const hd = zoneHullData.get(entity.id)
       if (!hd) continue
@@ -446,10 +472,14 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       const yFill = tierY - 0.02 + depth * 0.008
       const yRim  = tierY - 0.015 + depth * 0.008
 
-      // Fill: outer zones more transparent; inner zones slightly more opaque
-      const fillOp = depth === 0 ? 0.09 : 0.14 + depth * 0.03
+      // Fill: animated radial gradient via ShaderMaterial
       const fillGeo = new THREE.CircleGeometry(hullR, 56); fillGeo.rotateX(-Math.PI / 2)
-      const fillMesh = new THREE.Mesh(fillGeo, new THREE.MeshBasicMaterial({ color: planeColor, transparent: true, opacity: fillOp, depthWrite: false, side: THREE.DoubleSide }))
+      const fillMat = new THREE.ShaderMaterial({
+        uniforms: { uColor: { value: planeColor }, uTime: { value: 0 }, uOp: { value: depth === 0 ? 0.7 : 1.0 } },
+        vertexShader: ZONE_VERT, fragmentShader: ZONE_FRAG,
+        transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      })
+      const fillMesh = new THREE.Mesh(fillGeo, fillMat)
       fillMesh.position.set(hcx, yFill, hcz)
       scene.add(fillMesh)
 
@@ -469,6 +499,40 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       colMesh.userData = { id: entity.id, isL1: true }
       scene.add(colMesh)
       l1Colliders.push(colMesh)
+
+      // Shimmer orb: glowing sphere that orbits the rim
+      const shimOrb = new THREE.Mesh(
+        new THREE.SphereGeometry(0.18, 8, 8),
+        new THREE.MeshBasicMaterial({ color: planeColor, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false })
+      )
+      shimOrb.position.set(hcx + hullR, tierY + 0.3, hcz)
+      scene.add(shimOrb)
+
+      // Zone motes: small particles drifting inside hull
+      const ZMC = 18
+      const zMoteGeo = new THREE.BufferGeometry()
+      const zMotePos = new Float32Array(ZMC * 3)
+      const zMoteVel = new Float32Array(ZMC * 3)
+      for (let i = 0; i < ZMC; i++) {
+        const ang = Math.random() * Math.PI * 2, rad = Math.random() * hullR * 0.8
+        zMotePos[i*3]   = hcx + Math.cos(ang) * rad
+        zMotePos[i*3+1] = tierY + Math.random() * 1.2 - 0.2
+        zMotePos[i*3+2] = hcz + Math.sin(ang) * rad
+        zMoteVel[i*3]   = (Math.random() - 0.5) * 0.008
+        zMoteVel[i*3+2] = (Math.random() - 0.5) * 0.008
+      }
+      zMoteGeo.setAttribute('position', new THREE.Float32BufferAttribute(zMotePos, 3))
+      scene.add(new THREE.Points(zMoteGeo, new THREE.PointsMaterial({
+        color: planeColor, size: 0.055, transparent: true, opacity: 0.55,
+        sizeAttenuation: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      })))
+
+      zoneAnimData.push({
+        fillMat, shimOrb,
+        shimAngle: Math.random() * Math.PI * 2, shimSpeed: 0.3 + Math.random() * 0.2,
+        cx: hcx, cz: hcz, r: hullR, tierY,
+        zMoteGeo, zMotePos, zMoteVel, zMoteCount: ZMC, zMoteY: tierY,
+      })
     }
 
     // ── Node groups ───────────────────────────────────────────────────────────
@@ -478,6 +542,7 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       coreMat: THREE.MeshPhongMaterial; r: number
       provenanceOrdinal: number
       baseOpacity: number
+      isPortal: boolean
     }
     const nodeData: NodeData[] = []
     const nodeById = new Map<string, NodeData>()
@@ -494,6 +559,8 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       if (zoneSet.has(entity.id)) continue
 
       const kindDesc    = (entity.payload.kind_descriptor as string) ?? entity.place_kind ?? 'building'
+      const kindDescLow = kindDesc.toLowerCase()
+      const isPortalNode = /^portal|^threshold|^door/.test(kindDescLow)
       const tier        = resolvedTier(entity.id)
       const directChildren = childrenOf.get(entity.id) ?? []
       const hasChildren = directChildren.length > 0
@@ -508,7 +575,7 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       const vcColors = entity.claims
         .filter(c => c.claim_type === 'visual')
         .flatMap(c => (c.payload.palette as Array<{ color?: string; hex?: string; c?: string }> | null) ?? [])
-      const rawHex      = payloadCols?.primary ?? vcColors[0]?.color ?? vcColors[0]?.hex ?? vcColors[0]?.c ?? TIER_NODE_HEX[tier] ?? '#C8BC9E'
+      const rawHex      = payloadCols?.primary ?? vcColors[0]?.color ?? vcColors[0]?.hex ?? vcColors[0]?.c ?? nameColorHint(entity.name) ?? TIER_NODE_HEX[tier] ?? '#C8BC9E'
       const atmHex      = payloadCols?.atmosphere ?? rawHex
       const accentHex   = payloadCols?.accent ?? rawHex
       const col         = new THREE.Color(rawHex)
@@ -581,6 +648,7 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
         baseY: pos.y, coreMat, r: effectiveR,
         provenanceOrdinal: ordinalMapRef.current.get(entity.id) ?? 0,
         baseOpacity: hasChildren && !isL3 ? 0.38 : 1.0,
+        isPortal: isPortalNode,
       }
       nodeData.push(nd); nodeById.set(entity.id, nd)
     }
@@ -623,14 +691,13 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     }
 
     // ── Edge lines ────────────────────────────────────────────────────────────
-    const travelEdges: THREE.Line[] = []
+    const travelEdges: THREE.Mesh[] = []
     const containEdges: THREE.Line[] = []
     const drawnEdge = new Set<string>()
 
-    // YW edge palette; for a real multi-book system, key by book id
-    const ep = [0xA89030, 0.42, 0x9A9030, 0.35, 0x5A5A6A, 0.20]
-
     for (const e of edges) {
+      // Skip ADJACENT_TO — territory rings already convey proximity
+      if (e.pred === 'ADJACENT_TO') continue
       const key = [e.sid, e.oid].sort().join('||')
       if (drawnEdge.has(key)) continue; drawnEdge.add(key)
       const pa = positions.get(e.sid), pb = positions.get(e.oid)
@@ -638,16 +705,21 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       const isC = CONTAIN_RE.test(e.pred), isT = TRAVEL_RE.test(e.pred)
       // Zone containment is shown by territory boundaries, not edge lines
       if (isC && (zoneSet.has(e.sid) || zoneSet.has(e.oid))) continue
-      const lc = (isC ? ep[0] : isT ? ep[2] : ep[4]) as number
-      const lo = (isC ? ep[1] : isT ? ep[3] : ep[5]) as number
-      const geo = new THREE.BufferGeometry().setFromPoints([pa.clone(), pb.clone()])
       if (isT) {
-        const mat = new THREE.LineDashedMaterial({ color: lc, transparent: true, opacity: lo * 1.15, dashSize: 0.32, gapSize: 0.16 })
-        const ln = new THREE.Line(geo, mat); ln.computeLineDistances()
-        scene.add(ln); travelEdges.push(ln)
+        // Dual-tube LEADS_TO: outer sheath + bright inner core
+        const curve = new THREE.LineCurve3(pa.clone(), pb.clone())
+        const outerGeo = new THREE.TubeGeometry(curve, 1, 0.020, 6, false)
+        const outerMat = new THREE.MeshBasicMaterial({ color: 0xC8A840, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false })
+        outerMat.userData = { baseOp: 0.45 }
+        const outerMesh = new THREE.Mesh(outerGeo, outerMat); scene.add(outerMesh); travelEdges.push(outerMesh)
+        const innerGeo = new THREE.TubeGeometry(curve, 1, 0.006, 4, false)
+        const innerMat = new THREE.MeshBasicMaterial({ color: 0xFFE090, transparent: true, opacity: 0.80, blending: THREE.AdditiveBlending, depthWrite: false })
+        innerMat.userData = { baseOp: 0.80 }
+        const innerMesh = new THREE.Mesh(innerGeo, innerMat); scene.add(innerMesh); travelEdges.push(innerMesh)
       } else {
-        const mat = new THREE.LineBasicMaterial({ color: lc, transparent: true, opacity: lo })
-        mat.userData = { baseOp: lo }
+        const geo = new THREE.BufferGeometry().setFromPoints([pa.clone(), pb.clone()])
+        const mat = new THREE.LineBasicMaterial({ color: 0xA89030, transparent: true, opacity: 0.42 })
+        mat.userData = { baseOp: 0.42 }
         const ln = new THREE.Line(geo, mat); scene.add(ln)
         if (isC) containEdges.push(ln)
       }
@@ -701,6 +773,8 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     refreshCam()
 
     // ── Selection / hover ─────────────────────────────────────────────────────
+    interface PulseRing { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; born: number }
+    const pulseRings: PulseRing[] = []
     let selId: string | null = null
     let hovId: string | null = null
 
@@ -726,6 +800,16 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       setEmissive(id, 0.80)
       setLabelState(id, 'sel')
       setSelectedId(id)
+      // Spawn selection ring pulse
+      const selNd = nodeById.get(id)
+      if (selNd) {
+        const rg = new THREE.TorusGeometry(selNd.r * 1.4, 0.04, 8, 32)
+        const rm = new THREE.MeshBasicMaterial({ color: 0xFFE090, transparent: true, opacity: 0.80, blending: THREE.AdditiveBlending, depthWrite: false })
+        const rm3 = new THREE.Mesh(rg, rm)
+        rm3.position.copy(selNd.group.position)
+        scene.add(rm3)
+        pulseRings.push({ mesh: rm3, mat: rm, born: t })
+      }
     }
     function handleDeselect() {
       if (selId) { setEmissive(selId, 0.22); setLabelState(selId, hovId === selId ? 'hov' : 'idle') }
@@ -855,7 +939,8 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
           const visible = nd.provenanceOrdinal <= revealUpToRef.current
           const dy = Math.sin(t * 0.72 + nd.phase) * 0.07
           nd.group.position.y = nd.baseY + dy
-          if (nd.id !== selId) nd.group.rotation.y += nd.rotSpeed * 0.016
+          if (nd.id !== selId) nd.group.rotation.y += nd.rotSpeed * (nd.isPortal ? 4.0 : 1.0) * 0.016
+          if (nd.isPortal) nd.group.rotation.x = Math.sin(t * 1.2 + nd.phase) * 0.30
           const gs = nd.group.scale.x
           const heightAboveGround = Math.max(0, nd.baseY + dy + 0.016)
           ;(nd.shadow.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.22 - Math.abs(dy) * 0.5 - heightAboveGround * 0.018) * gs * (visible ? 1 : 0)
@@ -867,8 +952,11 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
         }
       }
 
-      // Traversal edges: dashes flow along path
-      for (const ln of travelEdges) { ;(ln.material as any).dashOffset -= 0.007 }
+      // Traversal edges: slow opacity pulse to signal traversability
+      travelEdges.forEach((m, i) => {
+        const mat = m.material as THREE.MeshBasicMaterial
+        mat.opacity = (mat.userData.baseOp as number) * (0.75 + 0.25 * Math.sin(t * 0.9 + i * 1.1))
+      })
 
       // Containment edges: gentle opacity pulse
       containEdges.forEach((ln, i) => {
@@ -888,6 +976,39 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       }
       moteGeo.attributes.position.needsUpdate = true
       ;(moteMesh.material as THREE.PointsMaterial).opacity = 0.42 + 0.12 * Math.sin(t * 1.5)
+
+      // Zone animation: fill shader uTime, shimmer orbs, zone motes
+      for (const za of zoneAnimData) {
+        za.fillMat.uniforms.uTime.value = t
+        za.shimAngle += za.shimSpeed * 0.016
+        za.shimOrb.position.set(
+          za.cx + Math.cos(za.shimAngle) * za.r,
+          za.tierY + 0.3 + Math.sin(t * 1.6 + za.shimAngle) * 0.15,
+          za.cz + Math.sin(za.shimAngle) * za.r,
+        );
+        (za.shimOrb.material as THREE.MeshBasicMaterial).opacity = 0.55 + 0.25 * Math.sin(t * 1.8 + za.shimAngle)
+        const zpa = za.zMoteGeo.attributes.position.array as Float32Array
+        for (let i = 0; i < za.zMoteCount; i++) {
+          zpa[i*3] += za.zMoteVel[i*3]; zpa[i*3+1] += 0.004; zpa[i*3+2] += za.zMoteVel[i*3+2]
+          const dx = zpa[i*3] - za.cx, dz = zpa[i*3+2] - za.cz
+          if (zpa[i*3+1] > za.zMoteY + 1.2 || Math.sqrt(dx*dx + dz*dz) > za.r * 0.85) {
+            const ang = Math.random() * Math.PI * 2, rad = Math.random() * za.r * 0.6
+            zpa[i*3] = za.cx + Math.cos(ang) * rad; zpa[i*3+1] = za.zMoteY - 0.1; zpa[i*3+2] = za.cz + Math.sin(ang) * rad
+          }
+        }
+        za.zMoteGeo.attributes.position.needsUpdate = true
+      }
+
+      // Pulse rings: expand + fade over 1 second
+      for (let i = pulseRings.length - 1; i >= 0; i--) {
+        const pr = pulseRings[i]
+        const age = t - pr.born
+        if (age > 1.0) { scene.remove(pr.mesh); pr.mat.dispose(); pulseRings.splice(i, 1); continue }
+        pr.mesh.scale.setScalar(1 + age * 1.8)
+        pr.mat.opacity = 0.80 * (1 - age)
+        const prNd = nodeById.get(selId ?? '')
+        if (prNd) pr.mesh.position.copy(prNd.group.position)
+      }
 
       // Selected node emissive pulse
       if (selId && nodeById.has(selId) && !isGrowing) {
@@ -914,7 +1035,7 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
   const selectedEntity = selectedId ? entityMap.get(selectedId) ?? null : null
 
   return (
-    <div style={{ position: 'relative', width: '100%', flex: 1, minHeight: 0, background: '#060C18', overflow: 'hidden' }}>
+    <div style={{ position: 'relative', width: '100%', flex: 1, minHeight: 0, background: '#080E24', overflow: 'hidden' }}>
       <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', cursor: 'grab' }} />
 
       {/* Imperative label layer */}
