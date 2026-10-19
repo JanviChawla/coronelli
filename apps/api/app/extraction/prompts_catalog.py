@@ -13,8 +13,8 @@ from app.extraction.prompts_taxonomy import (
     _SPATIAL_LEVEL_BLOCK,
 )
 
-GLOBAL_CATALOG_VERSION     = "5.0-catalog"
-GLOBAL_CATALOG_GAP_VERSION = "5.0-catalog-gap"
+GLOBAL_CATALOG_VERSION     = "5.1-catalog"
+GLOBAL_CATALOG_GAP_VERSION = "5.1-catalog-gap"
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +153,36 @@ WORKED EXAMPLES — INCLUDE
   "Caterpillar's Mushroom" — scene takes place on it (Alice in Wonderland)
     → significance: scene  type: landmark  kind_descriptor: landmark  tier: elevated  spatial_level: 3
     note: "The giant mushroom where the hookah-smoking Caterpillar sits and interrogates Alice."
+
+MULTI-LEVEL CONTAINMENT — how parent_context chains through the hierarchy
+
+  When a story takes place on a planet, continent, or named world, set parent_context at every level
+  so the full chain is captured (world → region → building → room).
+
+  "Azureblue" — the planet/world where the story takes place
+    → significance: scene  type: world  kind_descriptor: region  tier: surface  spatial_level: 0
+    parent_context: null   ← outermost place; no enclosing container
+    note: "The planet Azureblue, the entire world in which the story unfolds."
+
+  "the village" — the main inhabited settlement on the planet Azureblue
+    → significance: scene  type: region  kind_descriptor: settlement  tier: surface  spatial_level: 1
+    parent_context: "Azureblue"   ← the world/planet this settlement is part of
+    note: "The village community on Azureblue where daily life is centred."
+
+  "Cobalt School for Girls" — a school building within the village where scenes happen
+    → significance: scene  type: building  kind_descriptor: building  tier: surface  spatial_level: 2
+    parent_context: "the village"   ← the region this building is part of
+    note: "The girls' academy in the village where Dr. Ledger teaches."
+
+  "Dr. Ledger's classroom" — a room inside Cobalt School for Girls where a lesson scene occurs
+    → significance: scene  type: room  kind_descriptor: room  tier: surface  spatial_level: 3
+    parent_context: "Cobalt School for Girls"   ← the immediate enclosing building
+    note: "The classroom where Dr. Ledger conducts lessons for the girls."
+
+  KEY RULE: parent_context must be the IMMEDIATE enclosing place — one level up. Do not skip levels.
+    "Dr. Ledger's classroom" → parent_context: "Cobalt School for Girls"  (not "the village")
+    "Cobalt School for Girls" → parent_context: "the village"             (not "Azureblue")
+    "the village" → parent_context: "Azureblue"                           (not null, if a world exists)
 
 WORKED EXAMPLES — DO NOT INCLUDE
 

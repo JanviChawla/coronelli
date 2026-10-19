@@ -14,7 +14,7 @@ GLOBAL_EVIDENCE_VERSION             = "4.0-evidence"
 GLOBAL_EVIDENCE_SPATIAL_VERSION     = "4.2-spatial"
 GLOBAL_EVIDENCE_VISUAL_VERSION      = "4.1-visual"
 GLOBAL_EVIDENCE_TRAVELRULE_VERSION  = "4.1-travelrule"
-GLOBAL_EVIDENCE_CONTAINMENT_VERSION = "4.1-containment"
+GLOBAL_EVIDENCE_CONTAINMENT_VERSION = "4.2-containment"
 CONTAINMENT_EVIDENCE_VERSION        = "4.1-containment-evidence"
 GLOBAL_EVIDENCE_DEDUP_VERSION       = "4.0-dedup"
 GLOBAL_ENRICHMENT_VERSION           = "4.0-enrichment"
@@ -269,24 +269,47 @@ You are building a containment hierarchy for a literary atlas. Given a complete 
 emit a CONTAINS claim for every pair of places where one is physically inside the other.
 
 SPATIAL LEVEL GUIDE
-  L0 = realm / landscape  (country, forest, coastline)
-  L1 = territory / locale (estate, village, district)
-  L2 = place / structure  (house, building, garden, courtyard)
+  L0 = realm / landscape  (world, planet, country, coastline)
+  L1 = territory / locale (estate, village, district, region)
+  L2 = place / structure  (house, building, garden, courtyard, settlement)
   L3 = feature / sub-space (room, corridor, staircase, window, cellar, attic, threshold)
 
 CONTAINMENT LOGIC — apply in order:
   1. SPATIAL LEVEL: A lower-level place almost always contains higher-level ones at the same site.
-     A L1 estate CONTAINS its L2 buildings and gardens; a L2 house CONTAINS its L3 rooms and features.
-     Emit claims for ALL such pairs that share an obvious site (same book location).
+     An L0 world CONTAINS its L1 regions and villages; an L1 estate CONTAINS its L2 buildings and
+     gardens; a L2 house CONTAINS its L3 rooms and features.
+     Emit claims for ALL such adjacent-level pairs that share an obvious site (same book location).
   2. PLACE TYPE: Use type/kind_descriptor to infer containment when spatial_level alone is ambiguous.
      Rooms, corridors, staircases, cellars, attics, thresholds are inside their parent building.
      Gardens, courtyards, walls, gates are inside their parent estate or grounds.
+     Settlements (villages, towns) are inside their parent region or world when the whole story
+     takes place in that world.
   3. TIER: Use tier (surface / aerial / underground / aquatic) only as a secondary confirmation signal.
 
-Be conservative: only emit claims you are genuinely confident about (confidence 0.85+).
-A wrong containment claim corrupts the spatial hierarchy for every viewer — an absent claim
-is always safer than an incorrect one. When the containment relationship is not clear from the
-names and types alone, skip the pair rather than guessing.
+CONFIDENCE GUIDANCE:
+  - Adjacent spatial levels at the same site (L0→L1, L1→L2, L2→L3): confidence 0.80 is appropriate.
+    Prefer to assert rather than skip — a missing claim leaves the hierarchy just as broken as a
+    wrong one for adjacent-level pairs. Only skip when the relationship is physically implausible
+    or the two places are clearly at different sites in the book.
+  - Non-adjacent levels or ambiguous pairings: confidence 0.70; skip if genuinely unclear.
+  - Never guess containment across different story sites (two places that are described as being
+    far apart should not be nested unless the text makes containment explicit).
+
+WORKED EXAMPLE — 4-level world hierarchy:
+  Catalog: Azureblue (L0, world), the village (L1, region), Cobalt School for Girls (L2, building),
+           Dr. Ledger's classroom (L3, room), the dining room (L3, room), Zenda's house (L2, building)
+
+  Emit:
+    Azureblue CONTAINS the village              (L0→L1, same story world — confidence 0.85)
+    the village CONTAINS Cobalt School for Girls (L1→L2, building in the village — confidence 0.85)
+    the village CONTAINS Zenda's house          (L1→L2, building in the village — confidence 0.85)
+    Cobalt School for Girls CONTAINS Dr. Ledger's classroom  (L2→L3, room in school — confidence 0.90)
+    Zenda's house CONTAINS the dining room      (L2→L3, room in house — confidence 0.90)
+
+  Do NOT emit:
+    Azureblue CONTAINS Cobalt School for Girls  (skip non-adjacent levels — the village is the
+                                                 correct intermediate container)
+    Azureblue CONTAINS Dr. Ledger's classroom   (skip — two levels removed)
 
 OUTPUT FORMAT:
 {
@@ -309,9 +332,9 @@ OUTPUT FORMAT:
 Rules:
   - subject and object must be exact names from the catalog
   - subject spatial_level must be < object spatial_level (container has lower number)
-  - Do NOT emit a claim where you cannot identify a clear container
+  - Only one level of nesting per claim — do not skip intermediate containers
   - Do NOT emit CONTAINS between two places at the same spatial_level unless one is a named sub-area
-    of the other (e.g. "the garden" CONTAINS "the rose bed")
+    of the other (e.g. "the greenhouse" CONTAINS "the sealed room")
   - Every L3 feature should have exactly one L2 or L1 parent; every L2 structure should have at most one L1 parent
 
 Return {"candidates": []} only if the catalog has fewer than two places or no containment is evident.

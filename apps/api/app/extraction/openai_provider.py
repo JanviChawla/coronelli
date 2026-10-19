@@ -262,6 +262,23 @@ class OpenAIExtractionProvider:
                 rationale="Global pre-pass catalog",
                 temporal_interpretation="static",
             ))
+            # Auto-emit LOCATED_IN from parent_context — the catalog LLM already knows
+            # containment; wiring it here avoids relying solely on the spatial extract pass.
+            if payload.get("parent_context"):
+                entity_candidates.append(RawCandidate(
+                    kind="claim",
+                    payload={
+                        "subject": name,
+                        "predicate": "LOCATED_IN",
+                        "object": str(payload["parent_context"]),
+                        "auto_from_parent_context": True,
+                    },
+                    status="inferred",
+                    confidence=0.75,
+                    excerpt=str(p.get("excerpt", "")),
+                    rationale=f"Catalog parent_context: {payload['parent_context']}",
+                    temporal_interpretation="static",
+                ))
 
         return ExtractionResult(
             candidates=entity_candidates,
@@ -357,6 +374,21 @@ class OpenAIExtractionProvider:
                 rationale="Gap pass catalog",
                 temporal_interpretation="static",
             ))
+            if payload.get("parent_context"):
+                entity_candidates.append(RawCandidate(
+                    kind="claim",
+                    payload={
+                        "subject": name,
+                        "predicate": "LOCATED_IN",
+                        "object": str(payload["parent_context"]),
+                        "auto_from_parent_context": True,
+                    },
+                    status="inferred",
+                    confidence=0.75,
+                    excerpt=str(p.get("excerpt", "")),
+                    rationale=f"Catalog parent_context: {payload['parent_context']}",
+                    temporal_interpretation="static",
+                ))
 
         return ExtractionResult(
             candidates=entity_candidates,
