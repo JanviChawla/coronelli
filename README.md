@@ -55,15 +55,6 @@ pnpm --filter web test --run
 
 Estimated cost is shown before each pipeline stage. Repeated extraction on unchanged sections is served from cache — no new API call is made.
 
-## Data
-
-| Kind | Path | Notes |
-|------|------|-------|
-| Demo | `data/demos/` | Tracked — public-domain or synthetic material only |
-| Private | `data/private/` | Ignored — copyrighted or personal source text |
-
-`exports/private/` and `*.atlas.private` files are always gitignored. Do not commit private source text or derived artefacts.
-
 ## License
 
 Source-available, personal non-commercial use only. See [LICENSE](LICENSE).
