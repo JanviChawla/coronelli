@@ -78,17 +78,6 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     const fill = new THREE.PointLight(0x5A80AA, 1.0, 35); fill.position.set(-5, -3, -4); scene.add(fill)
     const rim = new THREE.PointLight(0xB87840, 0.8, 30); rim.position.set(0, -8, 6); scene.add(rim)
 
-    // ── Elevation planes (permanent) ─────────────────────────────────────────
-    for (const { y, c, o } of [
-      { y: 4.2, c: 0x1A2A40, o: 0.10 }, { y: 2.5, c: 0x281A08, o: 0.11 },
-      { y: 0.0, c: 0x0A180A, o: 0.14 }, { y: -2., c: 0x0A0A18, o: 0.12 },
-      { y: -4.5,c: 0x100008, o: 0.09 },
-    ]) {
-      const g = new THREE.PlaneGeometry(32, 32); g.rotateX(-Math.PI / 2)
-      const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: o, side: THREE.DoubleSide, depthWrite: false }))
-      m.position.y = y; scene.add(m)
-    }
-
     // ── Star field (permanent, fog:false so stars stay sharp) ────────────────
     ;(() => {
       const n = 900, v = new Float32Array(n * 3)
@@ -112,6 +101,15 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     const l0Set = new Set(entities.filter(e => getSL(e.id) === 0).map(e => e.id))
     const l1Set = new Set(entities.filter(e => getSL(e.id) === 1).map(e => e.id))
     const l3Set = new Set(entities.filter(e => getSL(e.id) === 3).map(e => e.id))
+
+    // Territory zones: worlds, regions, islands at any spatial level.
+    // These render as colored ground planes rather than 3D nodes.
+    // Containment edges to/from zone entities are suppressed — the zone boundary
+    // already communicates containment visually.
+    const ZONE_KINDS = new Set(['world', 'region', 'island', 'district'])
+    const zoneSet = new Set(entities
+      .filter(e => l0Set.has(e.id) || l1Set.has(e.id) || ZONE_KINDS.has((e.place_kind ?? '').toLowerCase()))
+      .map(e => e.id))
 
     // ── Topology layout — positions from tier + containment hierarchy ─────────
     const edges: Array<{ sid: string; oid: string; pred: string }> = []
@@ -170,9 +168,12 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
         const children = childrenOf.get(id) ?? []
         if (children.length) {
           const level = getSL(id)
+          // Adaptive radius: enough arc for every child to have breathing room
+          const minPerChild = level >= 2 ? 1.9 : 2.6
+          const countDriven = (children.length * minPerChild) / (2 * Math.PI)
           const childR = level >= 2
-            ? Math.max(1.1, radius * 0.38)
-            : Math.max(2.5, radius * 0.52)
+            ? Math.max(1.6, Math.max(countDriven, radius * 0.48))
+            : Math.max(3.2, Math.max(countDriven, radius * 0.60))
           placeSubtree(children, px, pz, childR, phaseOff + 0.45, tier)
         }
       }
@@ -204,46 +205,46 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       positions.set(e.id, new THREE.Vector3(Math.cos(angle) * (rootRadius + 2), TIER_Y[tier] ?? 0, Math.sin(angle) * (rootRadius + 2)))
     }
 
-    // ── Force-directed pass on X/Z (Y stays pinned to tier) ──────────────────
-    // Only ADJACENT_TO / LEADS_TO / FLOWS_THROUGH drive force-directed movement.
-    // LOCATED_IN/CONTAINS are handled entirely by the hierarchy; contained nodes
-    // are restored to their exact parent-relative offsets after the pass (BFS
-    // top-down so each child uses its already-restored parent position).
-    // Parent-child repulsion is skipped so clusters don't blow apart.
+    // ── Force-directed pass — two-tier layout ────────────────────────────────
+    // "Participants" = buildings/landmarks whose direct parent is a zone (or no parent).
+    // Only participants move in the force pass (repulsion + adjacency springs).
+    // "Attached" = rooms/sub-features inside a building — placed radially around
+    // their settled parent AFTER the force pass so they never escape into global space.
 
-    // Capture parent-relative offsets before force pass
-    const relOffsets = new Map<string, { dx: number; dz: number }>()
-    for (const [childId, parentId] of parentOf) {
-      const cp = positions.get(childId), pp = positions.get(parentId)
-      if (cp && pp) relOffsets.set(childId, { dx: cp.x - pp.x, dz: cp.z - pp.z })
+    // Classify: participant if no parent, or if parent is a zone entity.
+    const layoutParticipants = new Set<string>()
+    for (const entity of entities) {
+      const pid = parentOf.get(entity.id)
+      if (!pid || zoneSet.has(pid)) layoutParticipants.add(entity.id)
     }
-    const parentChildPairs = new Set(
-      [...parentOf.entries()].flatMap(([c, p]) => [`${c}|${p}`, `${p}|${c}`])
-    )
 
     ;(() => {
       const SPRING: Record<string, { k: number; rest: number }> = {
-        ADJACENT_TO:   { k: 0.45, rest: 2.8 },
-        LEADS_TO:      { k: 0.20, rest: 4.5 },
-        FLOWS_THROUGH: { k: 0.20, rest: 4.5 },
+        ADJACENT_TO:   { k: 0.60, rest: 3.0 },
+        LEADS_TO:      { k: 0.25, rest: 4.0 },
+        FLOWS_THROUGH: { k: 0.25, rest: 4.0 },
       }
-      const REPULSION = 14.0
-      const DAMPING   = 0.50
-      const ITERS     = 160
+      // Reduced repulsion — only ~10-15 participants so they don't need huge spacing.
+      const REPULSION  = 9.0
+      // Very weak zone-centering keeps buildings loosely anchored to their zone.
+      const ZONE_K     = 0.06
+      const DAMPING    = 0.52
+      const ITERS      = 280
+
+      const participants = entities.filter(e => layoutParticipants.has(e.id))
 
       const vel = new Map<string, [number, number]>()
-      for (const e of entities) vel.set(e.id, [0, 0])
+      for (const e of participants) vel.set(e.id, [0, 0])
 
       for (let iter = 0; iter < ITERS; iter++) {
         const cooling = 1 - iter / ITERS
         const force = new Map<string, [number, number]>()
-        for (const e of entities) force.set(e.id, [0, 0])
+        for (const e of participants) force.set(e.id, [0, 0])
 
-        // Repulsion — skip direct parent-child pairs to keep clusters stable
-        for (let i = 0; i < entities.length; i++) {
-          for (let j = i + 1; j < entities.length; j++) {
-            const ai = entities[i].id, aj = entities[j].id
-            if (parentChildPairs.has(`${ai}|${aj}`)) continue
+        // Repulsion among participants only
+        for (let i = 0; i < participants.length; i++) {
+          for (let j = i + 1; j < participants.length; j++) {
+            const ai = participants[i].id, aj = participants[j].id
             const pa = positions.get(ai)!, pb = positions.get(aj)!
             const dx = pa.x - pb.x, dz = pa.z - pb.z
             const d2 = Math.max(dx*dx + dz*dz, 0.25)
@@ -255,10 +256,11 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
           }
         }
 
-        // Springs along non-containment edges
+        // Adjacency / travel springs — only between two participants
         for (const edge of edges) {
           const sp = SPRING[edge.pred]
           if (!sp) continue
+          if (!layoutParticipants.has(edge.sid) || !layoutParticipants.has(edge.oid)) continue
           const pa = positions.get(edge.sid), pb = positions.get(edge.oid)
           if (!pa || !pb) continue
           const dx = pb.x - pa.x, dz = pb.z - pa.z
@@ -269,7 +271,20 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
           fb[0] -= f * dx / d; fb[1] -= f * dz / d
         }
 
-        for (const e of entities) {
+        // Very weak zone-centering: zone → direct-child building attraction
+        for (const e of participants) {
+          const pid = parentOf.get(e.id)
+          if (!pid || !zoneSet.has(pid)) continue
+          const pc = positions.get(e.id)!, pp = positions.get(pid)
+          if (!pp) continue
+          const dx = pp.x - pc.x, dz = pp.z - pc.z
+          const d  = Math.max(Math.sqrt(dx*dx + dz*dz), 0.001)
+          const f  = ZONE_K * d * cooling
+          const fc = force.get(e.id)!
+          fc[0] += f * dx / d; fc[1] += f * dz / d
+        }
+
+        for (const e of participants) {
           const p = positions.get(e.id)!, f = force.get(e.id)!, v = vel.get(e.id)!
           v[0] = (v[0] + f[0]) * DAMPING
           v[1] = (v[1] + f[1]) * DAMPING
@@ -278,21 +293,48 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       }
     })()
 
-    // BFS top-down restore: restore each child relative to its (already-restored) parent.
-    // Cross-tier nodes sit directly above/below (dx=dz=0).
+    // Radially re-place attached entities (rooms / sub-features inside buildings)
+    // around their settled parent. They never entered the force pass, so this
+    // is the definitive placement — tight, tidy clusters per building.
+    // Uses a true BFS from participants outward so parents are always placed
+    // before their children, regardless of alphabetical entity order.
     ;(() => {
-      const queue: string[] = [...rootIds]
-      const visited = new Set<string>(rootIds)
+      const placed = new Set<string>()
+
+      // Seed: attached entities whose direct parent IS a participant (already settled)
+      const queue: string[] = []
+      for (const entity of entities) {
+        if (layoutParticipants.has(entity.id)) continue
+        const pid = parentOf.get(entity.id)
+        if (pid && layoutParticipants.has(pid)) queue.push(entity.id)
+      }
+
       while (queue.length) {
-        const parentId = queue.shift()!
-        for (const childId of (childrenOf.get(parentId) ?? [])) {
-          if (visited.has(childId)) continue
-          visited.add(childId)
-          const pp = positions.get(parentId)!, cp = positions.get(childId)!
-          const crossTier = resolvedTier(childId) !== resolvedTier(parentId)
-          const off = crossTier ? { dx: 0, dz: 0 } : (relOffsets.get(childId) ?? { dx: 0, dz: 0 })
-          cp.x = pp.x + off.dx; cp.z = pp.z + off.dz
-          queue.push(childId)
+        const eid = queue.shift()!
+        if (placed.has(eid)) continue
+        const pid = parentOf.get(eid)!
+        const pp = positions.get(pid)
+        if (!pp) continue  // parent position missing — skip (shouldn't happen)
+
+        // All attached siblings of this entity under the same parent
+        const siblings = (childrenOf.get(pid) ?? []).filter(c => !layoutParticipants.has(c))
+        const idx = siblings.indexOf(eid)
+        const count = Math.max(siblings.length, 1)
+        // Depth: how many non-zone attached levels above this entity
+        const depth = zoneSet.has(pid) ? 0 : (parentOf.has(pid) && !zoneSet.has(parentOf.get(pid)!)) ? 2 : 1
+        const r = depth >= 2 ? 0.9 : 1.5
+        const angle = (idx / count) * Math.PI * 2 + (pid.charCodeAt(0) * 0.37)
+        const tier = resolvedTier(eid)
+        positions.set(eid, new THREE.Vector3(
+          pp.x + Math.cos(angle) * r,
+          TIER_Y[tier] ?? pp.y,
+          pp.z + Math.sin(angle) * r,
+        ))
+        placed.add(eid)
+
+        // Enqueue this entity's own attached children so they use the position just set
+        for (const childId of (childrenOf.get(eid) ?? [])) {
+          if (!layoutParticipants.has(childId) && !placed.has(childId)) queue.push(childId)
         }
       }
     })()
@@ -319,14 +361,10 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     renderer.setClearColor(atmColor, 1)
     scene.fog = new THREE.FogExp2(atmColor.getHex(), 0.009)
 
-    // ── Ground pad ────────────────────────────────────────────────────────────
-    const padW = (maxR + 2) * 2, padD = padW
-    const padGeo = new THREE.PlaneGeometry(padW, padD); padGeo.rotateX(-Math.PI / 2)
-    const padMesh = new THREE.Mesh(padGeo, new THREE.MeshBasicMaterial({ color: 0x0A100A, transparent: true, opacity: 0.20, depthWrite: false, side: THREE.DoubleSide }))
-    padMesh.position.set(cx, -0.03, cz); scene.add(padMesh)
-
-    // ── L1 territory planes ───────────────────────────────────────────────────
+    // ── Territory planes — all zone entities (world/region/island at any level) ──
     const l1Colliders: THREE.Mesh[] = []
+    // hull center per zone entity (computed from descendant centroid, used for labels too)
+    const zoneHullCenter = new Map<string, { x: number; z: number; r: number; tierY: number }>()
 
     function getDescendants(id: string): string[] {
       const result: string[] = []
@@ -339,17 +377,65 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       return result
     }
 
-    for (const entity of entities.filter(e => l1Set.has(e.id))) {
-      const center = positions.get(entity.id)
-      if (!center) continue
+    // Compute zone nesting depth so inner zones render above outer zones
+    function zoneDepth(id: string): number {
+      let depth = 0, cur = parentOf.get(id)
+      while (cur) { if (zoneSet.has(cur)) depth++; cur = parentOf.get(cur) }
+      return depth
+    }
+
+    // Outer zones first so inner zones render on top
+    const zonesToDraw = entities
+      .filter(e => zoneSet.has(e.id))
+      .sort((a, b) => zoneDepth(a.id) - zoneDepth(b.id))
+
+    // Pre-compute hull data for all zones, inner-first so outer zones can encompass child rings
+    const ZONE_GAP = 1.2  // minimum visible gap between nested zone rings
+    const zoneHullData = new Map<string, { cx: number; cz: number; r: number; tierY: number }>()
+    for (const entity of [...zonesToDraw].reverse()) {
+      if (!positions.get(entity.id)) continue
+      const depth = zoneDepth(entity.id)
       const desc = getDescendants(entity.id)
-      let hullR = 2.5
-      for (const cid of desc) {
-        const p = positions.get(cid)
-        if (!p) continue
-        const d = Math.sqrt((p.x - center.x) ** 2 + (p.z - center.z) ** 2)
-        if (d + 2.0 > hullR) hullR = d + 2.0
+      const descPts = desc.map(cid => positions.get(cid)).filter(Boolean) as THREE.Vector3[]
+      let hcx = 0, hcz = 0
+      if (descPts.length > 0) {
+        hcx = descPts.reduce((s, p) => s + p.x, 0) / descPts.length
+        hcz = descPts.reduce((s, p) => s + p.z, 0) / descPts.length
+      } else {
+        const ep = positions.get(entity.id)!
+        hcx = ep.x; hcz = ep.z
       }
+      const padding = 0.9
+      const minHull = depth === 0 ? 2.0 : 1.5
+      let hullR = minHull
+      for (const pt of descPts) {
+        const d = Math.sqrt((pt.x - hcx) ** 2 + (pt.z - hcz) ** 2)
+        if (d + padding > hullR) hullR = d + padding
+      }
+      // Extend to encompass all direct child zone rings + gap
+      for (const childId of (childrenOf.get(entity.id) ?? [])) {
+        if (!zoneSet.has(childId)) continue
+        const ch = zoneHullData.get(childId)
+        if (!ch) continue
+        const d = Math.sqrt((ch.cx - hcx) ** 2 + (ch.cz - hcz) ** 2)
+        hullR = Math.max(hullR, d + ch.r + ZONE_GAP)
+      }
+      // Zones without an explicit tier stack visually by nesting depth (outer=lower).
+      // Zones with a real tier (e.g. peak=4) keep that elevation.
+      const explicitTierY = TIER_Y[resolvedTier(entity.id)] ?? 0
+      const ZONE_DEPTH_Y = [-2.0, -1.0, -0.4]
+      const tierY = explicitTierY !== 0 ? explicitTierY : (ZONE_DEPTH_Y[Math.min(depth, ZONE_DEPTH_Y.length - 1)] ?? -0.4)
+      zoneHullData.set(entity.id, { cx: hcx, cz: hcz, r: hullR, tierY })
+    }
+
+    for (const entity of zonesToDraw) {
+      const hd = zoneHullData.get(entity.id)
+      if (!hd) continue
+      const { cx: hcx, cz: hcz, r: hullR, tierY } = hd
+      const depth = zoneDepth(entity.id)
+
+      zoneHullCenter.set(entity.id, { x: hcx, z: hcz, r: hullR, tierY })
+
       const pc = entity.payload.colors as { primary?: string } | null
       const vcCols = entity.claims
         .filter(c => c.claim_type === 'visual')
@@ -357,22 +443,29 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       const rawHex = pc?.primary ?? vcCols[0]?.color ?? vcCols[0]?.hex ?? vcCols[0]?.c ?? TIER_NODE_HEX[(entity.payload.tier as string)] ?? '#C8BC9E'
       const planeColor = new THREE.Color(rawHex)
 
-      // Fill circle
-      const fillGeo = new THREE.CircleGeometry(hullR, 48); fillGeo.rotateX(-Math.PI / 2)
-      const fillMesh = new THREE.Mesh(fillGeo, new THREE.MeshBasicMaterial({ color: planeColor, transparent: true, opacity: 0.11, depthWrite: false, side: THREE.DoubleSide }))
-      fillMesh.position.set(center.x, -0.02, center.z)
+      const yFill = tierY - 0.02 + depth * 0.008
+      const yRim  = tierY - 0.015 + depth * 0.008
+
+      // Fill: outer zones more transparent; inner zones slightly more opaque
+      const fillOp = depth === 0 ? 0.09 : 0.14 + depth * 0.03
+      const fillGeo = new THREE.CircleGeometry(hullR, 56); fillGeo.rotateX(-Math.PI / 2)
+      const fillMesh = new THREE.Mesh(fillGeo, new THREE.MeshBasicMaterial({ color: planeColor, transparent: true, opacity: fillOp, depthWrite: false, side: THREE.DoubleSide }))
+      fillMesh.position.set(hcx, yFill, hcz)
       scene.add(fillMesh)
 
-      // Rim ring
-      const rimGeo = new THREE.RingGeometry(hullR - 0.08, hullR + 0.35, 48); rimGeo.rotateX(-Math.PI / 2)
-      const rimMesh = new THREE.Mesh(rimGeo, new THREE.MeshBasicMaterial({ color: planeColor, transparent: true, opacity: 0.45, depthWrite: false, side: THREE.DoubleSide }))
-      rimMesh.position.set(center.x, -0.015, center.z)
+      // Rim: inner zones get a crisper, narrower rim
+      const rimInner = depth === 0 ? hullR - 0.08 : hullR - 0.06
+      const rimOuter = depth === 0 ? hullR + 0.35 : hullR + 0.20
+      const rimOp    = depth === 0 ? 0.40 : 0.65
+      const rimGeo = new THREE.RingGeometry(rimInner, rimOuter, 56); rimGeo.rotateX(-Math.PI / 2)
+      const rimMesh = new THREE.Mesh(rimGeo, new THREE.MeshBasicMaterial({ color: planeColor, transparent: true, opacity: rimOp, depthWrite: false, side: THREE.DoubleSide }))
+      rimMesh.position.set(hcx, yRim, hcz)
       scene.add(rimMesh)
 
       // Invisible collider for raycasting
       const colGeo = new THREE.CylinderGeometry(hullR, hullR, 0.12, 32)
       const colMesh = new THREE.Mesh(colGeo, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }))
-      colMesh.position.set(center.x, -0.02, center.z)
+      colMesh.position.set(hcx, yFill, hcz)
       colMesh.userData = { id: entity.id, isL1: true }
       scene.add(colMesh)
       l1Colliders.push(colMesh)
@@ -397,8 +490,8 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     let isGrowing = true; const growStart = performance.now() / 1000
 
     for (const entity of entities) {
-      // L0 realms color the atmosphere; L1 territories are ground planes — neither gets a node
-      if (l0Set.has(entity.id) || l1Set.has(entity.id)) continue
+      // Zone entities (worlds, regions, islands) are ground-plane territories — no 3D node
+      if (zoneSet.has(entity.id)) continue
 
       const kindDesc    = (entity.payload.kind_descriptor as string) ?? entity.place_kind ?? 'building'
       const tier        = resolvedTier(entity.id)
@@ -426,8 +519,8 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       const pos        = positions.get(entity.id)!
 
       // Shadow blob — smaller and subtler for L3 features; reduced opacity for L2 containers
-      const shadowR  = isL3 ? r * 1.0 : r * 1.5
-      const shadowOp = isL3 ? 0.10 : hasChildren ? 0.12 : 0.18
+      const shadowR  = isL3 ? r * 0.8 : r * 1.2
+      const shadowOp = isL3 ? 0.07 : hasChildren ? 0.08 : 0.12
       const sg = new THREE.CircleGeometry(shadowR, 14); sg.rotateX(-Math.PI / 2)
       const shadow = new THREE.Mesh(sg, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: shadowOp, depthWrite: false }))
       shadow.position.set(pos.x, -0.016, pos.z); scene.add(shadow)
@@ -448,12 +541,12 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       group.add(new THREE.Mesh(geoForKind(kindDesc), coreMat))
 
       // Inner halo — atmosphere color
-      group.add(new THREE.Mesh(new THREE.SphereGeometry(1.9, 12, 12),
-        new THREE.MeshBasicMaterial({ color: colAtm, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide })))
+      group.add(new THREE.Mesh(new THREE.SphereGeometry(1.5, 12, 12),
+        new THREE.MeshBasicMaterial({ color: colAtm, transparent: true, opacity: 0.13, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide })))
 
       // Outer halo — accent color
-      group.add(new THREE.Mesh(new THREE.SphereGeometry(3.0, 10, 10),
-        new THREE.MeshBasicMaterial({ color: colAccent, transparent: true, opacity: 0.11, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide })))
+      group.add(new THREE.Mesh(new THREE.SphereGeometry(2.2, 10, 10),
+        new THREE.MeshBasicMaterial({ color: colAccent, transparent: true, opacity: 0.05, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide })))
 
       // Cage wireframe for L2 container nodes (signals "this holds things")
       if (hasChildren && !isL3) {
@@ -498,7 +591,7 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
 
     // L2/L3 node labels
     for (const entity of entities) {
-      if (l0Set.has(entity.id) || l1Set.has(entity.id)) continue   // L0/L1 handled separately below
+      if (zoneSet.has(entity.id)) continue   // zone entities handled separately below
       const kindDesc = (entity.payload.kind_descriptor as string) ?? entity.place_kind ?? ''
       const d = document.createElement('div')
       d.style.cssText = 'position:absolute;transform:translate(-50%,calc(-100% - 10px));pointer-events:auto;cursor:pointer;white-space:nowrap;user-select:none;'
@@ -510,15 +603,19 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       labelsEl.appendChild(d); labelEls.set(entity.id, d)
     }
 
-    // L1 territory labels — positioned at plane centre, all-caps with faded gold
-    for (const entity of entities.filter(e => l1Set.has(e.id))) {
+    // Zone territory labels — positioned at plane centre; inner zones smaller
+    for (const entity of entities.filter(e => zoneSet.has(e.id))) {
       const center = positions.get(entity.id)
       if (!center) continue
+      const depth = zoneDepth(entity.id)
+      const nameSz  = depth === 0 ? '9px'   : '8px'
+      const nameOp  = depth === 0 ? '0.72'  : '0.85'
+      const subText = depth === 0 ? 'territory' : entity.place_kind ?? 'territory'
       const d = document.createElement('div')
       d.style.cssText = 'position:absolute;transform:translate(-50%,-50%);pointer-events:auto;cursor:pointer;white-space:nowrap;user-select:none;'
       d.innerHTML = `
-        <span class="coronelli-pl-name" style="display:block;font-family:'Cinzel',serif;font-size:9px;letter-spacing:.18em;color:#B8943A;text-align:center;text-shadow:0 1px 6px #000,0 0 14px rgba(0,0,0,.9);text-transform:uppercase;opacity:0.72;transition:color .15s,opacity .15s;">${entity.name}</span>
-        <span style="display:block;font-family:'Space Mono',monospace;font-size:6.5px;color:#6B6352;text-align:center;text-transform:uppercase;letter-spacing:.10em;text-shadow:0 1px 4px #000;opacity:0.50;">territory</span>
+        <span class="coronelli-pl-name" style="display:block;font-family:'Cinzel',serif;font-size:${nameSz};letter-spacing:.18em;color:#B8943A;text-align:center;text-shadow:0 1px 6px #000,0 0 14px rgba(0,0,0,.9);text-transform:uppercase;opacity:${nameOp};transition:color .15s,opacity .15s;">${entity.name}</span>
+        <span style="display:block;font-family:'Space Mono',monospace;font-size:6.5px;color:#6B6352;text-align:center;text-transform:uppercase;letter-spacing:.10em;text-shadow:0 1px 4px #000;opacity:0.50;">${subText}</span>
       `
       d.addEventListener('click', () => handleSelect(entity.id))
       labelsEl.appendChild(d)
@@ -539,6 +636,8 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       const pa = positions.get(e.sid), pb = positions.get(e.oid)
       if (!pa || !pb) continue
       const isC = CONTAIN_RE.test(e.pred), isT = TRAVEL_RE.test(e.pred)
+      // Zone containment is shown by territory boundaries, not edge lines
+      if (isC && (zoneSet.has(e.sid) || zoneSet.has(e.oid))) continue
       const lc = (isC ? ep[0] : isT ? ep[2] : ep[4]) as number
       const lo = (isC ? ep[1] : isT ? ep[3] : ep[5]) as number
       const geo = new THREE.BufferGeometry().setFromPoints([pa.clone(), pb.clone()])
@@ -606,14 +705,14 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     let hovId: string | null = null
 
     function setEmissive(id: string, v: number) {
-      // L1 territory planes have no emissive material — skip
-      if (l1Set.has(id)) return
+      // Zone territory planes have no emissive material — skip
+      if (zoneSet.has(id)) return
       const nd = nodeById.get(id); if (nd) nd.coreMat.emissiveIntensity = v
     }
     function setLabelState(id: string, state: 'idle' | 'sel' | 'hov') {
       const nameSpan = labelEls.get(id)?.querySelector('.coronelli-pl-name') as HTMLElement | null
       if (!nameSpan) return
-      if (l1Set.has(id)) {
+      if (zoneSet.has(id)) {
         nameSpan.style.color = state === 'sel' ? '#D4B060' : state === 'hov' ? '#E8C87A' : '#B8943A'
         nameSpan.style.opacity = state === 'idle' ? '0.72' : '1'
       } else {
@@ -718,12 +817,16 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
         el.style.left = `${(tmpV.x + 1) / 2 * w}px`
         el.style.top  = `${(-tmpV.y + 1) / 2 * h}px`
       }
-      // L1 territory labels — projected from plane centre, slightly elevated
-      for (const entity of entities.filter(e => l1Set.has(e.id))) {
+      // Zone territory labels — projected to the rim edge nearest the camera
+      for (const entity of entities.filter(e => zoneSet.has(e.id))) {
         const el = labelEls.get(entity.id)
-        const center = positions.get(entity.id)
-        if (!el || !center) continue
-        tmpV.set(center.x, 0.5, center.z)
+        const hc = zoneHullCenter.get(entity.id)
+        if (!el || !hc) continue
+        // Find the unit vector from hull center toward camera in XZ, then offset to rim
+        const dx = camera.position.x - hc.x, dz = camera.position.z - hc.z
+        const dLen = Math.sqrt(dx * dx + dz * dz)
+        const nx = dLen > 0.001 ? dx / dLen : 0, nz = dLen > 0.001 ? dz / dLen : 1
+        tmpV.set(hc.x + nx * hc.r, hc.tierY + 0.5, hc.z + nz * hc.r)
         tmpV.project(camera)
         if (tmpV.z > 1) { el.style.display = 'none'; continue }
         el.style.display = 'block'
