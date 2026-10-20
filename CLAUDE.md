@@ -1,6 +1,6 @@
 # Coronelli — Claude Code guide
 
-Coronelli builds literary atlases: given a book, it extracts every named place, its spatial relationships, visual descriptions, and travel rules, then presents them in an interactive Atlas Editor.
+Coronelli is a tool for building literary atlases by hand. A pipeline surfaces candidate places, relationships, and visual details as raw material — the cartographer reviews every candidate before anything lands on the map.
 
 ## Dev servers
 
@@ -11,17 +11,33 @@ uv run uvicorn app.main:app --reload
 
 # Frontend (http://localhost:5173)
 cd apps/web
-pnpm dev          # or: npm run dev
+pnpm dev
 
 # Frontend tests
 cd apps/web
 pnpm test
 ```
 
+> **Note:** `node` and `pnpm` may not be in PATH in Claude Code's shell. Fix with:
+> `$env:PATH = "C:\Program Files\nodejs;$env:APPDATA\npm;$env:PATH"`
+
+## Release
+
+```
+# Build (from repo root)
+.\scripts\build.ps1
+
+# Publish to PyPI
+cd apps/api
+uv publish dist/coronelli-X.Y.Z-py3-none-any.whl dist/coronelli-X.Y.Z.tar.gz --username __token__
+```
+
+DB is stored in the platform data dir (`%LOCALAPPDATA%\Coronelli\` on Windows). Dev and installed versions share the same DB.
+
 ## Pipeline — the five stages
 
 ```
-Upload → Catalog → Extract → Synthesize → Atlas Editor
+Upload → Catalog → Extract → Synthesize → Atlas Editor → 3D Explorer
 ```
 
 | Stage | What happens | Key code |
@@ -60,6 +76,8 @@ EntityMention — tracks where a MapEntity appears in the text
 ```
 apps/api/app/
   main.py                        FastAPI app + router registration
+  config.py                      Platform data dir (Windows/macOS/Linux) + default DB URL
+  cli.py                         `coronelli` entry point — opens browser, loads .env
   domain/world.py                SQLAlchemy models (MapEntity, MapClaim, SourceDocument, ...)
 
   api/
@@ -101,8 +119,9 @@ apps/web/src/
   index.css                      CSS variables (--ink, --parchment, --gold, --border-warm, ...)
 
   features/sources/
-    SourceLibrary.tsx            Home page — glass-bubble world cards on background2.png
-    SourceWorkflow.tsx           Pipeline stepper UI (catalog → extract → synthesize)
+    SourceLibrary.tsx            Home page — star background canvas, glass world cards
+    SourceWorkflow.tsx           Pipeline stepper + explorer toggle; overlays header in explorer mode
+    WorkflowHeader.tsx           Consistent CORONELLI header across all views
     sourceApi.ts                 Document/section CRUD API calls
     extractionApi.ts             Catalog, extraction, dedup, validation API calls
 
@@ -113,8 +132,10 @@ apps/web/src/
     AtlasRelationshipsPanel.tsx  Right panel — spatial claims, add-relationship form, dedup
     atlasHierarchy.ts            buildHierarchy() — pure function, no React
     atlasApi.ts                  All atlas API calls + TypeScript types
-    atlasGraph.ts                Graph layout logic (for AtlasExplorer)
-    AtlasExplorer.tsx            Force-directed graph view of the atlas
+    atlasGraph.ts                Graph layout logic
+    AtlasExplorer.tsx            3D star-field scene — Three.js, orbit/pan/zoom, node selection
+    AtlasExplorerDetailPanel.tsx Inspector panel — opens on node click, dynamic height
+    AtlasExplorerOverlays.tsx    Legend + loading/error overlays
 
   features/candidates/
     CandidatesTable.tsx          Tabular candidate review UI
