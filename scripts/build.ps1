@@ -20,7 +20,7 @@ Copy-Item "$root\README.md" "$root\apps\api\README.md"
 Set-Location "$root\apps\api"
 uv build
 $buildResult = $LASTEXITCODE
-Remove-Item -Force "$root\apps\api\README.md" -ErrorAction SilentlyContinue
+Set-Content -Path "$root\apps\api\README.md" -Value "# Coronelli`n`nSee the [project README](../../README.md) for full documentation.`n"
 if ($buildResult -ne 0) { Write-Error "Python build failed"; exit 1 }
 
 Write-Host ""

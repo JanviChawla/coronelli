@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useRef, useState, useEffect } from 'react'
 import type { Candidate } from '../candidates/candidateApi'
 import { CandidatesTable } from '../candidates/CandidatesTable'
 import type { Document, Section } from './sourceApi'
@@ -22,6 +22,17 @@ interface Props {
 
 export function SourceWorkflow({ document, sections, onBack, onEditSections, onEdit, onDelete }: Props) {
   const w = useWorkflowOrchestrator(document, sections)
+  const headerOverlayRef = useRef<HTMLDivElement>(null)
+  const [headerHeight, setHeaderHeight] = useState(100)
+
+  useEffect(() => {
+    const el = headerOverlayRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => setHeaderHeight(el.offsetHeight))
+    ro.observe(el)
+    setHeaderHeight(el.offsetHeight)
+    return () => ro.disconnect()
+  }, [w.showExplorer])
 
   // ── Main content ───────────────────────────────────────────────────────────
 
@@ -69,6 +80,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
           documentId={document.id}
           sections={sections.map(s => ({ id: s.id, title: s.title ?? '' }))}
           onAtlasLoaded={w.handleAtlasLoaded}
+          headerHeight={headerHeight}
         />
       )
     }
@@ -190,7 +202,7 @@ export function SourceWorkflow({ document, sections, onBack, onEditSections, onE
           <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             {renderContent()}
           </main>
-          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 20 }}>
+          <div ref={headerOverlayRef} style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50 }}>
             <WorkflowHeader {...headerProps} />
           </div>
         </>

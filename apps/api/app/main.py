@@ -9,14 +9,11 @@ from fastapi.staticfiles import StaticFiles
 load_dotenv(find_dotenv(usecwd=True) or None)
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.admin import router as admin_router
 from app.api.atlas import router as atlas_router
 from app.api.candidates import router as candidates_router
 from app.api.extraction import router as extraction_router
-from app.api.series import router as series_router
 from app.api.sources import router as sources_router
 from app.api.synthesis import router as synthesis_router
-from app.api.workspaces import router as workspaces_router
 from app.db.base import Base
 from app.db.engine import engine
 
@@ -41,10 +38,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(admin_router)
-app.include_router(workspaces_router)
 app.include_router(sources_router)
-app.include_router(series_router)
 app.include_router(extraction_router)
 app.include_router(candidates_router)
 app.include_router(synthesis_router)

@@ -10,11 +10,12 @@ interface Props {
   documentId: string
   sections: Array<{ id: string; title: string }>
   onAtlasLoaded: (entityCount: number) => void
+  headerHeight?: number
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
+export function AtlasExplorer({ documentId, sections, onAtlasLoaded, headerHeight = 100 }: Props) {
   const canvasRef       = useRef<HTMLCanvasElement>(null)
   const labelsRef       = useRef<HTMLDivElement>(null)
   const selectedIdRef   = useRef<string | null>(null)
@@ -761,9 +762,12 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     scene.add(moteMesh)
 
     // ── Camera — close to scene like artifact ────────────────────────────────
-    let az = 0.50, po = 1.05
-    let dist = Math.max(6, maxR * 2.5 + 5)   // stays close; yw ~8, larger books ~12–15
-    const camTarget = new THREE.Vector3(cx, 0, cz)
+    const initAz = 0.50, initPo = 1.05
+    const initDist = Math.max(6, maxR * 2.5 + 5)
+    const initTarget = new THREE.Vector3(cx, 0, cz)
+    let az = initAz, po = initPo, dist = initDist
+    const camTarget = initTarget.clone()
+    const maxDist = Math.max(initDist * 1.5, 40)
 
     function refreshCam() {
       camera.position.set(
@@ -808,8 +812,9 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
     }
 
     // ── Mouse events ──────────────────────────────────────────────────────────
-    let pressing = false, dragging = false, lastMx = 0, lastMy = 0
+    let pressing = false, rightPressing = false, dragging = false, lastMx = 0, lastMy = 0
     const ray = new THREE.Raycaster(), mpos = new THREE.Vector2()
+    const _right = new THREE.Vector3(), _up = new THREE.Vector3(), _fwd = new THREE.Vector3()
 
     // Resolve hit id: L1 colliders store id on the mesh itself; node colliders on parent group
     function resolveHit(obj: THREE.Object3D): string {
@@ -817,8 +822,24 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       return direct ?? (obj.parent!.userData.id as string)
     }
 
-    function onMouseDown(e: MouseEvent) { pressing = true; dragging = false; lastMx = e.clientX; lastMy = e.clientY }
+    function onMouseDown(e: MouseEvent) {
+      if (e.button === 2) { rightPressing = true; lastMx = e.clientX; lastMy = e.clientY; return }
+      pressing = true; dragging = false; lastMx = e.clientX; lastMy = e.clientY
+    }
     function onMouseMove(e: MouseEvent) {
+      const dx = e.clientX - lastMx, dy = e.clientY - lastMy
+      if (rightPressing) {
+        if (Math.abs(dx) + Math.abs(dy) > 1) {
+          camera.getWorldDirection(_fwd)
+          _right.crossVectors(_fwd, camera.up).normalize()
+          _up.crossVectors(_right, _fwd).normalize()
+          const scale = dist * 0.0012
+          camTarget.addScaledVector(_right, -dx * scale)
+          camTarget.addScaledVector(_up, dy * scale)
+          refreshCam()
+        }
+        lastMx = e.clientX; lastMy = e.clientY; return
+      }
       if (!pressing) {
         const rect = canvas.getBoundingClientRect()
         mpos.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
@@ -838,13 +859,13 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
         }
         return
       }
-      const dx = e.clientX - lastMx, dy = e.clientY - lastMy
       if (Math.abs(dx) + Math.abs(dy) > 4) dragging = true
       az -= dx * 0.005; po = Math.max(0.15, Math.min(Math.PI - 0.15, po + dy * 0.005))
       lastMx = e.clientX; lastMy = e.clientY; refreshCam()
     }
     function onMouseUp(e: MouseEvent) {
-      if (!dragging) {
+      if (e.button === 2) { rightPressing = false; return }
+      if (pressing && !dragging) {
         const rect = canvas.getBoundingClientRect()
         mpos.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
         mpos.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
@@ -861,12 +882,22 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       }
       pressing = false; dragging = false
     }
-    function onWheel(e: WheelEvent) { dist = Math.max(3, Math.min(35, dist + e.deltaY * 0.022)); refreshCam() }
+    function onContextMenu(e: MouseEvent) { e.preventDefault() }
+    function onWheel(e: WheelEvent) { dist = Math.max(3, Math.min(maxDist, dist + e.deltaY * 0.022)); refreshCam() }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'r' || e.key === 'R') {
+        az = initAz; po = initPo; dist = initDist
+        camTarget.copy(initTarget)
+        refreshCam()
+      }
+    }
 
     canvas.addEventListener('mousedown', onMouseDown)
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup', onMouseUp)
+    canvas.addEventListener('contextmenu', onContextMenu)
     canvas.addEventListener('wheel', onWheel, { passive: true })
+    window.addEventListener('keydown', onKeyDown)
 
     // ── Resize ────────────────────────────────────────────────────────────────
     const ro = new ResizeObserver(() => {
@@ -1006,7 +1037,9 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
       canvas.removeEventListener('mousedown', onMouseDown)
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
+      canvas.removeEventListener('contextmenu', onContextMenu)
       canvas.removeEventListener('wheel', onWheel)
+      window.removeEventListener('keydown', onKeyDown)
       ro.disconnect(); renderer.dispose(); labelsEl.innerHTML = ''
     }
   }, [atlas]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -1032,6 +1065,7 @@ export function AtlasExplorer({ documentId, sections, onAtlasLoaded }: Props) {
             sections={sections}
             firstSeenOrdinal={selectedId ? ordinalMapRef.current.get(selectedId) : undefined}
             onClose={() => { setSelectedId(null); selectedIdRef.current = null }}
+            headerHeight={headerHeight}
           />
         </div>
       )}

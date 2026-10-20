@@ -1,18 +1,22 @@
 # Coronelli ◉
 
-A literary atlas builder — upload a book and explore its world in 3D.
+A tool for building literary atlases by hand.
 
-Coronelli is inspired by the craft of historical cartographers: it reads a novel section by section, finds every named place, maps spatial relationships and visual qualities, and builds a navigable world you can orbit and inspect.
+Coronelli is inspired by the craft of historical cartographers. You read a book, work through it section by section, and decide what goes on the map — what places exist, how they relate, what they look like. The result is a navigable world you can orbit and inspect.
+
+![Atlas Editor](docs/coronelli-atlas-editor.png)
+
+![Atlas Explorer](docs/coronelli-atlas-explorer.png)
 
 ```
 Upload → Catalog → Extract → Synthesize → Atlas Editor → 3D Explorer
 ```
 
 - Import `.txt`, `.md`, and text-bearing `.pdf` files
-- LLM pipeline identifies places, containment hierarchies, spatial claims, and visual details
-- Every extracted candidate is held for human review before it becomes canonical
-- Edit the atlas — rename entities, merge duplicates, assign hierarchy, add relationships
-- Explore in an interactive 3D scene: zone rings, floating nodes, force-directed layout
+- A pipeline surfaces candidate places, relationships, and descriptions as raw material
+- You review every candidate — accepting, editing, or rejecting — before anything lands on the map
+- Refine in the Atlas Editor: rename places, assign hierarchy, merge duplicates, add relationships
+- Explore the finished atlas in a 3D scene: zone rings, floating nodes, force-directed layout
 
 ## Installation
 
@@ -46,7 +50,7 @@ OPENAI_API_KEY=sk-...
 
 ## Cost and caching
 
-Estimated cost is shown before each pipeline stage. Repeated extraction on unchanged sections is served from cache — no new API call is made.
+Each pipeline stage shows an estimated cost before you run it. Sections you have already processed are served from cache, so you only pay for new work.
 
 ## License
 

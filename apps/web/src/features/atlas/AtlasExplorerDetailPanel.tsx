@@ -11,6 +11,7 @@ interface Props {
   sections: Array<{ id: string; title: string }>
   firstSeenOrdinal?: number
   onClose: () => void
+  headerHeight?: number
 }
 
 const SM = "'Space Mono', monospace"
@@ -18,7 +19,7 @@ const SL_LABEL: Record<number, string> = { 0: 'Realm', 1: 'Territory', 2: 'Place
 const SPATIAL_PREDS = ['LOCATED_IN', 'CONTAINS', 'LEADS_TO', 'ADJACENT_TO', 'PART_OF', 'FLOWS_THROUGH']
 const PRED_FLIP: Record<string, string> = { LOCATED_IN: 'CONTAINS', CONTAINS: 'LOCATED_IN', PART_OF: 'CONTAINS' }
 
-export function AtlasExplorerDetailPanel({ entity, entityMap, allEntities, documentId, sections, firstSeenOrdinal, onClose }: Props) {
+export function AtlasExplorerDetailPanel({ entity, entityMap, allEntities, documentId, sections, firstSeenOrdinal, onClose, headerHeight = 100 }: Props) {
   const [excerpts, setExcerpts] = useState<EntityExcerpt[]>([])
 
   useEffect(() => {
@@ -100,24 +101,29 @@ export function AtlasExplorerDetailPanel({ entity, entityMap, allEntities, docum
 
   return (
     <div style={{
-      position: 'absolute', left: 0, top: 0, bottom: 0, width: 288,
+      position: 'absolute', left: 0, top: headerHeight, width: 288,
+      maxHeight: `calc(100% - ${headerHeight}px - 16px)`,
       background: 'rgba(5,12,26,.92)', borderRight: '1px solid rgba(184,148,58,.18)',
       backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)',
-      display: 'flex', flexDirection: 'column', overflow: 'hidden',
+      display: 'flex', flexDirection: 'column',
       fontFamily: "'Crimson Pro', Georgia, serif", zIndex: 30,
       transform: 'translateX(0)', transition: 'transform .38s cubic-bezier(.16,1,.3,1)',
     }}>
-      <button onClick={onClose} style={{
-        position: 'absolute', top: 18, right: 16, background: 'none', border: 'none',
-        cursor: 'pointer', color: '#6B6352', fontSize: 18, padding: '4px 6px', lineHeight: 1,
-        transition: 'color .15s',
-      }}>×</button>
-
-      <div style={{ padding: '54px 22px 18px', borderBottom: '1px solid rgba(184,148,58,.18)', position: 'relative' }}>
+      {/* Sticky header: entity name + close button — never scrolls away */}
+      <div style={{ flexShrink: 0, padding: '18px 22px 18px', borderBottom: '1px solid rgba(184,148,58,.18)', position: 'relative' }}>
+        <button
+          onClick={e => { e.stopPropagation(); onClose() }}
+          onMouseDown={e => e.stopPropagation()}
+          style={{
+            position: 'absolute', top: 14, right: 12, background: 'none', border: 'none',
+            cursor: 'pointer', color: '#6B6352', fontSize: 18, padding: '4px 6px', lineHeight: 1,
+            transition: 'color .15s', zIndex: 1,
+          }}
+        >×</button>
         <div style={{ fontFamily: SM, fontSize: 8, color: '#B8943A', letterSpacing: '.14em', textTransform: 'uppercase', marginBottom: 6 }}>
           {kindDesc || 'Place'}
         </div>
-        <div style={{ fontFamily: "'Cinzel', serif", fontSize: 19, fontWeight: 400, color: '#D4B060', lineHeight: 1.15, marginBottom: 10 }}>
+        <div style={{ fontFamily: "'Cinzel', serif", fontSize: 19, fontWeight: 400, color: '#D4B060', lineHeight: 1.15, marginBottom: 10, paddingRight: 24 }}>
           {entity.name}
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -131,7 +137,7 @@ export function AtlasExplorerDetailPanel({ entity, entityMap, allEntities, docum
         </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 22px 24px', scrollbarWidth: 'thin', scrollbarColor: 'rgba(184,148,58,.18) transparent' }}>
+      <div style={{ overflowY: 'auto', scrollbarWidth: 'thin', scrollbarColor: 'rgba(184,148,58,.18) transparent', padding: '0 22px 24px' }}>
 
         {/* First seen */}
         {firstSeenLabel && (
