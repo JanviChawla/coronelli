@@ -4,9 +4,9 @@ A tool for building literary atlases by hand.
 
 Coronelli is inspired by the craft of historical cartographers. You read a book, work through it section by section, and decide what goes on the map — what places exist, how they relate, what they look like. The result is a navigable world you can orbit and inspect.
 
-![Atlas Editor](docs/coronelli-atlas-editor.png)
+![Atlas Editor](https://raw.githubusercontent.com/JanviChawla/coronelli/main/docs/coronelli-atlas-editor.png)
 
-![Atlas Explorer](docs/coronelli-atlas-explorer.png)
+![Atlas Explorer](https://raw.githubusercontent.com/JanviChawla/coronelli/main/docs/coronelli-atlas-explorer.png)
 
 ```
 Upload → Catalog → Extract → Synthesize → Atlas Editor → 3D Explorer
